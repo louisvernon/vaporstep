@@ -115,7 +115,16 @@ PyInstaller is not a cross-compiler; release binaries are built natively for eac
 
 `.github/workflows/test.yml` runs the test suite on pushes and pull requests.
 
-`.github/workflows/build.yml` builds native release artifacts on manual runs and tags matching `v*`.
+`.github/workflows/build.yml` builds native packages for:
+
+- Linux x86_64
+- Windows x86_64
+- macOS Intel
+- macOS Apple Silicon
+
+A manual workflow run builds the four packages and stores them as GitHub Actions artifacts. Use this path to test packaged builds on real cameras before publishing a release.
+
+Pushing a tag matching `v*` runs the same native builds, creates a GitHub Release after all four builds succeed, generates release notes from GitHub history, and attaches the four platform packages to the release.
 
 Example:
 
@@ -124,7 +133,16 @@ git tag v0.13.0
 git push origin v0.13.0
 ```
 
-Generated artifacts should be tested on real cameras before being published as releases.
+The resulting files are:
+
+```text
+VaporStep-Linux-x86_64.tar.gz
+VaporStep-Windows-x86_64.zip
+VaporStep-macOS-Intel.zip
+VaporStep-macOS-AppleSilicon.zip
+```
+
+The packaged builds are currently unsigned and macOS builds are not notarized. Signing and notarization can be added to the release workflow later without changing the release artifact names.
 
 ## Repository hygiene
 
