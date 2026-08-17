@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=77,<82", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "vaporstep"
+dynamic = ["version"]
+description = "Cross-platform webcam full-body rhythm game"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.10"
+dependencies = [
+  "mediapipe==0.10.35",
+  "opencv-python>=4.10",
+  "pygame>=2.6",
+  "numpy>=1.26",
+  "simfile==2.1.1",
+  "setuptools<82",
+  "imageio-ffmpeg==0.6.0",
+]
+
+[project.scripts]
+vaporstep = "vaporstep.app:main"
+
+[tool.setuptools.packages.find]
+include = ["vaporstep*"]
+
+[tool.setuptools.dynamic]
+version = {attr = "vaporstep.__version__"}
+
+[project.optional-dependencies]
+build = [
+  "pyinstaller>=6.10,<7",
+  "pytest>=8",
+  "pillow>=10",
+]

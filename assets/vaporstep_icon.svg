@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <rect width="1024" height="1024" rx="180" fill="#03030c"/>
+  <g fill="none" stroke="#ff37d2" stroke-width="11">
+    <path d="M110 155L465 493"/>
+    <path d="M300 155L489 493"/>
+    <path d="M500 155L512 493"/>
+    <path d="M724 155L535 493"/>
+    <path d="M914 155L559 493"/>
+  </g>
+  <g fill="none" stroke="#46f5ff" stroke-width="11">
+    <path d="M465 531L145 869"/>
+    <path d="M489 531L330 869"/>
+    <path d="M512 531L512 869"/>
+    <path d="M535 531L694 869"/>
+    <path d="M559 531L879 869"/>
+  </g>
+  <!-- Keep the note motif, but use two compact targets placed away from the center. -->
+  <rect x="688" y="244" width="120" height="28" rx="9" fill="#ff37d2"/>
+  <rect x="266" y="752" width="110" height="28" rx="9" fill="#46f5ff"/>
+  <path d="M512 438L586 512L512 586L438 512Z" fill="#080816" stroke="#f5faff" stroke-width="11"/>
+</svg>
