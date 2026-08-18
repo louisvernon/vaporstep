@@ -418,6 +418,21 @@ class GameSession:
                                 hit=True,
                             )
                         )
+                        # Reuse the renderer's existing receptor pulse as visual
+                        # feedback for a successful sustain tail. These events are
+                        # visual-only: they do not enter MotionTracker and cannot
+                        # satisfy or upgrade a later note judgement.
+                        for lane in definition.lanes:
+                            self.recent_motion_events.append(
+                                MotionEvent(
+                                    kind=definition.kind,
+                                    lane=int(lane),
+                                    song_time=t,
+                                    limb="sustain",
+                                    strength=2.2,
+                                    source="sustain_complete",
+                                )
+                            )
 
             # A broken sustain still owns one failed tail judgement, but it is a
             # scoring/performance penalty only. It must never destroy a combo
