@@ -19,7 +19,7 @@ You can select a song library in the UI or override it while developing:
 python -m vaporstep --songs "/path/to/Songs"
 ```
 
-`VAPORSTEP_SONGS` provides the same override through the environment. Without an override or saved choice, VaporStep uses `~/Stepfiles` and creates that directory if needed.
+`VAPORSTEP_SONGS` provides the same override through the environment. Without an override or saved choice, VaporStep uses `~/VaporStep/Songs` and creates that directory if needed.
 
 MediaPipe is currently pinned to `0.10.35` for the tested pose-tracking path. `setuptools<82` is retained because `simfile==2.1.1` imports `pkg_resources`.
 
@@ -58,7 +58,15 @@ Source runs can fetch the same pinned model when it is absent. Packaged builds i
 
 ## Persistent data
 
-High scores and app settings are stored outside the installation directory.
+The user-managed song library is kept separate from application state. By default, songs live in a visible home-directory location on all platforms:
+
+```text
+~/VaporStep/Songs
+```
+
+Users can select any other song-library folder from the application.
+
+Settings, high scores and future caches remain in each operating system's normal application-data location.
 
 Typical locations:
 
@@ -77,14 +85,6 @@ Linux:
 ```
 
 Windows uses the user's Local AppData `VaporStep` directory.
-
-The default song-library location on all platforms is:
-
-```text
-~/Stepfiles
-```
-
-Users can select any other song-library folder from the application.
 
 ## PyInstaller
 
