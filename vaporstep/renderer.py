@@ -172,8 +172,6 @@ class Renderer:
     def draw_recording_indicator(self) -> None:
         w, _ = self.size
         label = self.small_font.render("● REC", True, RED)
-        # Sit below BEST / chain-mode HUD so it is visible during READY and play
-        # without covering incoming notes or the combo counter.
         self.screen.blit(label, label.get_rect(topright=(w - 18, 94)))
 
     def draw_privacy_notice(self) -> None:
@@ -399,7 +397,7 @@ class Renderer:
             active_filters.append("PLAYED")
         filter_label = " + ".join(active_filters) if active_filters else "ALL SONGS"
         filter_text = self.small_font.render(
-            f"{filter_label}   •   {len(menu.songs)}/{library_count or len(menu.songs)} SONGS   •   CHAINS {chain_mode.label}",
+            f"{filter_label}   •   {len(menu.songs)}/{library_count or len(menu.songs)} SONGS   •   VIRTUAL HOLDS {chain_mode.label}",
             True,
             DIM,
         )
@@ -422,7 +420,6 @@ class Renderer:
             self.screen.blit(hint, hint.get_rect(center=(w // 2, h // 2 + 20)))
             return
 
-        # Leave more room below the wheel for chart information/artwork.
         center_y = int(h * 0.34)
         row_h = 42
         nearest = int(round(menu.visual_position))
@@ -463,7 +460,6 @@ class Renderer:
         chart = menu.chart
         if song is not None and chart is not None:
             panel_top = int(h * 0.58)
-            # Optional source-chart banner. It stays secondary to the vector UI.
             banner = self._load_banner(song.banner_path)
             if banner is not None:
                 box = pygame.Rect(max(22, w // 2 - 430), panel_top, 230, 82)
@@ -480,7 +476,7 @@ class Renderer:
 
             bpm = self.small_font.render(f"BPM  {chart.bpm_label}", True, WHITE)
             targets = self.small_font.render(f"TARGETS  {chart.target_count:,}", True, WHITE)
-            chains_text = self.small_font.render(f"CHAINS  {chart.chain_count}", True, WHITE)
+            chains_text = self.small_font.render(f"V-HOLDS  {chart.chain_count}", True, WHITE)
             self.screen.blit(bpm, (info_x, panel_top + 34))
             self.screen.blit(targets, (info_x + 125, panel_top + 34))
             self.screen.blit(chains_text, (info_x + 265, panel_top + 34))
@@ -505,7 +501,6 @@ class Renderer:
                 MAGENTA,
             )
 
-            # Show the full chart ladder so left/right selection is immediately legible.
             difficulty_y = min(h - 88, panel_top + 128)
             self._draw_difficulty_selector(menu, difficulty_y)
 
@@ -516,7 +511,7 @@ class Renderer:
             )
             self.screen.blit(controls, controls.get_rect(midbottom=(w // 2, h - 34)))
             controls2 = self.small_font.render(
-                f"A/C chain mode: {chain_mode.label}    F11 fullscreen    Esc main menu", True, DIM
+                f"V virtual holds: {chain_mode.label}    F11 fullscreen    Esc main menu", True, DIM
             )
             self.screen.blit(controls2, controls2.get_rect(midbottom=(w // 2, h - 13)))
 
@@ -648,8 +643,6 @@ class Renderer:
 
     def _draw_background(self, t: float, beat_pulse: float, downbeat: bool) -> None:
         w, h = self.size
-        # No full-width horizon line: even a static line visually merged with the
-        # beat-reactive geometry and read as a pulsing bar through the player.
         for i in range(22):
             x = (i * 173 + 37) % w
             y = (i * 97 + int(t * (10 + i % 4))) % max(h - 20, 1)
@@ -703,17 +696,9 @@ class Renderer:
         return start + (end - start) * p
 
     def _lane_boundary_x(self, kind: NoteKind, boundary: int, progress: float) -> float:
-        """Return one of the five lane boundaries at ``progress``.
-
-        Interior boundaries retain the existing perspective geometry. Only the
-        two outside edges flare a little wider toward the receptors, matching
-        the tracker-side outer-edge extension without squeezing lanes 2/3.
-        """
         left, right = self._field_bounds(kind, progress)
         lane_w = (right - left) / 4.0
         x = left + boundary * lane_w
-        # No extra width at the shared vanishing point; smoothly reach the full
-        # extension at the receptor end.
         edge_extension = lane_w * OUTER_LANE_EDGE_EXTENSION * max(0.0, min(1.0, progress))
         if boundary == 0:
             x -= edge_extension
@@ -730,8 +715,6 @@ class Renderer:
     def _draw_active_lane_fill(
         self, surface: pygame.Surface, kind: NoteKind, lane: int, color, beat_pulse: float
     ) -> None:
-        # A translucent trapezoid makes occupancy readable at a glance instead
-        # of asking the player to infer it from two highlighted rail edges.
         l0, r0 = self._lane_bounds(kind, lane, 0.0)
         l1, r1 = self._lane_bounds(kind, lane, 1.0)
         y0 = self._field_y(kind, 0.0)
@@ -750,13 +733,7 @@ class Renderer:
         overdrive: bool = False,
         animate_buzz: bool = True,
     ) -> None:
-        # Structural playfield geometry stays stable. Musical motion is carried
-        # by the dedicated buzz traces outside the rails instead of strobing
-        # the columns themselves.
         grid_color = GRID
-
-        # Reuse one alpha surface per frame rather than allocating a full-screen
-        # surface for every occupied limb/lane.
         if self._lane_fill_surface is None or self._lane_fill_surface.get_size() != self.size:
             self._lane_fill_surface = pygame.Surface(self.size, pygame.SRCALPHA)
         self._lane_fill_surface.fill((0, 0, 0, 0))
@@ -795,8 +772,6 @@ class Renderer:
                 else:
                     pygame.draw.line(self.screen, local_grid, (x0, y0), (x1, y1), 1)
 
-            # Keep colored active-lane borders as a crisp accent on top of the
-            # filled column, but they are no longer the sole occupancy cue.
             if enabled:
                 for lane in occupied:
                     active_color = color
@@ -827,12 +802,6 @@ class Renderer:
         overdrive: bool = False,
         animated: bool = True,
     ) -> None:
-        """Draw oscilloscope-like traces just outside the playfield.
-
-        During READY/positioning, the traces stay flat and calm so the screen
-        communicates that gameplay timing has not started yet. Once the song is
-        running, they animate/pulse with the chart beat.
-        """
         trace_base = ELECTRIC_YELLOW if overdrive else color
         if not animated:
             trace_color = _blend(BG, trace_base, 0.42)
@@ -849,9 +818,6 @@ class Renderer:
                     pygame.draw.lines(self.screen, trace_color, False, points, 1)
             return
 
-        # Return the buzz traces to the hand/foot theme colors, but make the
-        # waveform substantially larger. The displacement is intentionally large enough to read clearly while
-        # remaining outside the gameplay rails.
         base_amp = 11.2
         beat_amp = (33.6 if downbeat else 25.6) * beat_pulse
         amplitude = base_amp + beat_amp
@@ -865,9 +831,6 @@ class Renderer:
                 p = i / samples
                 boundary_x = self._lane_boundary_x(kind, side, p)
                 y = self._field_y(kind, p)
-
-                # Deterministic pseudo-static: layered sine terms read as a
-                # vector buzz line rather than a smooth decorative wave.
                 noise = (
                     math.sin(song_time * 22.0 + p * 77.0 + side * 0.7)
                     + 0.55 * math.sin(song_time * 41.0 + p * 143.0 + side * 1.3)
@@ -891,7 +854,6 @@ class Renderer:
         song_beat: float,
         chain_mode: ChainMode,
     ) -> None:
-        # READY deliberately hides incoming chart geometry.
         if not chains or not notes:
             return
         for chain in chains:
@@ -957,9 +919,6 @@ class Renderer:
                     2 if chain.state == ChainState.ACTIVE else 1,
                 )
 
-                # Give every sustain a real note-like leading edge. The body
-                # communicates duration; this bright bar communicates exactly
-                # what must be hit to start the hold/chain.
                 head_p = max(0.0, min(1.0, head_progress))
                 head_left, head_right = self._lane_bounds(definition.kind, lane, head_p)
                 head_y = self._field_y(definition.kind, head_p)
@@ -992,8 +951,6 @@ class Renderer:
                         1,
                     )
 
-                # A bright receptor cap makes successful sustain activation
-                # unmistakable while the long body communicates the hold.
                 if chain.state == ChainState.ACTIVE:
                     left, right = self._lane_bounds(definition.kind, lane, 1.0)
                     y = self._field_y(definition.kind, 1.0)
@@ -1010,8 +967,8 @@ class Renderer:
     ) -> None:
         for note in notes:
             if note.end_time is not None and note.chain_id is not None:
-                # Explicit holds are always represented by their long sustain
-                # block; chain debug/off modes only affect generated chains.
+                # Authored holds are always represented by their long sustain
+                # block; the virtual-hold toggle only affects generated holds.
                 continue
             if note.chain_id is not None and chain_mode == ChainMode.BLOCKS:
                 continue
@@ -1022,8 +979,6 @@ class Renderer:
                 age = song_time - note.judged_at
                 if age > HIT_FLASH_SECONDS:
                     continue
-                # Successful bricks disappear almost immediately into fragments;
-                # misses linger red so the failure remains readable.
                 if note.hit and age > HIT_BRICK_POP_SECONDS:
                     continue
             elif dt < -HIT_WINDOW_SECONDS:
@@ -1069,8 +1024,6 @@ class Renderer:
         center = (left + right) * 0.5
         power = {HitQuality.HIT: 1.0, HitQuality.GREAT: 1.28, HitQuality.PERFECT: 1.60}[quality]
 
-        # The tile briefly grows, splits at the center, and burns out. This gives
-        # the eye one readable impact frame before the shards take over.
         kick = math.sin(min(1.0, phase * 1.6) * math.pi)
         half = lane_w * (0.39 + 0.055 * power * kick)
         gap = lane_w * (0.02 + 0.16 * phase)
@@ -1145,10 +1098,6 @@ class Renderer:
                         "color": shard_color,
                     }
                 )
-                # A smaller portion of the impact continues past the receptor
-                # toward the screen edge. This makes the destruction readable
-                # at the actual collision point while preserving the stronger
-                # reflected beam/shards travelling back toward the origin.
                 outward_count = {HitQuality.HIT: 4, HitQuality.GREAT: 6, HitQuality.PERFECT: 9}[quality]
                 for _ in range(outward_count):
                     self._outbound_particles.append(
@@ -1182,8 +1131,6 @@ class Renderer:
                     )
 
     def _draw_particles(self, song_time: float) -> None:
-        # A cheap receptor-local impact bloom gives each successful tile a
-        # readable POP before the existing vector shards travel up the lane.
         burst_alive: list[dict[str, object]] = []
         for burst in self._impact_bursts:
             age = song_time - float(burst["born"])
@@ -1201,7 +1148,6 @@ class Renderer:
             fade = (1.0 - phase) ** 1.4
             color = _blend(BG, burst["color"], fade)
             radius = int(lane_w * (0.10 + 0.30 * phase) * power)
-            # Diamond + cross reads as an impact rather than a soft glow.
             diamond = [(cx, cy - radius), (cx + radius, cy), (cx, cy + radius), (cx - radius, cy)]
             pygame.draw.polygon(self.screen, _blend(BG, color, 0.24 * fade), diamond, 0)
             pygame.draw.polygon(
@@ -1235,9 +1181,6 @@ class Renderer:
             y = self._field_y(kind, progress)
             fade = 1.0 - age / life
             color = _blend(BG, p["color"], fade)
-
-            # Rectangular/vector shards make the arriving bar appear to fracture
-            # rather than merely vanish into generic sparkles.
             length = max(2.0, lane_w * float(p["length"]) * (0.35 + 0.65 * fade))
             thickness = max(1, int(int(p["size"]) * (0.65 + fade)))
             tilt = float(p["jitter"]) * 0.35
@@ -1260,8 +1203,6 @@ class Renderer:
             alive.append(p)
         self._particles = alive
 
-        # Success debris that escapes beyond the receptor. Kept intentionally
-        # small so the main reflected pulse still owns the visual language.
         outward_alive: list[dict[str, object]] = []
         for p in self._outbound_particles:
             age = song_time - float(p["born"])
@@ -1290,9 +1231,6 @@ class Renderer:
             outward_alive.append(p)
         self._outbound_particles = outward_alive
 
-        # A miss feels like the incoming object made it through the defenses:
-        # briefly wash the margin *outside* that receptor red. No particles or
-        # reward-like explosion are added.
         miss_alive: list[dict[str, object]] = []
         w, h = self.size
         for impact in self._miss_impacts:
@@ -1392,19 +1330,11 @@ class Renderer:
                         strike_age = song_time - latest.song_time
                         strike_strength = max(1.0, min(2.2, float(latest.strength)))
 
-                # Receptors are deliberately *not* bars. They are open bracket
-                # gates, while incoming notes remain solid horizontal bars.
-                # A detected lane-entry/strike temporarily drives the receptor
-                # toward white-hot luminosity, then it decays smoothly back to
-                # the ordinary occupancy state. This is the player's direct
-                # input acknowledgement; actual note hits retain the much larger
-                # shatter/back-pulse effect below.
                 idle_color = DIM if enabled else _blend(DIM, BG, 0.58)
                 base_gate_color = color if is_occupied else idle_color
                 input_flash = 0.0
                 if strike_age is not None:
                     life = min(1.0, strike_age / MOTION_EVENT_VISUAL_SECONDS)
-                    # Fast initial flare, followed by a visible recovery tail.
                     input_flash = (1.0 - life) ** 1.45
                     input_flash *= min(1.0, 0.82 + 0.08 * strike_strength)
 
@@ -1413,9 +1343,6 @@ class Renderer:
                 tick = 9 + int(round(5.0 * input_flash))
                 arm = max(10, int((gate_r - gate_l) * (0.15 + 0.035 * input_flash)))
 
-                # A dim outer halo makes the flare readable even against a
-                # filled/occupied lane without introducing another travelling
-                # effect that can be mistaken for a note hit.
                 if input_flash > 0.02:
                     halo_color = _blend(BG, _blend(color, WHITE, 0.62), 0.30 + 0.52 * input_flash)
                     halo_pad = 4 + int(5 * input_flash)
@@ -1434,9 +1361,6 @@ class Renderer:
                 pygame.draw.line(self.screen, gate_color, (gate_r, y - tick), (gate_r, y + tick), gate_width)
                 pygame.draw.line(self.screen, gate_color, (gate_r - arm, y), (gate_r, y), gate_width)
 
-                # Occupancy gets a small diamond at the gate center; an input
-                # impulse turns it into a bright, larger core and the same core
-                # fades during the detector recovery period.
                 base_diamond = color if is_occupied else idle_color
                 diamond_color = _blend(base_diamond, WHITE, 0.96 * input_flash)
                 radius = (6 if is_occupied else 3) + int(round(5.0 * input_flash))
@@ -1474,9 +1398,6 @@ class Renderer:
                         pulse_power = 0.0
 
                     if is_hit:
-                        # Timing quality directly changes the force of the visual
-                        # impact: stronger packet, thicker lane streak and wider
-                        # receptor shock ring for GREAT/PERFECT.
                         travel = min(1.0, age / HIT_FLASH_SECONDS)
                         head_p = max(0.03, 1.0 - travel * 0.97)
                         tail_p = min(1.0, head_p + 0.22 + 0.06 * pulse_power)
@@ -1644,7 +1565,7 @@ class Renderer:
         best = self.score_font.render(f"{best_score:,}", True, WHITE)
         self.screen.blit(best_label, best_label.get_rect(topright=(w - 18, 14)))
         self.screen.blit(best, best.get_rect(topright=(w - 18, 31)))
-        chain_label = self.small_font.render(f"A/C  CHAINS: {chain_mode.label}", True, DIM)
+        chain_label = self.small_font.render(f"V  VIRTUAL HOLDS: {chain_mode.label}", True, DIM)
         self.screen.blit(chain_label, chain_label.get_rect(topright=(w - 18, 70)))
 
         center_y = int(h * VANISH_Y) - 48
@@ -1692,8 +1613,6 @@ class Renderer:
         }
         combo_color = combo_colors[stats.multiplier]
         combo = self.combo_font.render(str(stats.combo), True, combo_color)
-        # A restrained music-synced size pulse gives the combo counter life
-        # without reintroducing a screen-wide brightness strobe.
         scale = 1.0 + 0.075 * beat_pulse
         if scale > 1.002:
             combo = pygame.transform.smoothscale(
@@ -1708,8 +1627,6 @@ class Renderer:
         self.screen.blit(mult, mult.get_rect(center=(w // 2, center_y + 54)))
 
         if stats.multiplier >= 5:
-            # Tiny vector embers: enough to read as "on fire" while retaining
-            # the game's abstract vector aesthetic.
             t = pygame.time.get_ticks() / 1000.0
             for i in range(7):
                 phase = (t * 1.8 + i / 7.0) % 1.0
