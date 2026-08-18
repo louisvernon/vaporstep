@@ -58,33 +58,21 @@ Source runs can fetch the same pinned model when it is absent. Packaged builds i
 
 ## Persistent data
 
-The user-managed song library is kept separate from application state. By default, songs live in a visible home-directory location on all platforms:
+VaporStep keeps its user-owned files under one visible home-directory root on all platforms:
 
 ```text
-~/VaporStep/Songs
+~/VaporStep/
+├── Songs/
+├── Recordings/
+└── State/
+    ├── settings.json
+    ├── highscores.json
+    └── Cache/
 ```
 
-Users can select any other song-library folder from the application.
+`Songs` is the default StepMania-compatible library location, and users can select another song folder from the application. `Recordings` contains saved gameplay videos. `State` contains VaporStep-managed settings, scores and caches; a future song-library index should also live under `State`.
 
-Settings, high scores and future caches remain in each operating system's normal application-data location.
-
-Typical locations:
-
-macOS:
-
-```text
-~/Library/Application Support/VaporStep/highscores.json
-~/Library/Application Support/VaporStep/settings.json
-```
-
-Linux:
-
-```text
-~/.local/share/vaporstep/highscores.json
-~/.config/vaporstep/settings.json
-```
-
-Windows uses the user's Local AppData `VaporStep` directory.
+Keeping all default VaporStep-owned data under this root makes backup and removal straightforward: deleting `~/VaporStep` removes the application's default user data. Temporary encoder/runtime files may still use the operating system temporary directory while the application is running.
 
 ## PyInstaller
 
