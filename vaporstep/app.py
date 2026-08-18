@@ -16,6 +16,7 @@ from .demo import make_demo_notes
 from .directory_browser import DirectoryBrowser
 from .domain import BodyState, ChainMode
 from .keyboard_input import KeyboardBodyInput
+from .library_index import LibraryIndexer, LibraryScanSnapshot
 from .menu import HeldMenuRepeater, MenuAction, SongMenu, action_for_event
 from .model_asset import ensure_pose_model
 from .pose_input import PoseCameraInput, probe_camera
@@ -33,7 +34,7 @@ from .settings import (
     SettingsStore,
     clamp_horizontal_reach,
 )
-from .simfile_loader import load_chart, scan_library
+from .simfile_loader import load_chart
 from .tracking_overlay import draw_lower_body_tracking_overlay
 
 
@@ -113,6 +114,69 @@ def _safe_settings_save(store: SettingsStore) -> None:
         print(f"Could not save settings: {exc}", file=sys.stderr)
 
 
+def _draw_library_scan(renderer: Renderer, snapshot: LibraryScanSnapshot) -> None:
+    """Draw a lightweight responsive progress screen while a new library is indexed."""
+    screen = renderer.screen
+    screen.fill((2, 2, 8))
+    width, height = screen.get_size()
+    cyan = (70, 245, 255)
+    magenta = (255, 55, 210)
+    white = (235, 245, 255)
+    dim = (70, 88, 115)
+    grid = (25, 64, 88)
+
+    title = renderer.big_font.render("BUILDING SONG LIBRARY", True, magenta)
+    screen.blit(title, title.get_rect(center=(width // 2, int(height * 0.18))))
+
+    phase = "Scanning folders…" if snapshot.phase == "discovering" else "Indexing stepfiles…"
+    if snapshot.complete:
+        phase = "Library ready"
+    phase_surface = renderer.font.render(phase, True, cyan)
+    screen.blit(phase_surface, phase_surface.get_rect(center=(width // 2, int(height * 0.28))))
+
+    rows = (
+        ("Folders scanned", snapshot.folders_scanned),
+        ("Stepfiles found", snapshot.stepfiles_found),
+        ("Songs indexed", snapshot.songs_found),
+        ("Charts found", snapshot.charts_found),
+        ("Loaded from cache", snapshot.cached_songs),
+        ("Re-parsed", snapshot.parsed_songs),
+        ("Skipped / errors", len(snapshot.errors)),
+    )
+    y = int(height * 0.36)
+    for label, value in rows:
+        label_surface = renderer.small_font.render(label.upper(), True, dim)
+        value_surface = renderer.font.render(f"{value:,}", True, white)
+        screen.blit(label_surface, label_surface.get_rect(midright=(width // 2 - 18, y)))
+        screen.blit(value_surface, value_surface.get_rect(midleft=(width // 2 + 18, y)))
+        y += 34
+
+    ratio = snapshot.progress_ratio
+    bar_width = min(520, max(220, width - 160))
+    bar_height = 14
+    bar_x = (width - bar_width) // 2
+    bar_y = min(height - 105, y + 14)
+    pygame.draw.rect(screen, grid, (bar_x, bar_y, bar_width, bar_height), 1)
+    if ratio is None:
+        sweep_width = max(30, bar_width // 5)
+        phase_px = int((time.monotonic() * 180) % (bar_width + sweep_width)) - sweep_width
+        left = max(0, phase_px)
+        right = min(bar_width, phase_px + sweep_width)
+        if right > left:
+            pygame.draw.rect(screen, cyan, (bar_x + left, bar_y + 2, right - left, bar_height - 4))
+    else:
+        fill = int((bar_width - 4) * ratio)
+        if fill > 0:
+            pygame.draw.rect(screen, cyan, (bar_x + 2, bar_y + 2, fill, bar_height - 4))
+        progress = renderer.small_font.render(
+            f"{snapshot.files_processed:,} / {snapshot.stepfiles_found:,}", True, dim
+        )
+        screen.blit(progress, progress.get_rect(center=(width // 2, bar_y + 32)))
+
+    hint = renderer.small_font.render("Esc returns to the main menu; indexing continues in the background", True, dim)
+    screen.blit(hint, hint.get_rect(midbottom=(width // 2, height - 24)))
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     settings_store = SettingsStore()
@@ -140,6 +204,7 @@ def main(argv: list[str] | None = None) -> int:
     gameplay_sounds = GameplaySounds()
     records = RecordStore()
     preview = SongPreviewPlayer()
+    library_indexer = LibraryIndexer()
 
     songs_root = _songs_root(args, settings_store)
     scan_errors: list[str] = []
@@ -154,6 +219,7 @@ def main(argv: list[str] | None = None) -> int:
     record_play_enabled = False
     active_recording: RunRecorder | None = None
     result_recording: RunRecorder | None = None
+    applied_scan_complete = False
 
     def chains_enabled(mode: ChainMode) -> bool:
         return mode != ChainMode.OFF
@@ -191,30 +257,39 @@ def main(argv: list[str] | None = None) -> int:
         elif visible:
             menu.select_song_index(min(max(0, fallback_index), len(visible) - 1))
 
-    def scan_current_library() -> None:
+    def _adopt_song_list(new_songs, new_errors) -> None:
         nonlocal songs, scan_errors, load_error
-        preview.stop(reset_selection=True)
-        scan_errors = []
-        songs = []
-        if songs_root is not None:
-            print(f"Scanning stepfile songs: {songs_root}")
-            songs, scan_errors = scan_library(songs_root)
-            print(f"Found {len(songs)} compatible songs ({len(scan_errors)} parse errors).")
-            for err in scan_errors[:8]:
-                print(f"  warning: {err}", file=sys.stderr)
+        preserve_key = song_key(menu.song) if menu.song is not None else settings_store.settings.last_song_key
+        songs = list(new_songs)
+        scan_errors = list(new_errors)
         for song in songs:
             if song_was_played(song):
                 played_keys.add(song_key(song))
         settings_store.settings.played_song_keys = sorted(played_keys)
-        rebuild_song_menu(settings_store.settings.last_song_key)
+        rebuild_song_menu(preserve_key)
         load_error = None
+
+    def start_library_scan(*, show_progress: bool) -> None:
+        nonlocal applied_scan_complete, mode
+        preview.stop(reset_selection=True)
+        if songs_root is None:
+            _adopt_song_list([], [])
+            return
+        try:
+            cached = library_indexer.cached_songs(songs_root)
+        except Exception:
+            cached = []
+        if cached:
+            _adopt_song_list(cached, [])
+        library_indexer.start(songs_root)
+        applied_scan_complete = False
+        if show_progress:
+            mode = "library_scan"
 
     privacy_pending = (
         not args.demo
         and settings_store.settings.privacy_notice_version < PRIVACY_NOTICE_VERSION
     )
-    if songs_root is not None and not args.demo and not privacy_pending:
-        scan_current_library()
 
     repeater = HeldMenuRepeater()
     mode = "game" if args.demo else ("privacy" if privacy_pending else "home")
@@ -224,6 +299,9 @@ def main(argv: list[str] | None = None) -> int:
     result_record = ChartRecord()
     result_new_high = False
     result_failed = False
+
+    if songs_root is not None and not args.demo and not privacy_pending:
+        start_library_scan(show_progress=False)
 
     camera: PoseCameraInput | None = None
     camera_error = ""
@@ -376,6 +454,20 @@ def main(argv: list[str] | None = None) -> int:
         while running:
             frame_dt = min(clock.get_time() / 1000.0, 0.10)
             now = time.monotonic()
+            scan_snapshot = library_indexer.snapshot()
+            if scan_snapshot.complete and not applied_scan_complete:
+                expected_root = songs_root.expanduser().resolve() if songs_root is not None else None
+                if scan_snapshot.root == expected_root:
+                    _adopt_song_list(scan_snapshot.songs, scan_snapshot.errors)
+                    for err in scan_snapshot.errors[:8]:
+                        print(f"  warning: {err}", file=sys.stderr)
+                    print(
+                        f"Indexed {scan_snapshot.songs_found} songs / {scan_snapshot.charts_found} charts "
+                        f"({scan_snapshot.cached_songs} cached, {scan_snapshot.parsed_songs} parsed)."
+                    )
+                    applied_scan_complete = True
+                    if mode == "library_scan":
+                        mode = "home"
 
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
@@ -386,6 +478,11 @@ def main(argv: list[str] | None = None) -> int:
                     toggle_fullscreen()
                     continue
 
+                if mode == "library_scan":
+                    if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
+                        mode = "home"
+                    continue
+
                 if mode == "privacy":
                     action = action_for_event(event)
                     if action == MenuAction.BACK:
@@ -394,9 +491,9 @@ def main(argv: list[str] | None = None) -> int:
                         settings_store.settings.privacy_notice_version = PRIVACY_NOTICE_VERSION
                         _safe_settings_save(settings_store)
                         run_camera_probe()
-                        if songs_root is not None:
-                            scan_current_library()
                         mode = "home"
+                        if songs_root is not None:
+                            start_library_scan(show_progress=False)
                         menu_sounds.select()
                     continue
 
@@ -455,9 +552,8 @@ def main(argv: list[str] | None = None) -> int:
                             songs_root = chosen
                             settings_store.settings.song_folder = str(chosen)
                             _safe_settings_save(settings_store)
-                            scan_current_library()
                             folder_browser = None
-                            mode = "home"
+                            start_library_scan(show_progress=True)
                             menu_sounds.select()
                     continue
 
@@ -630,14 +726,28 @@ def main(argv: list[str] | None = None) -> int:
                 clock.tick(TARGET_FPS)
                 continue
 
+            if mode == "library_scan":
+                _draw_library_scan(renderer, scan_snapshot)
+                pygame.display.flip()
+                clock.tick(TARGET_FPS)
+                continue
+
             if mode == "home":
+                status_text = camera_status()
+                if scan_snapshot.running:
+                    if scan_snapshot.phase == "discovering":
+                        status_text += f"  ·  library scan {scan_snapshot.folders_scanned:,} folders"
+                    else:
+                        status_text += (
+                            f"  ·  library {scan_snapshot.files_processed:,}/{scan_snapshot.stepfiles_found:,}"
+                        )
                 renderer.draw_main_menu(
                     main_index,
                     songs_root,
                     len(songs),
                     settings_store.settings.camera_index,
                     settings_store.settings.horizontal_reach,
-                    camera_status(),
+                    status_text,
                 )
                 pygame.display.flip()
                 clock.tick(TARGET_FPS)

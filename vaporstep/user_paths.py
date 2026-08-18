@@ -23,6 +23,10 @@ def highscores_path() -> Path:
     return state_dir() / "highscores.json"
 
 
+def song_index_path() -> Path:
+    return state_dir() / "song_index.json"
+
+
 def cache_dir() -> Path:
     return state_dir() / "Cache"
 
