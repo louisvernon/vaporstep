@@ -4,9 +4,9 @@ from dataclasses import asdict, dataclass, field
 import json
 import os
 from pathlib import Path
-import sys
 
 from .config import PLAYER_HORIZONTAL_ZOOM
+from .user_paths import settings_path, songs_dir
 
 
 MIN_HORIZONTAL_REACH = 1.00
@@ -16,14 +16,11 @@ PRIVACY_NOTICE_VERSION = 2
 
 
 def default_settings_path() -> Path:
-    home = Path.home()
-    if sys.platform == "darwin":
-        return home / "Library" / "Application Support" / "VaporStep" / "settings.json"
-    if sys.platform.startswith("win"):
-        base = Path(os.environ.get("LOCALAPPDATA") or os.environ.get("APPDATA") or home)
-        return base / "VaporStep" / "settings.json"
-    base = Path(os.environ.get("XDG_CONFIG_HOME") or (home / ".config"))
-    return base / "vaporstep" / "settings.json"
+    return settings_path()
+
+
+def default_song_folder() -> str:
+    return str(songs_dir())
 
 
 def clamp_horizontal_reach(value: float) -> float:
@@ -34,7 +31,7 @@ def clamp_horizontal_reach(value: float) -> float:
 
 @dataclass
 class AppSettings:
-    song_folder: str = ""
+    song_folder: str = field(default_factory=default_song_folder)
     camera_index: int = 0
     horizontal_reach: float = PLAYER_HORIZONTAL_ZOOM
     favorite_song_keys: list[str] = field(default_factory=list)
@@ -56,7 +53,7 @@ class AppSettings:
             return sorted({str(value) for value in values if str(value)})
 
         return AppSettings(
-            song_folder=str(self.song_folder or ""),
+            song_folder=str(self.song_folder or default_song_folder()),
             camera_index=max(0, int(self.camera_index)),
             horizontal_reach=clamp_horizontal_reach(self.horizontal_reach),
             favorite_song_keys=clean_keys(self.favorite_song_keys),
@@ -72,6 +69,12 @@ class SettingsStore:
         self.path = path or default_settings_path()
         self.settings = AppSettings()
         self.load()
+        default_path = Path(default_song_folder())
+        if self.settings.song_path == default_path:
+            try:
+                default_path.mkdir(parents=True, exist_ok=True)
+            except OSError:
+                pass
 
     def load(self) -> AppSettings:
         try:
@@ -86,7 +89,7 @@ class SettingsStore:
 
         try:
             self.settings = AppSettings(
-                song_folder=str(raw.get("song_folder", "") or ""),
+                song_folder=str(raw.get("song_folder") or default_song_folder()),
                 camera_index=int(raw.get("camera_index", 0)),
                 horizontal_reach=float(raw.get("horizontal_reach", PLAYER_HORIZONTAL_ZOOM)),
                 favorite_song_keys=raw.get("favorite_song_keys", []),

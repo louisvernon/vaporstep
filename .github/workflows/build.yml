@@ -20,7 +20,7 @@ jobs:
             package: VaporStep-Linux-x86_64.tar.gz
           - os: windows-latest
             artifact: VaporStep-Windows-x86_64
-            package: VaporStep-Windows-x86_64.zip
+            package: VaporStep-Windows-x86_64.exe
           - os: macos-latest
             artifact: VaporStep-macOS-AppleSilicon
             package: VaporStep-macOS-AppleSilicon.zip
@@ -59,7 +59,7 @@ jobs:
       - name: Package Windows
         if: runner.os == 'Windows'
         shell: pwsh
-        run: Compress-Archive -Path dist/VaporStep -DestinationPath "${{ matrix.package }}"
+        run: Copy-Item dist/VaporStep.exe "${{ matrix.package }}"
 
       - name: Package macOS
         if: runner.os == 'macOS'

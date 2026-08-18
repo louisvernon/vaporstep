@@ -6,10 +6,10 @@ import hashlib
 import json
 import os
 from pathlib import Path
-import sys
 
 from .scoring import RunStats, grade_for_ratio
 from .song import ChartInfo, SongInfo
+from .user_paths import highscores_path
 
 
 @dataclass(frozen=True)
@@ -49,13 +49,7 @@ def chart_key(song: SongInfo, chart: ChartInfo) -> str:
 
 
 def default_records_path() -> Path:
-    home = Path.home()
-    if sys.platform == "darwin":
-        return home / "Library" / "Application Support" / "VaporStep" / "highscores.json"
-    if sys.platform.startswith("win"):
-        base = Path(os.environ.get("LOCALAPPDATA") or (home / "AppData" / "Local"))
-        return base / "VaporStep" / "highscores.json"
-    return home / ".local" / "share" / "vaporstep" / "highscores.json"
+    return highscores_path()
 
 
 class RecordStore:

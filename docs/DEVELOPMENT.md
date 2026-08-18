@@ -19,7 +19,7 @@ You can select a song library in the UI or override it while developing:
 python -m vaporstep --songs "/path/to/Songs"
 ```
 
-`VAPORSTEP_SONGS` provides the same override through the environment.
+`VAPORSTEP_SONGS` provides the same override through the environment. Without an override or saved choice, VaporStep uses `~/VaporStep/Songs` and creates that directory if needed.
 
 MediaPipe is currently pinned to `0.10.35` for the tested pose-tracking path. `setuptools<82` is retained because `simfile==2.1.1` imports `pkg_resources`.
 
@@ -58,29 +58,25 @@ Source runs can fetch the same pinned model when it is absent. Packaged builds i
 
 ## Persistent data
 
-High scores and app settings are stored outside the installation directory.
-
-Typical locations:
-
-macOS:
+VaporStep keeps its user-owned files under one visible home-directory root on all platforms:
 
 ```text
-~/Library/Application Support/VaporStep/highscores.json
-~/Library/Application Support/VaporStep/settings.json
+~/VaporStep/
+├── Songs/
+├── Recordings/
+└── State/
+    ├── settings.json
+    ├── highscores.json
+    └── Cache/
 ```
 
-Linux:
+`Songs` is the default song library location, and users can select another song folder from the application. `Recordings` contains saved gameplay videos. `State` contains VaporStep-managed settings, scores and caches; a future song-library index should also live under `State`.
 
-```text
-~/.local/share/vaporstep/highscores.json
-~/.config/vaporstep/settings.json
-```
-
-Windows uses the user's Local AppData `VaporStep` directory.
+Keeping all default VaporStep-owned data under this root makes backup and removal straightforward: deleting `~/VaporStep` removes the application's default user data. Temporary encoder/runtime files may still use the operating system temporary directory while the application is running.
 
 ## PyInstaller
 
-VaporStep uses a one-folder PyInstaller build so native dependencies remain easy to inspect and troubleshoot.
+VaporStep uses native PyInstaller builds on each target platform. Windows is packaged as a one-file self-extracting executable; macOS and Linux keep directory-based builds so their native dependencies remain straightforward to package and inspect.
 
 Install build dependencies:
 
@@ -105,9 +101,11 @@ Typical outputs:
 
 ```text
 macOS:    dist/VaporStep.app
-Windows:  dist/VaporStep/
+Windows:  dist/VaporStep.exe
 Linux:    dist/VaporStep/
 ```
+
+The Windows executable contains the Python runtime and bundled native/data dependencies and extracts them to a temporary runtime directory when launched.
 
 PyInstaller is not a cross-compiler; release binaries are built natively for each target platform.
 
@@ -136,7 +134,7 @@ The resulting files are:
 
 ```text
 VaporStep-Linux-x86_64.tar.gz
-VaporStep-Windows-x86_64.zip
+VaporStep-Windows-x86_64.exe
 VaporStep-macOS-AppleSilicon.zip
 ```
 

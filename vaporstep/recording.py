@@ -8,7 +8,6 @@ import queue
 import re
 import shutil
 import subprocess
-import sys
 import tempfile
 import threading
 import unicodedata
@@ -24,11 +23,11 @@ from .audio_fx import (
     synthesize_gameplay_event,
 )
 from .domain import GameplayEvent
+from .user_paths import recordings_dir
 
 RECORD_FPS = 30
 RECORD_SIZE = (1280, 720)
 FRAME_QUEUE_SIZE = 6
-
 
 
 
@@ -41,13 +40,9 @@ def recording_backend_status() -> tuple[bool, str]:
     except Exception as exc:
         return False, str(exc)
 
+
 def default_recordings_dir() -> Path:
-    home = Path.home()
-    if sys.platform == "darwin":
-        base = home / "Movies"
-    else:
-        base = home / "Videos"
-    return base / "VaporStep"
+    return recordings_dir()
 
 
 def safe_filename_component(value: str, fallback: str = "VaporStep") -> str:
