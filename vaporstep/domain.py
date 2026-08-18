@@ -11,6 +11,7 @@ class BodyPoint:
     y: float = 0.0
     lane: int | None = None
     visible: bool = False
+    source_weight: float = 0.0
 
 
 @dataclass(frozen=True)
