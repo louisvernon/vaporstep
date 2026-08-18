@@ -119,12 +119,11 @@ PyInstaller is not a cross-compiler; release binaries are built natively for eac
 
 - Linux x86_64
 - Windows x86_64
-- macOS Intel
 - macOS Apple Silicon
 
-A manual workflow run builds the four packages and stores them as GitHub Actions artifacts. Use this path to test packaged builds on real cameras before publishing a release.
+A manual workflow run builds the packages and stores them as GitHub Actions artifacts. Use this path to test packaged builds on real cameras before publishing a release.
 
-Pushing a tag matching `v*` runs the same native builds, creates a GitHub Release after all four builds succeed, generates release notes from GitHub history, and attaches the four platform packages to the release.
+Pushing a tag matching `v*` runs the same native builds, creates a GitHub Release after all builds succeed, generates release notes from GitHub history, and attaches the platform packages to the release.
 
 Example:
 
@@ -138,11 +137,8 @@ The resulting files are:
 ```text
 VaporStep-Linux-x86_64.tar.gz
 VaporStep-Windows-x86_64.zip
-VaporStep-macOS-Intel.zip
 VaporStep-macOS-AppleSilicon.zip
 ```
-
-The packaged builds are currently unsigned and macOS builds are not notarized. Signing and notarization can be added to the release workflow later without changing the release artifact names.
 
 ## Repository hygiene
 
