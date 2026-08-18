@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import math
+from typing import Iterable
 
 from .domain import HitQuality
 
@@ -33,13 +34,24 @@ def combo_multiplier(combo: int) -> int:
     return 1
 
 
-def hit_points(combo: int, quality: HitQuality = HitQuality.HIT) -> int:
-    return int(round(BASE_POINTS * QUALITY_MULTIPLIERS[quality] * combo_multiplier(combo)))
+def hit_points(combo: int, quality: HitQuality = HitQuality.HIT, score_weight: float = 1.0) -> int:
+    base = BASE_POINTS * QUALITY_MULTIPLIERS[quality] * combo_multiplier(combo)
+    return int(round(base * max(0.0, float(score_weight))))
 
 
-def theoretical_max_score(note_count: int) -> int:
-    # Maximum means a full unbroken combo of PERFECT timing bonuses.
-    return sum(hit_points(combo, HitQuality.PERFECT) for combo in range(1, note_count + 1))
+def theoretical_max_score(
+    note_count: int,
+    score_weights: Iterable[float] | None = None,
+) -> int:
+    """Maximum score for a full PERFECT combo with optional weighted judgements."""
+    if score_weights is None:
+        weights = (1.0,) * max(0, int(note_count))
+    else:
+        weights = tuple(float(weight) for weight in score_weights)
+    return sum(
+        hit_points(combo, HitQuality.PERFECT, weight)
+        for combo, weight in enumerate(weights, start=1)
+    )
 
 
 def grade_for_ratio(ratio: float) -> str:
@@ -106,6 +118,7 @@ def performance_state(judgements: list[bool] | tuple[bool, ...], total_notes: in
 @dataclass
 class RunStats:
     total_notes: int
+    score_weights: tuple[float, ...] = field(default_factory=tuple, repr=False)
     score: int = 0
     hits: int = 0
     misses: int = 0
@@ -118,7 +131,8 @@ class RunStats:
 
     @property
     def max_score(self) -> int:
-        return theoretical_max_score(self.total_notes)
+        weights = self.score_weights if self.score_weights else None
+        return theoretical_max_score(self.total_notes, weights)
 
     @property
     def multiplier(self) -> int:
@@ -161,7 +175,12 @@ class RunStats:
     def grade(self) -> str:
         return grade_for_ratio(self.score_ratio)
 
-    def register_hit(self, quality: HitQuality = HitQuality.HIT) -> int:
+    def register_hit(
+        self,
+        quality: HitQuality = HitQuality.HIT,
+        *,
+        score_weight: float = 1.0,
+    ) -> int:
         self.hits += 1
         self.combo += 1
         self.max_combo = max(self.max_combo, self.combo)
@@ -172,11 +191,12 @@ class RunStats:
             self.greats += 1
         else:
             self.basic_hits += 1
-        points = hit_points(self.combo, quality)
+        points = hit_points(self.combo, quality, score_weight)
         self.score += points
         return points
 
-    def register_miss(self) -> None:
+    def register_miss(self, *, break_combo: bool = True) -> None:
         self.misses += 1
-        self.combo = 0
+        if break_combo:
+            self.combo = 0
         self.judgements.append(False)
