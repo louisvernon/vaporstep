@@ -2,20 +2,23 @@
 
 <img src="assets/vaporstep_icon.png" alt="VaporStep icon" width="160">
 
-**VaporStep turns your webcam into a full-body rhythm game.** Step, reach, stomp and move your hands through the lanes as notes arrive with the music — no dance pad or motion controllers required.
+**VaporStep turns your webcam into a full-body rhythm game.** Step, reach, stomp and pump your hands through the lanes as notes arrive with the music — no dance pad or motion controllers required.
 
-It is designed to be easy to pick up, energetic to play, and especially fun with existing StepMania-compatible song libraries.
+VaporStep has out of the box support for StepMania style step files, so you should be able to point it at your existing libraries and play.
+
+<img width="400" alt="VaporStep-Menu" src="https://github.com/user-attachments/assets/860be5eb-57bd-4e0b-ba67-fa7656de887d" />
 
 
 [▶ Gameplay demo](https://github.com/user-attachments/assets/3a2fa1ee-74b9-48e2-b936-ef7079737c6f)
+
 
 ## What you can do
 
 - Play using your whole body through an ordinary webcam.
 - Use both **foot lanes and hand lanes**.
 - Play supported StepMania-compatible `.sm` and `.ssc` song libraries.
-- Calibrate the camera and reach to suit your room, camera and player size.
-- Browse songs with difficulty, BPM and hand/foot information.
+- Calibrate the camera and reach to suit your room and camera.
+- Browse songs by difficulty, BPM and hand/foot information.
 - Favorite songs, filter previously played songs and keep local high scores.
 - Record each run as a local shareable video with the rendered silhouette and game audio.
 - Play on macOS, Windows and Linux.
