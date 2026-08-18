@@ -37,16 +37,15 @@ PLAYER_HORIZONTAL_ZOOM = 1.10
 LANE_PERSPECTIVE_STRENGTH = 0.45
 
 # Lower-body lane position uses a virtual point part-way down the shin rather
-# than the knee itself. Ankle influence now follows MediaPipe confidence instead
-# of camera-edge position so a confidently estimated ankle can still help when
-# it is near or slightly beyond the visible frame. The resulting control point
-# is lightly smoothed horizontally; stomp timing continues to use the raw knee.
-LOWER_BODY_ANKLE_BLEND = 0.45
+# than the knee itself. Ankle influence follows MediaPipe confidence instead of
+# camera-edge position so a confidently estimated ankle can still help when it
+# is near or slightly beyond the visible frame. Only the ankle contribution
+# weight is smoothed; the resulting x/y position follows each pose sample
+# directly so fast lateral steps are not delayed. Stomp timing uses the raw knee.
+LOWER_BODY_ANKLE_BLEND = 0.55
 LOWER_BODY_ANKLE_CONFIDENCE_LOW = 0.25
 LOWER_BODY_ANKLE_CONFIDENCE_HIGH = 0.70
-LOWER_BODY_CONTROL_SMOOTH_ALPHA = 0.35
-LOWER_BODY_WEIGHT_SMOOTH_ALPHA = 0.25
-LOWER_BODY_MAX_SINGLE_FRAME_X_JUMP = 0.22
+LOWER_BODY_WEIGHT_SMOOTH_ALPHA = 0.35
 
 LANDMARK_VISIBILITY_THRESHOLD = 0.45
 
