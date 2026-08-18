@@ -61,3 +61,13 @@ def test_camera_probe_releases_device_immediately(monkeypatch):
 
     assert pose_input.probe_camera(0) is True
     assert capture.released is True
+
+
+def test_pose_timestamps_remain_strictly_increasing_with_same_millisecond():
+    timestamp = pose_input._strict_timestamp_ms(1.2341, -1)
+    duplicate_millisecond = pose_input._strict_timestamp_ms(1.2348, timestamp)
+    later = pose_input._strict_timestamp_ms(1.2360, duplicate_millisecond)
+
+    assert timestamp == 1234
+    assert duplicate_millisecond == 1235
+    assert later == 1236
