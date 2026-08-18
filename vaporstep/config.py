@@ -36,15 +36,17 @@ PLAYER_HORIZONTAL_ZOOM = 1.10
 # 0.0 = old fixed-width horizontal mapping; 1.0 = literal rendered perspective.
 LANE_PERSPECTIVE_STRENGTH = 0.45
 
-
 # Lower-body lane position uses a virtual point part-way down the shin rather
-# than the knee itself. This makes a planted foot less likely to drift lanes
-# when the player flexes/leans to move the other leg. Stomp timing still uses
-# knee vertical motion. The ankle contribution fades near the bottom camera
-# edge and disappears automatically when the ankle is not reliably tracked.
+# than the knee itself. Ankle influence now follows MediaPipe confidence instead
+# of camera-edge position so a confidently estimated ankle can still help when
+# it is near or slightly beyond the visible frame. The resulting control point
+# is lightly smoothed horizontally; stomp timing continues to use the raw knee.
 LOWER_BODY_ANKLE_BLEND = 0.45
-LOWER_BODY_ANKLE_EDGE_FADE_START = 0.92
-LOWER_BODY_ANKLE_EDGE_FADE_END = 1.02
+LOWER_BODY_ANKLE_CONFIDENCE_LOW = 0.25
+LOWER_BODY_ANKLE_CONFIDENCE_HIGH = 0.70
+LOWER_BODY_CONTROL_SMOOTH_ALPHA = 0.35
+LOWER_BODY_WEIGHT_SMOOTH_ALPHA = 0.25
+LOWER_BODY_MAX_SINGLE_FRAME_X_JUMP = 0.22
 
 LANDMARK_VISIBILITY_THRESHOLD = 0.45
 
@@ -78,4 +80,3 @@ VANISH_Y = 0.50
 HAND_HIT_Y = 0.10
 FOOT_HIT_Y = 0.90
 VANISH_HALF_WIDTH = 0.055
-
