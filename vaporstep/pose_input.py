@@ -21,8 +21,6 @@ from .config import (
     LOWER_BODY_ANKLE_BLEND,
     LOWER_BODY_ANKLE_CONFIDENCE_HIGH,
     LOWER_BODY_ANKLE_CONFIDENCE_LOW,
-    LOWER_BODY_CONTROL_SMOOTH_ALPHA,
-    LOWER_BODY_MAX_SINGLE_FRAME_X_JUMP,
     LOWER_BODY_WEIGHT_SMOOTH_ALPHA,
     LANE_COUNT,
     LANE_HYSTERESIS,
@@ -110,13 +108,11 @@ class PoseSnapshot:
 
 @dataclass
 class _LowerLegFilter:
-    x: float | None = None
-    y: float | None = None
+    """Smooth only ankle contribution, never the resulting x/y control point."""
+
     ankle_weight: float = 0.0
 
     def reset(self) -> None:
-        self.x = None
-        self.y = None
         self.ankle_weight = 0.0
 
     def update(
@@ -128,26 +124,9 @@ class _LowerLegFilter:
     ) -> tuple[float, float, float]:
         weight_alpha = max(0.0, min(1.0, LOWER_BODY_WEIGHT_SMOOTH_ALPHA))
         self.ankle_weight += (raw_ankle_weight - self.ankle_weight) * weight_alpha
-
-        target_x = knee.x + (ankle.x - knee.x) * self.ankle_weight
-        target_y = knee.y + (ankle.y - knee.y) * self.ankle_weight
-        if self.x is None or self.y is None:
-            self.x = target_x
-            self.y = target_y
-            return self.x, self.y, self.ankle_weight
-
-        # A person cannot plausibly move a lower leg across a large fraction of
-        # the camera in one pose sample. Clamp isolated model glitches without
-        # preventing a sustained real movement from catching up on later frames.
-        max_jump = max(0.01, float(LOWER_BODY_MAX_SINGLE_FRAME_X_JUMP))
-        dx = target_x - self.x
-        if abs(dx) > max_jump:
-            target_x = self.x + max_jump * (1.0 if dx > 0.0 else -1.0)
-
-        alpha = max(0.0, min(1.0, LOWER_BODY_CONTROL_SMOOTH_ALPHA))
-        self.x += (target_x - self.x) * alpha
-        self.y += (target_y - self.y) * alpha
-        return self.x, self.y, self.ankle_weight
+        x = knee.x + (ankle.x - knee.x) * self.ankle_weight
+        y = knee.y + (ankle.y - knee.y) * self.ankle_weight
+        return x, y, self.ankle_weight
 
 
 class PoseCameraInput:
@@ -364,7 +343,7 @@ class PoseCameraInput:
         *,
         leg: str,
     ) -> tuple[BodyPoint, BodyPoint, BodyPoint]:
-        """Return raw knee/ankle sources and a stable shin lane-control point.
+        """Return raw knee/ankle sources and a responsive shin lane-control point.
 
         Lane occupancy follows the virtual point. Stomp velocity continues to
         use the actual knee coordinates, but the knee carries the control point's
