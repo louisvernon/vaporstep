@@ -6,8 +6,8 @@
 
 It is designed to be easy to pick up, energetic to play, and especially fun with existing StepMania-compatible song libraries.
 
-[▶ Watch a gameplay demo](docs/media/vaporstep-demo.mp4)  
-*Video placeholder: add `docs/media/vaporstep-demo.mp4` to the repository.*
+
+[▶ Gameplay demo](https://github.com/user-attachments/assets/3a2fa1ee-74b9-48e2-b936-ef7079737c6f)
 
 ## What you can do
 
