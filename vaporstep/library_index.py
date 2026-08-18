@@ -44,6 +44,7 @@ class LibraryIndexer:
         self.path = path or song_index_path()
         self._lock = threading.Lock()
         self._thread: threading.Thread | None = None
+        self._generation = 0
         self._snapshot = LibraryScanSnapshot()
 
     def snapshot(self) -> LibraryScanSnapshot:
@@ -53,8 +54,8 @@ class LibraryIndexer:
     def start(self, root: Path) -> None:
         root = root.expanduser().resolve()
         with self._lock:
-            if self._thread is not None and self._thread.is_alive():
-                return
+            self._generation += 1
+            generation = self._generation
             self._snapshot = LibraryScanSnapshot(
                 running=True,
                 phase="discovering",
@@ -62,7 +63,7 @@ class LibraryIndexer:
             )
             self._thread = threading.Thread(
                 target=self._run,
-                args=(root,),
+                args=(root, generation),
                 name="VaporStepLibraryIndexer",
                 daemon=True,
             )
@@ -80,20 +81,36 @@ class LibraryIndexer:
         songs.sort(key=lambda s: (s.display_title.casefold(), s.artist.casefold()))
         return songs
 
-    def _publish(self, **changes) -> None:
+    def _is_current(self, generation: int) -> bool:
         with self._lock:
-            self._snapshot = replace(self._snapshot, **changes)
+            return generation == self._generation
 
-    def _run(self, root: Path) -> None:
+    def _publish(self, generation: int, **changes) -> bool:
+        with self._lock:
+            if generation != self._generation:
+                return False
+            self._snapshot = replace(self._snapshot, **changes)
+            return True
+
+    def _run(self, root: Path, generation: int | None = None) -> None:
+        # Tests may invoke _run directly; reserve a generation for that call.
+        if generation is None:
+            with self._lock:
+                self._generation += 1
+                generation = self._generation
+                self._snapshot = LibraryScanSnapshot(running=True, phase="discovering", root=root)
+
         errors: list[str] = []
         cache = self._load_cache(root)
-        paths, folders = self._discover(root, errors)
-        self._publish(
+        paths, folders = self._discover(root, errors, generation)
+        if not self._publish(
+            generation,
             phase="indexing",
             folders_scanned=folders,
             stepfiles_found=len(paths),
             errors=tuple(errors),
-        )
+        ):
+            return
 
         songs: list[SongInfo] = []
         new_entries: dict[str, dict] = {}
@@ -102,6 +119,8 @@ class LibraryIndexer:
         charts_found = 0
 
         for processed, path in enumerate(paths, start=1):
+            if not self._is_current(generation):
+                return
             try:
                 stat = path.stat()
                 relative = path.relative_to(root).as_posix()
@@ -138,7 +157,8 @@ class LibraryIndexer:
                 errors.append(f"{path}: {exc}")
 
             ordered = tuple(sorted(songs, key=lambda s: (s.display_title.casefold(), s.artist.casefold())))
-            self._publish(
+            if not self._publish(
+                generation,
                 files_processed=processed,
                 songs_found=len(songs),
                 charts_found=charts_found,
@@ -146,8 +166,11 @@ class LibraryIndexer:
                 parsed_songs=parsed_count,
                 errors=tuple(errors),
                 songs=ordered,
-            )
+            ):
+                return
 
+        if not self._is_current(generation):
+            return
         songs.sort(key=lambda s: (s.display_title.casefold(), s.artist.casefold()))
         try:
             self._save_cache(root, new_entries)
@@ -155,6 +178,7 @@ class LibraryIndexer:
             errors.append(f"Could not save song index: {exc}")
 
         self._publish(
+            generation,
             running=False,
             complete=True,
             phase="complete",
@@ -167,16 +191,21 @@ class LibraryIndexer:
             songs=tuple(songs),
         )
 
-    def _discover(self, root: Path, errors: list[str]) -> tuple[list[Path], int]:
+    def _discover(
+        self,
+        root: Path,
+        errors: list[str],
+        generation: int,
+    ) -> tuple[list[Path], int]:
         if not root.exists():
             return [], 0
         by_dir: dict[Path, list[Path]] = {}
         folders = 0
         for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
+            if not self._is_current(generation):
+                return [], folders
             folders += 1
             directory = Path(dirpath)
-            # Do not descend through directory symlinks outside/inside the tree;
-            # song libraries should remain an explicit, bounded filesystem walk.
             dirnames[:] = [name for name in dirnames if not (directory / name).is_symlink()]
             candidates: list[Path] = []
             for filename in filenames:
@@ -193,7 +222,8 @@ class LibraryIndexer:
                     errors.append(f"{path}: {exc}")
             if candidates:
                 by_dir[directory.resolve()] = candidates
-            self._publish(folders_scanned=folders, errors=tuple(errors))
+            if not self._publish(generation, folders_scanned=folders, errors=tuple(errors)):
+                return [], folders
 
         result: list[Path] = []
         for candidates in by_dir.values():
