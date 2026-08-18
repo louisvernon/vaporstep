@@ -29,7 +29,7 @@ The easiest way to use VaporStep is with a packaged build from the project relea
 [Download the latest release](../../releases/latest)
 
 1. Download the build for your platform and launch VaporStep.
-2. Put your compatible song library in `~/Stepfiles`, or choose **Song Folder** to use another location.
+2. Put your compatible song library in `~/VaporStep/Songs`, or choose **Song Folder** to use another location.
 3. Open **Calibration** if you want to check camera position or adjust reach.
 4. Choose **Play**, pick a song and move into position.
 
