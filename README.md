@@ -1,6 +1,6 @@
 # VaporStep
 
-![VaporStep icon](assets/vaporstep_icon.png)
+<img src="assets/vaporstep_icon.png" alt="VaporStep icon" width="160">
 
 **VaporStep turns your webcam into a full-body rhythm game.** Step, reach, stomp and move your hands through the lanes as notes arrive with the music — no dance pad or motion controllers required.
 
@@ -29,11 +29,11 @@ The easiest way to use VaporStep is with a packaged build from the project relea
 [Download the latest release](../../releases/latest)
 
 1. Download the build for your platform and launch VaporStep.
-2. Choose **Song Folder** and select your compatible song library.
+2. Put your compatible song library in `~/Stepfiles`, or choose **Song Folder** to use another location.
 3. Open **Calibration** if you want to check camera position or adjust reach.
 4. Choose **Play**, pick a song and move into position.
 
-On first launch your operating system may ask for camera and file access. VaporStep releases the camera whenever you are browsing menus or results and acquires it only for calibration and gameplay.
+On first launch your operating system may ask for camera access. VaporStep releases the camera whenever you are browsing menus or results and acquires it only for calibration and gameplay. If you later choose a song folder in an operating-system protected location, the OS may separately ask for permission to access it.
 
 ## Song libraries
 
