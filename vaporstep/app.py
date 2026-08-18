@@ -550,12 +550,8 @@ def main(argv: list[str] | None = None) -> int:
                                     )
                             menu_sounds.tick()
                             continue
-                        if event.key == pygame.K_c:
-                            chain_mode = chain_mode.shifted(1)
-                            menu_sounds.tick()
-                            continue
-                        if event.key == pygame.K_a:
-                            chain_mode = chain_mode.shifted(-1)
+                        if event.key == pygame.K_v:
+                            chain_mode = chain_mode.shifted()
                             menu_sounds.tick()
                             continue
                     action = action_for_event(event)
@@ -589,8 +585,8 @@ def main(argv: list[str] | None = None) -> int:
                     continue
 
                 if event.type == pygame.KEYDOWN:
-                    if event.key in (pygame.K_a, pygame.K_c) and session is not None and not session.running:
-                        chain_mode = chain_mode.shifted(-1 if event.key == pygame.K_a else 1)
+                    if event.key == pygame.K_v and session is not None and not session.running:
+                        chain_mode = chain_mode.shifted()
                         session.set_chain_mode(chain_mode)
                         if session.chart is not None:
                             current_record = records.get(
@@ -850,7 +846,7 @@ def main(argv: list[str] | None = None) -> int:
                 input_name=input_name,
                 song_title=(session.chart.song.display_title if session.chart else "VaporStep Demo"),
                 chart_label=(
-                    f"{session.chart.chart.label}  •  CHAINS {session.chain_mode.label}"
+                    f"{session.chart.chart.label}  •  VIRTUAL HOLDS {session.chain_mode.label}"
                     if session.chart
                     else "Synthetic chart"
                 ),
