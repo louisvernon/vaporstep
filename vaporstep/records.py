@@ -28,12 +28,18 @@ def song_key(song: SongInfo) -> str:
     return hashlib.sha1(raw.encode("utf-8", errors="replace")).hexdigest()
 
 
-def chart_key(song: SongInfo, chart: ChartInfo) -> str:
-    # Stable across moving a song pack to another directory, while still
-    # distinguishing charts/difficulties from the same song.
+def chart_key(song: SongInfo, chart: ChartInfo, *, chains_enabled: bool = True) -> str:
+    """Stable score key for one chart + virtual-chain scoring variant.
+
+    BLOCKS and DEBUG share the chains-enabled record because DEBUG only changes
+    presentation. Chain OFF is a different gameplay/scoring interpretation and
+    therefore gets an independent record and theoretical maximum.
+    """
+    variant = "chains-on" if chains_enabled else "chains-off"
     raw = "\x1f".join(
         (
-            "score-v2-timing",
+            "score-v3-sustains",
+            variant,
             song.title,
             song.subtitle,
             song.artist,
