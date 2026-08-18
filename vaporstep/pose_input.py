@@ -51,6 +51,12 @@ LEFT_ANKLE = 27
 RIGHT_ANKLE = 28
 
 
+def _strict_timestamp_ms(elapsed_seconds: float, previous_ms: int) -> int:
+    """Convert monotonic time to the strictly increasing milliseconds MediaPipe requires."""
+    candidate = max(0, int(float(elapsed_seconds) * 1000.0))
+    return max(candidate, int(previous_ms) + 1)
+
+
 def _open_camera_capture(camera_index: int):
     """Open a camera using the preferred native backend for this platform."""
     if platform.system() == "Darwin" and hasattr(cv2, "CAP_AVFOUNDATION"):
@@ -226,6 +232,7 @@ class PoseCameraInput:
         # waiting for the user to answer its camera-permission dialog. Keep the
         # capture thread alive and retry the same selected device.
         t0 = time.monotonic()
+        last_timestamp_ms = -1
         failed_reads = 0
         retry_count = 0
 
@@ -285,7 +292,8 @@ class PoseCameraInput:
             failed_reads = 0
             rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
             mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
-            timestamp_ms = int((time.monotonic() - t0) * 1000)
+            timestamp_ms = _strict_timestamp_ms(time.monotonic() - t0, last_timestamp_ms)
+            last_timestamp_ms = timestamp_ms
             self._landmarker.detect_async(mp_image, timestamp_ms)
 
     @staticmethod
