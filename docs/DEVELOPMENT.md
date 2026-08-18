@@ -70,7 +70,7 @@ VaporStep keeps its user-owned files under one visible home-directory root on al
     └── Cache/
 ```
 
-`Songs` is the default StepMania-compatible library location, and users can select another song folder from the application. `Recordings` contains saved gameplay videos. `State` contains VaporStep-managed settings, scores and caches; a future song-library index should also live under `State`.
+`Songs` is the default song library location, and users can select another song folder from the application. `Recordings` contains saved gameplay videos. `State` contains VaporStep-managed settings, scores and caches; a future song-library index should also live under `State`.
 
 Keeping all default VaporStep-owned data under this root makes backup and removal straightforward: deleting `~/VaporStep` removes the application's default user data. Temporary encoder/runtime files may still use the operating system temporary directory while the application is running.
 
