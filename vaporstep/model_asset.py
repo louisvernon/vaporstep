@@ -7,6 +7,7 @@ from pathlib import Path
 from urllib.request import urlretrieve
 
 from .resources import resource_path
+from .user_paths import cache_dir
 
 
 @dataclass(frozen=True)
@@ -49,7 +50,7 @@ def verify_model(path: Path, spec: ModelSpec) -> tuple[bool, str]:
 
 
 def _cache_dir() -> Path:
-    return Path.home() / ".cache" / "vaporstep"
+    return cache_dir()
 
 
 def ensure_pose_model() -> Path:
@@ -61,9 +62,9 @@ def ensure_pose_model() -> Path:
     if ok:
         return bundled
 
-    cache_dir = _cache_dir()
-    cache_dir.mkdir(parents=True, exist_ok=True)
-    model_path = cache_dir / spec.filename
+    model_cache_dir = _cache_dir()
+    model_cache_dir.mkdir(parents=True, exist_ok=True)
+    model_path = model_cache_dir / spec.filename
     ok, _ = verify_model(model_path, spec)
     if ok:
         return model_path
