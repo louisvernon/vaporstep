@@ -155,11 +155,21 @@ def main(argv: list[str] | None = None) -> int:
     active_recording: RunRecorder | None = None
     result_recording: RunRecorder | None = None
 
+    def chains_enabled(mode: ChainMode) -> bool:
+        return mode != ChainMode.OFF
+
+    def record_key(song, chart, mode: ChainMode) -> str:
+        return chart_key(song, chart, chains_enabled=chains_enabled(mode))
+
     def song_was_played(song) -> bool:
         key = song_key(song)
         if key in played_keys:
             return True
-        return any(records.get(chart_key(song, chart)).played_at for chart in song.charts)
+        return any(
+            records.get(chart_key(song, chart, chains_enabled=enabled)).played_at
+            for chart in song.charts
+            for enabled in (True, False)
+        )
 
     def rebuild_song_menu(preserve_key: str | None = None, fallback_index: int = 0) -> None:
         nonlocal menu
@@ -345,7 +355,7 @@ def main(argv: list[str] | None = None) -> int:
         _safe_settings_save(settings_store)
         try:
             loaded = load_chart(song, chart)
-            record = records.get(chart_key(song, chart))
+            record = records.get(record_key(song, chart, chain_mode))
             active_recording = None
             session = GameSession(chart=loaded, best_score=record.score, chain_mode=chain_mode)
             restart_camera()
@@ -582,6 +592,11 @@ def main(argv: list[str] | None = None) -> int:
                     if event.key in (pygame.K_a, pygame.K_c) and session is not None and not session.running:
                         chain_mode = chain_mode.shifted(-1 if event.key == pygame.K_a else 1)
                         session.set_chain_mode(chain_mode)
+                        if session.chart is not None:
+                            current_record = records.get(
+                                record_key(session.chart.song, session.chart.chart, chain_mode)
+                            )
+                            session.set_best_score(current_record.score)
                         renderer.reset_game_effects()
                         menu_sounds.tick()
                     elif event.key == pygame.K_ESCAPE:
@@ -646,7 +661,7 @@ def main(argv: list[str] | None = None) -> int:
                 preview.update(menu.song, now)
                 selected_record = ChartRecord()
                 if menu.song is not None and menu.chart is not None:
-                    selected_record = records.get(chart_key(menu.song, menu.chart))
+                    selected_record = records.get(record_key(menu.song, menu.chart, chain_mode))
                 renderer.draw_song_menu(
                     menu,
                     songs_root,
@@ -781,7 +796,7 @@ def main(argv: list[str] | None = None) -> int:
                 session.stop()
                 stop_camera()
                 assert session.chart is not None
-                key = chart_key(session.chart.song, session.chart.chart)
+                key = record_key(session.chart.song, session.chart.chart, session.chain_mode)
                 result_failed = session.failed
                 result_recording = active_recording
                 if result_failed:
