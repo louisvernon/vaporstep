@@ -4,12 +4,20 @@ from dataclasses import dataclass
 
 
 
-
 def zoom_normalized_x(x: float, factor: float) -> float:
     """Scale normalized horizontal position about center and clamp to 0..1."""
     if factor <= 0:
         return max(0.0, min(1.0, x))
     return max(0.0, min(1.0, 0.5 + (x - 0.5) * factor))
+
+
+def confidence_weight(value: float, low: float = 0.25, high: float = 0.70) -> float:
+    """Map landmark confidence smoothly onto 0..1 without a hard threshold."""
+    low = float(low)
+    high = max(low + 1e-6, float(high))
+    t = max(0.0, min(1.0, (float(value) - low) / (high - low)))
+    # Smoothstep avoids a visible kink as confidence enters/leaves the useful range.
+    return t * t * (3.0 - 2.0 * t)
 
 
 def lower_leg_control_position(
@@ -18,33 +26,22 @@ def lower_leg_control_position(
     ankle_x: float,
     ankle_y: float,
     *,
-    ankle_reliable: bool,
+    ankle_confidence: float,
     ankle_blend: float = 0.45,
-    edge_fade_start: float = 0.92,
-    edge_fade_end: float = 1.02,
+    confidence_low: float = 0.25,
+    confidence_high: float = 0.70,
 ) -> tuple[float, float, float]:
-    """Return an adaptive virtual lower-leg control point.
+    """Return a confidence-weighted virtual lower-leg control point.
 
-    With a reliable ankle comfortably inside frame, the point sits
-    ``ankle_blend`` of the way from knee to ankle. As the ankle approaches the
-    bottom image edge, its contribution fades smoothly toward the knee. If the
-    ankle is not reliable, the knee is used directly. The returned third value
-    is the effective ankle weight, useful for calibration/debug display.
+    Good ankle estimates contribute up to ``ankle_blend`` of the knee-to-ankle
+    vector. Marginal estimates fade smoothly toward the knee. The camera-edge
+    position is intentionally irrelevant: MediaPipe confidence decides whether
+    an estimated ankle is useful even when it is near or slightly outside frame.
+    The returned third value is the effective ankle weight.
     """
     blend = max(0.0, min(1.0, float(ankle_blend)))
-    if not ankle_reliable or blend <= 0.0:
-        return float(knee_x), float(knee_y), 0.0
-
-    start = float(edge_fade_start)
-    end = max(start + 1e-6, float(edge_fade_end))
-    if ankle_y <= start:
-        edge_factor = 1.0
-    elif ankle_y >= end:
-        edge_factor = 0.0
-    else:
-        edge_factor = 1.0 - (float(ankle_y) - start) / (end - start)
-
-    weight = blend * max(0.0, min(1.0, edge_factor))
+    confidence = confidence_weight(ankle_confidence, confidence_low, confidence_high)
+    weight = blend * confidence
     x = float(knee_x) + (float(ankle_x) - float(knee_x)) * weight
     y = float(knee_y) + (float(ankle_y) - float(knee_y)) * weight
     return x, y, weight
@@ -87,6 +84,7 @@ def perspective_adjusted_x(
     full_projected = 0.5 + (x - 0.5) * (receptor_half / max(local_half, 1e-6))
     adjusted = x + (full_projected - x) * strength
     return max(0.0, min(1.0, adjusted))
+
 
 @dataclass
 class HystereticLaneResolver:
