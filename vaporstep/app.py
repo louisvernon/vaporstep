@@ -34,6 +34,7 @@ from .settings import (
     clamp_horizontal_reach,
 )
 from .simfile_loader import load_chart, scan_library
+from .tracking_overlay import draw_lower_body_tracking_overlay
 
 
 APP_VERSION = __version__
@@ -150,7 +151,6 @@ def main(argv: list[str] | None = None) -> int:
     favorites_only = False
     played_only = False
     chain_mode = ChainMode.BLOCKS
-    # Recording is intentionally a per-launch opt-in; never persist this in settings.
     record_play_enabled = False
     active_recording: RunRecorder | None = None
     result_recording: RunRecorder | None = None
@@ -192,8 +192,6 @@ def main(argv: list[str] | None = None) -> int:
             print(f"Found {len(songs)} compatible songs ({len(scan_errors)} parse errors).")
             for err in scan_errors[:8]:
                 print(f"  warning: {err}", file=sys.stderr)
-        # Legacy record files may not contain an explicit played-song set;
-        # backfill it from any existing high-score record.
         for song in songs:
             if song_was_played(song):
                 played_keys.add(song_key(song))
@@ -289,10 +287,6 @@ def main(argv: list[str] | None = None) -> int:
         camera_probe_ok = probe_camera(settings_store.settings.camera_index)
         camera_error = ""
 
-    # Once the privacy notice has been acknowledged, probe the selected camera
-    # at startup to trigger/check OS permission and immediately release it. The
-    # camera stays off in menus and is acquired only for calibration or an
-    # active game/READY screen.
     if mode != "privacy":
         run_camera_probe()
 
@@ -754,6 +748,7 @@ def main(argv: list[str] | None = None) -> int:
                     settings_store.settings.horizontal_reach,
                     camera_status(),
                 )
+                draw_lower_body_tracking_overlay(renderer, body)
                 pygame.display.flip()
                 clock.tick(TARGET_FPS)
                 continue
@@ -797,11 +792,6 @@ def main(argv: list[str] | None = None) -> int:
                     session.set_best_score(result_record.score)
                 mode = "results"
 
-                # Record a clean score card at the end of every saved clip.  The
-                # tail is queued as repeated frames by the finalizer, so the user
-                # can interact with Results immediately rather than waiting three
-                # seconds for recording to finish.  Do not burn recording status
-                # into the shareable clip.
                 renderer.draw_results(
                     session.chart.song.display_title,
                     session.chart.chart.label,
@@ -819,9 +809,6 @@ def main(argv: list[str] | None = None) -> int:
                         music_stop_time=(session.failed_song_time if result_failed else None),
                     )
                     active_recording = None
-
-                    # Redraw for the local player so SAVING/SAVED status remains
-                    # visible without appearing in the exported results card.
                     renderer.draw_results(
                         session.chart.song.display_title,
                         session.chart.chart.label,
@@ -868,8 +855,6 @@ def main(argv: list[str] | None = None) -> int:
             if active_recording is not None:
                 active_recording.capture(renderer.screen, time.monotonic())
             if record_play_enabled:
-                # Local recording status is intentionally drawn after capture so
-                # shareable clips do not have a REC watermark burned into them.
                 renderer.draw_recording_indicator()
             pygame.display.flip()
             clock.tick(TARGET_FPS)
