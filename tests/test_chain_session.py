@@ -75,13 +75,13 @@ def test_generated_chain_collapses_to_head_and_weighted_tail(monkeypatch):
 
     clock[0] = 0.90
     session.update(_body(0.90, 1), True)
-    clock[0] = 1.10
-    session.update(_body(1.10, 1), True)
+    clock[0] = 1.16
+    session.update(_body(1.16, 1), True)
     assert session.notes[0].hit
     assert session.chains[0].state == ChainState.ACTIVE
 
-    # The authored intermediate repeated step is retained for debug rendering,
-    # but it is no longer a gameplay judgement when chaining is enabled.
+    # Intermediate repeated steps are retained in the chart object, but are not
+    # gameplay judgements while virtual holds are enabled.
     clock[0] = 1.60
     session.update(_body(1.60, 1), True)
     assert not session.notes[1].judged
@@ -124,18 +124,18 @@ def test_broken_generated_chain_preserves_combo_and_does_not_resume(monkeypatch)
 
     clock[0] = 0.90
     session.update(_body(0.90, 1), True)
-    clock[0] = 1.10
-    session.update(_body(1.10, 1), True)
+    clock[0] = 1.16
+    session.update(_body(1.16, 1), True)
     assert session.chains[0].state == ChainState.ACTIVE
     assert session.stats.combo == 1
 
     # Generated holds use the same 300 ms dropout/cross-step grace as authored holds.
-    clock[0] = 1.35
-    session.update(_body(1.35, 2), True)
+    clock[0] = 1.40
+    session.update(_body(1.40, 2), True)
     assert session.chains[0].state == ChainState.ACTIVE
 
-    clock[0] = 1.41
-    session.update(_body(1.41, 2), True)
+    clock[0] = 1.47
+    session.update(_body(1.47, 2), True)
     assert session.chains[0].state == ChainState.BROKEN
     assert session.stats.combo == 1
     assert session.stats.misses == 0
@@ -190,8 +190,8 @@ def test_explicit_hold_is_head_plus_weighted_tail_even_when_chains_are_off(monke
 
     clock[0] = 0.90
     session.update(_body(0.90, 1), True)
-    clock[0] = 1.10
-    session.update(_body(1.10, 1), True)
+    clock[0] = 1.16
+    session.update(_body(1.16, 1), True)
     assert session.notes[0].hit
     assert session.chains[0].state == ChainState.ACTIVE
 
@@ -212,20 +212,20 @@ def test_dropping_explicit_hold_preserves_combo_and_does_not_resume(monkeypatch)
 
     clock[0] = 0.90
     session.update(_body(0.90, 1), True)
-    clock[0] = 1.10
-    session.update(_body(1.10, 1), True)
+    clock[0] = 1.16
+    session.update(_body(1.16, 1), True)
     assert session.chains[0].state == ChainState.ACTIVE
     assert session.stats.combo == 1
 
-    clock[0] = 1.35
-    session.update(_body(1.35, 2), True)
+    clock[0] = 1.40
+    session.update(_body(1.40, 2), True)
     assert session.chains[0].state == ChainState.ACTIVE
     assert session.stats.misses == 0
     events = session.drain_gameplay_events()
     assert all(event.event_type != GameplayEventType.SUSTAIN_BREAK for event in events)
 
-    clock[0] = 1.41
-    session.update(_body(1.41, 2), True)
+    clock[0] = 1.47
+    session.update(_body(1.47, 2), True)
     assert session.chains[0].state == ChainState.BROKEN
     assert session.stats.misses == 0
     assert session.stats.combo == 1
@@ -246,7 +246,7 @@ def test_missed_hold_head_breaks_combo_once_and_tail_does_not_break_it_again(mon
     session = GameSession(chart=_hold_chart(), chain_mode=ChainMode.BLOCKS)
     session.running = True
 
-    # Build a combo before the hold, then miss the head.
+    # Build a combo before the hold, then miss the head after the late window closes.
     session.stats.register_hit()
     session.stats.register_hit()
     assert session.stats.combo == 2
