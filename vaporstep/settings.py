@@ -4,9 +4,9 @@ from dataclasses import asdict, dataclass, field
 import json
 import os
 from pathlib import Path
-import sys
 
 from .config import PLAYER_HORIZONTAL_ZOOM
+from .user_paths import settings_path, songs_dir
 
 
 MIN_HORIZONTAL_REACH = 1.00
@@ -16,18 +16,11 @@ PRIVACY_NOTICE_VERSION = 2
 
 
 def default_settings_path() -> Path:
-    home = Path.home()
-    if sys.platform == "darwin":
-        return home / "Library" / "Application Support" / "VaporStep" / "settings.json"
-    if sys.platform.startswith("win"):
-        base = Path(os.environ.get("LOCALAPPDATA") or os.environ.get("APPDATA") or home)
-        return base / "VaporStep" / "settings.json"
-    base = Path(os.environ.get("XDG_CONFIG_HOME") or (home / ".config"))
-    return base / "vaporstep" / "settings.json"
+    return settings_path()
 
 
 def default_song_folder() -> str:
-    return str(Path.home() / "VaporStep" / "Songs")
+    return str(songs_dir())
 
 
 def clamp_horizontal_reach(value: float) -> float:
