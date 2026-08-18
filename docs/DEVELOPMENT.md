@@ -19,7 +19,7 @@ You can select a song library in the UI or override it while developing:
 python -m vaporstep --songs "/path/to/Songs"
 ```
 
-`VAPORSTEP_SONGS` provides the same override through the environment.
+`VAPORSTEP_SONGS` provides the same override through the environment. Without an override or saved choice, VaporStep uses `~/Stepfiles` and creates that directory if needed.
 
 MediaPipe is currently pinned to `0.10.35` for the tested pose-tracking path. `setuptools<82` is retained because `simfile==2.1.1` imports `pkg_resources`.
 
@@ -78,9 +78,17 @@ Linux:
 
 Windows uses the user's Local AppData `VaporStep` directory.
 
+The default song-library location on all platforms is:
+
+```text
+~/Stepfiles
+```
+
+Users can select any other song-library folder from the application.
+
 ## PyInstaller
 
-VaporStep uses a one-folder PyInstaller build so native dependencies remain easy to inspect and troubleshoot.
+VaporStep uses native PyInstaller builds on each target platform. Windows is packaged as a one-file self-extracting executable; macOS and Linux keep directory-based builds so their native dependencies remain straightforward to package and inspect.
 
 Install build dependencies:
 
@@ -105,9 +113,11 @@ Typical outputs:
 
 ```text
 macOS:    dist/VaporStep.app
-Windows:  dist/VaporStep/
+Windows:  dist/VaporStep.exe
 Linux:    dist/VaporStep/
 ```
+
+The Windows executable contains the Python runtime and bundled native/data dependencies and extracts them to a temporary runtime directory when launched.
 
 PyInstaller is not a cross-compiler; release binaries are built natively for each target platform.
 
@@ -136,7 +146,7 @@ The resulting files are:
 
 ```text
 VaporStep-Linux-x86_64.tar.gz
-VaporStep-Windows-x86_64.zip
+VaporStep-Windows-x86_64.exe
 VaporStep-macOS-AppleSilicon.zip
 ```
 
