@@ -19,8 +19,11 @@ from .config import (
     HAND_PLAYFIELD_RIGHT,
     LANDMARK_VISIBILITY_THRESHOLD,
     LOWER_BODY_ANKLE_BLEND,
-    LOWER_BODY_ANKLE_EDGE_FADE_END,
-    LOWER_BODY_ANKLE_EDGE_FADE_START,
+    LOWER_BODY_ANKLE_CONFIDENCE_HIGH,
+    LOWER_BODY_ANKLE_CONFIDENCE_LOW,
+    LOWER_BODY_CONTROL_SMOOTH_ALPHA,
+    LOWER_BODY_MAX_SINGLE_FRAME_X_JUMP,
+    LOWER_BODY_WEIGHT_SMOOTH_ALPHA,
     LANE_COUNT,
     LANE_HYSTERESIS,
     OUTER_LANE_ASSIST,
@@ -99,6 +102,48 @@ class PoseSnapshot:
     pose_fps: float = 0.0
 
 
+@dataclass
+class _LowerLegFilter:
+    x: float | None = None
+    y: float | None = None
+    ankle_weight: float = 0.0
+
+    def reset(self) -> None:
+        self.x = None
+        self.y = None
+        self.ankle_weight = 0.0
+
+    def update(
+        self,
+        *,
+        knee: BodyPoint,
+        ankle: BodyPoint,
+        raw_ankle_weight: float,
+    ) -> tuple[float, float, float]:
+        weight_alpha = max(0.0, min(1.0, LOWER_BODY_WEIGHT_SMOOTH_ALPHA))
+        self.ankle_weight += (raw_ankle_weight - self.ankle_weight) * weight_alpha
+
+        target_x = knee.x + (ankle.x - knee.x) * self.ankle_weight
+        target_y = knee.y + (ankle.y - knee.y) * self.ankle_weight
+        if self.x is None or self.y is None:
+            self.x = target_x
+            self.y = target_y
+            return self.x, self.y, self.ankle_weight
+
+        # A person cannot plausibly move a lower leg across a large fraction of
+        # the camera in one pose sample. Clamp isolated model glitches without
+        # preventing a sustained real movement from catching up on later frames.
+        max_jump = max(0.01, float(LOWER_BODY_MAX_SINGLE_FRAME_X_JUMP))
+        dx = target_x - self.x
+        if abs(dx) > max_jump:
+            target_x = self.x + max_jump * (1.0 if dx > 0.0 else -1.0)
+
+        alpha = max(0.0, min(1.0, LOWER_BODY_CONTROL_SMOOTH_ALPHA))
+        self.x += (target_x - self.x) * alpha
+        self.y += (target_y - self.y) * alpha
+        return self.x, self.y, self.ankle_weight
+
+
 class PoseCameraInput:
     """OpenCV camera capture + asynchronous MediaPipe pose inference."""
 
@@ -114,6 +159,10 @@ class PoseCameraInput:
         self._last_result_time = 0.0
         self._pose_fps_ema = 0.0
         self._snapshot = PoseSnapshot(body=BodyState())
+        self._lower_leg_filters = {
+            "left": _LowerLegFilter(),
+            "right": _LowerLegFilter(),
+        }
 
         self._resolvers = {
             "lw": HystereticLaneResolver(
@@ -174,10 +223,8 @@ class PoseCameraInput:
 
     def _capture_loop(self) -> None:
         # Opening a camera can legitimately fail on first launch while macOS is
-        # waiting for the user to answer its camera-permission dialog.  Keep the
-        # capture thread alive and retry the *same* selected device instead of
-        # requiring the user to switch camera indices to force a reopen.  This is
-        # useful on other platforms too when a device is temporarily busy.
+        # waiting for the user to answer its camera-permission dialog. Keep the
+        # capture thread alive and retry the same selected device.
         t0 = time.monotonic()
         failed_reads = 0
         retry_count = 0
@@ -204,8 +251,6 @@ class PoseCameraInput:
                                 else "Camera unavailable — retrying automatically"
                             ),
                         )
-                    # Retry quickly while a first-run permission sheet is likely
-                    # onscreen, then settle to a gentler cadence if unavailable.
                     self._stop.wait(0.5 if retry_count <= 12 else 1.5)
                     continue
 
@@ -223,9 +268,6 @@ class PoseCameraInput:
             if not ok:
                 failed_reads += 1
                 if failed_reads >= 20:
-                    # A camera can disappear or become invalid after permission /
-                    # sleep / device changes.  Release it and use the same retry
-                    # path rather than spinning forever on a dead VideoCapture.
                     self._capture.release()
                     self._capture = None
                     failed_reads = 0
@@ -243,23 +285,26 @@ class PoseCameraInput:
             failed_reads = 0
             rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
             mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
-            # Keep one monotonic timestamp origin across camera reopens; MediaPipe
-            # LIVE_STREAM timestamps must never move backwards.
             timestamp_ms = int((time.monotonic() - t0) * 1000)
             self._landmarker.detect_async(mp_image, timestamp_ms)
 
     @staticmethod
-    def _visible(lm) -> bool:
-        visibility = float(lm.visibility or 0.0)
-        presence = float(lm.presence or 0.0)
-        return visibility >= LANDMARK_VISIBILITY_THRESHOLD and presence >= 0.35
+    def _confidence(lm) -> float:
+        visibility = max(0.0, min(1.0, float(lm.visibility or 0.0)))
+        presence = max(0.0, min(1.0, float(lm.presence or 0.0)))
+        return min(visibility, presence)
 
-    def _camera_point(self, lm) -> BodyPoint:
+    @classmethod
+    def _visible(cls, lm) -> bool:
+        return cls._confidence(lm) >= LANDMARK_VISIBILITY_THRESHOLD
+
+    def _camera_point(self, lm, *, visible: bool | None = None) -> BodyPoint:
         """Return a displayed camera-space point without resolving a lane."""
-        visible = self._visible(lm)
+        if visible is None:
+            visible = self._visible(lm)
         # Detection is on the unmirrored image; invert x for the mirrored view.
         x = zoom_normalized_x(1.0 - float(lm.x), self.horizontal_zoom)
-        return BodyPoint(x=x, y=float(lm.y), visible=visible)
+        return BodyPoint(x=x, y=float(lm.y), visible=bool(visible))
 
     def _resolve_point(
         self,
@@ -287,6 +332,7 @@ class PoseCameraInput:
             y=point.y,
             lane=resolver.resolve(lane_x),
             visible=True,
+            source_weight=point.source_weight,
         )
 
     def _point(
@@ -303,31 +349,46 @@ class PoseCameraInput:
         knee_lm,
         ankle_lm,
         resolver: HystereticLaneResolver,
+        *,
+        leg: str,
     ) -> tuple[BodyPoint, BodyPoint, BodyPoint]:
-        """Return knee, ankle and the adaptive shin lane-control point.
+        """Return raw knee/ankle sources and a stable shin lane-control point.
 
-        Lane occupancy follows the virtual shin point. Stomp velocity continues
-        to use the actual knee coordinates, but the knee carries the control
-        point's resolved lane so motion events line up with lower-body occupancy.
+        Lane occupancy follows the virtual point. Stomp velocity continues to
+        use the actual knee coordinates, but the knee carries the control point's
+        resolved lane so timing events line up with lower-body occupancy.
         """
         knee = self._camera_point(knee_lm)
-        ankle = self._camera_point(ankle_lm)
+        ankle_confidence = self._confidence(ankle_lm)
+        ankle = self._camera_point(ankle_lm, visible=ankle_confidence > 0.10)
+        tracker = self._lower_leg_filters[leg]
         if not knee.visible:
+            tracker.reset()
             resolver.current_lane = None
             return knee, ankle, BodyPoint()
 
-        control_x, control_y, _ = lower_leg_control_position(
+        _, _, raw_weight = lower_leg_control_position(
             knee.x,
             knee.y,
             ankle.x,
             ankle.y,
-            ankle_reliable=ankle.visible,
+            ankle_confidence=ankle_confidence,
             ankle_blend=LOWER_BODY_ANKLE_BLEND,
-            edge_fade_start=LOWER_BODY_ANKLE_EDGE_FADE_START,
-            edge_fade_end=LOWER_BODY_ANKLE_EDGE_FADE_END,
+            confidence_low=LOWER_BODY_ANKLE_CONFIDENCE_LOW,
+            confidence_high=LOWER_BODY_ANKLE_CONFIDENCE_HIGH,
+        )
+        control_x, control_y, weight = tracker.update(
+            knee=knee,
+            ankle=ankle,
+            raw_ankle_weight=raw_weight,
         )
         control = self._resolve_point(
-            BodyPoint(x=control_x, y=control_y, visible=True),
+            BodyPoint(
+                x=control_x,
+                y=control_y,
+                visible=True,
+                source_weight=weight,
+            ),
             resolver,
             hit_y=FOOT_HIT_Y,
         )
@@ -351,6 +412,8 @@ class PoseCameraInput:
         if not result.pose_landmarks:
             for resolver in self._resolvers.values():
                 resolver.current_lane = None
+            for tracker in self._lower_leg_filters.values():
+                tracker.reset()
             snapshot = PoseSnapshot(
                 body=BodyState(timestamp=now),
                 mask=None,
@@ -366,10 +429,10 @@ class PoseCameraInput:
         lw = self._point(lm[LEFT_WRIST], self._resolvers["lw"], hit_y=HAND_HIT_Y)
         rw = self._point(lm[RIGHT_WRIST], self._resolvers["rw"], hit_y=HAND_HIT_Y)
         lk, la, lfc = self._lower_body_points(
-            lm[LEFT_KNEE], lm[LEFT_ANKLE], self._resolvers["lk"]
+            lm[LEFT_KNEE], lm[LEFT_ANKLE], self._resolvers["lk"], leg="left"
         )
         rk, ra, rfc = self._lower_body_points(
-            lm[RIGHT_KNEE], lm[RIGHT_ANKLE], self._resolvers["rk"]
+            lm[RIGHT_KNEE], lm[RIGHT_ANKLE], self._resolvers["rk"], leg="right"
         )
 
         body = BodyState(
