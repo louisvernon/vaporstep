@@ -69,22 +69,15 @@ class HitQuality(str, Enum):
 
 class ChainMode(str, Enum):
     BLOCKS = "blocks"
-    DEBUG = "debug"
     OFF = "off"
 
     @property
     def label(self) -> str:
-        return {
-            ChainMode.BLOCKS: "BLOCKS",
-            ChainMode.DEBUG: "BLOCKS + NOTES",
-            ChainMode.OFF: "OFF",
-        }[self]
+        return "ON" if self == ChainMode.BLOCKS else "OFF"
 
-    def shifted(self, delta: int) -> "ChainMode":
-        modes = (ChainMode.BLOCKS, ChainMode.DEBUG, ChainMode.OFF)
-        return modes[(modes.index(self) + delta) % len(modes)]
-
-
+    def shifted(self, delta: int = 1) -> "ChainMode":
+        # Kept as a tiny two-state helper for callers that already use shifted().
+        return ChainMode.OFF if self == ChainMode.BLOCKS else ChainMode.BLOCKS
 
 
 class GameplayEventType(str, Enum):
@@ -103,6 +96,7 @@ class GameplayEvent:
     kind: NoteKind
     quality: HitQuality | None = None
     hit: bool = True
+
 
 class SustainSource(str, Enum):
     IMPLICIT_CHAIN = "implicit_chain"
@@ -163,13 +157,13 @@ class GameNote:
         return required.issubset(occupied)
 
 
-
 def occupancy_is_fresh(last_occupancy_at: float | None, now: float, grace_seconds: float) -> bool:
     """Whether a lane was occupied recently enough to count at the receptor."""
     return (
         last_occupancy_at is not None
         and 0.0 <= now - last_occupancy_at <= grace_seconds
     )
+
 
 def lanes_tuple(values: Iterable[int]) -> tuple[int, ...]:
     return tuple(sorted(set(values)))
