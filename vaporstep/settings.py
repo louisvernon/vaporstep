@@ -13,7 +13,6 @@ MIN_HORIZONTAL_REACH = 1.00
 MAX_HORIZONTAL_REACH = 1.35
 HORIZONTAL_REACH_STEP = 0.05
 PRIVACY_NOTICE_VERSION = 2
-DEFAULT_SONG_FOLDER_NAME = "Stepfiles"
 
 
 def default_settings_path() -> Path:
@@ -28,7 +27,7 @@ def default_settings_path() -> Path:
 
 
 def default_song_folder() -> str:
-    return str(Path.home() / DEFAULT_SONG_FOLDER_NAME)
+    return str(Path.home() / "VaporStep" / "Songs")
 
 
 def clamp_horizontal_reach(value: float) -> float:
