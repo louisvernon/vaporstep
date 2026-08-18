@@ -35,6 +35,7 @@ from .settings import (
     clamp_horizontal_reach,
 )
 from .simfile_loader import load_chart
+from .tracking_overlay import draw_lower_body_tracking_overlay
 
 
 APP_VERSION = __version__
@@ -220,11 +221,21 @@ def main(argv: list[str] | None = None) -> int:
     result_recording: RunRecorder | None = None
     applied_scan_complete = False
 
+    def chains_enabled(mode: ChainMode) -> bool:
+        return mode != ChainMode.OFF
+
+    def record_key(song, chart, mode: ChainMode) -> str:
+        return chart_key(song, chart, chains_enabled=chains_enabled(mode))
+
     def song_was_played(song) -> bool:
         key = song_key(song)
         if key in played_keys:
             return True
-        return any(records.get(chart_key(song, chart)).played_at for chart in song.charts)
+        return any(
+            records.get(chart_key(song, chart, chains_enabled=enabled)).played_at
+            for chart in song.charts
+            for enabled in (True, False)
+        )
 
     def rebuild_song_menu(preserve_key: str | None = None, fallback_index: int = 0) -> None:
         nonlocal menu
@@ -422,7 +433,7 @@ def main(argv: list[str] | None = None) -> int:
         _safe_settings_save(settings_store)
         try:
             loaded = load_chart(song, chart)
-            record = records.get(chart_key(song, chart))
+            record = records.get(record_key(song, chart, chain_mode))
             active_recording = None
             session = GameSession(chart=loaded, best_score=record.score, chain_mode=chain_mode)
             restart_camera()
@@ -635,12 +646,8 @@ def main(argv: list[str] | None = None) -> int:
                                     )
                             menu_sounds.tick()
                             continue
-                        if event.key == pygame.K_c:
-                            chain_mode = chain_mode.shifted(1)
-                            menu_sounds.tick()
-                            continue
-                        if event.key == pygame.K_a:
-                            chain_mode = chain_mode.shifted(-1)
+                        if event.key == pygame.K_v:
+                            chain_mode = chain_mode.shifted()
                             menu_sounds.tick()
                             continue
                     action = action_for_event(event)
@@ -674,9 +681,14 @@ def main(argv: list[str] | None = None) -> int:
                     continue
 
                 if event.type == pygame.KEYDOWN:
-                    if event.key in (pygame.K_a, pygame.K_c) and session is not None and not session.running:
-                        chain_mode = chain_mode.shifted(-1 if event.key == pygame.K_a else 1)
+                    if event.key == pygame.K_v and session is not None and not session.running:
+                        chain_mode = chain_mode.shifted()
                         session.set_chain_mode(chain_mode)
+                        if session.chart is not None:
+                            current_record = records.get(
+                                record_key(session.chart.song, session.chart.chart, chain_mode)
+                            )
+                            session.set_best_score(current_record.score)
                         renderer.reset_game_effects()
                         menu_sounds.tick()
                     elif event.key == pygame.K_ESCAPE:
@@ -755,7 +767,7 @@ def main(argv: list[str] | None = None) -> int:
                 preview.update(menu.song, now)
                 selected_record = ChartRecord()
                 if menu.song is not None and menu.chart is not None:
-                    selected_record = records.get(chart_key(menu.song, menu.chart))
+                    selected_record = records.get(record_key(menu.song, menu.chart, chain_mode))
                 renderer.draw_song_menu(
                     menu,
                     songs_root,
@@ -857,6 +869,7 @@ def main(argv: list[str] | None = None) -> int:
                     settings_store.settings.horizontal_reach,
                     camera_status(),
                 )
+                draw_lower_body_tracking_overlay(renderer, body)
                 pygame.display.flip()
                 clock.tick(TARGET_FPS)
                 continue
@@ -889,7 +902,7 @@ def main(argv: list[str] | None = None) -> int:
                 session.stop()
                 stop_camera()
                 assert session.chart is not None
-                key = chart_key(session.chart.song, session.chart.chart)
+                key = record_key(session.chart.song, session.chart.chart, session.chain_mode)
                 result_failed = session.failed
                 result_recording = active_recording
                 if result_failed:
@@ -943,7 +956,7 @@ def main(argv: list[str] | None = None) -> int:
                 input_name=input_name,
                 song_title=(session.chart.song.display_title if session.chart else "VaporStep Demo"),
                 chart_label=(
-                    f"{session.chart.chart.label}  •  CHAINS {session.chain_mode.label}"
+                    f"{session.chart.chart.label}  •  VIRTUAL HOLDS {session.chain_mode.label}"
                     if session.chart
                     else "Synthetic chart"
                 ),

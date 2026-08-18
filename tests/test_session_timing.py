@@ -69,8 +69,8 @@ def test_plain_occupancy_settles_to_hit_at_late_grace(monkeypatch):
     session.update(_body(1.05), ready_to_start=True)
     assert not note.judged
 
-    clock[0] = 1.10
-    session.update(_body(1.15), ready_to_start=True)
+    clock[0] = 1.16
+    session.update(_body(1.16), ready_to_start=True)
     assert note.judged
     assert note.judgement == HitQuality.HIT
 

@@ -9,7 +9,7 @@ from typing import Iterable
 import pygame
 
 from .audio_fx import GAMEPLAY_MUSIC_VOLUME
-from .chains import CHAIN_OCCUPANCY_GRACE_SECONDS, HOLD_OCCUPANCY_GRACE_SECONDS
+from .chains import HOLD_OCCUPANCY_GRACE_SECONDS
 from .config import HIT_WINDOW_SECONDS, LOOKAHEAD_BEATS, LOOKAHEAD_SECONDS, OCCUPANCY_GRACE_SECONDS
 from .domain import (
     BodyState,
@@ -23,7 +23,7 @@ from .domain import (
     RuntimeChain,
     SustainSource,
 )
-from .motion import GREAT_WINDOW_SECONDS, MOTION_EVENT_VISUAL_SECONDS, MotionEvent, MotionTracker
+from .motion import MOTION_EVENT_VISUAL_SECONDS, MotionEvent, MotionTracker
 from .scoring import RunStats
 from .song import LoadedChart
 
@@ -31,6 +31,7 @@ from .song import LoadedChart
 READY_HOLD_SECONDS = 0.8
 MIN_WARNING_BEFORE_FAIL_SECONDS = 5.0
 FAIL_HOLD_SECONDS = 3.0
+SUSTAIN_TAIL_SCORE_WEIGHT = 2.0
 
 
 def fresh_notes(notes: Iterable[GameNote]) -> list[GameNote]:
@@ -114,6 +115,43 @@ class GameSession:
     def set_best_score(self, value: int) -> None:
         self.best_score = int(value)
 
+    def _sustain_enabled(self, chain: RuntimeChain) -> bool:
+        return (
+            chain.definition.source == SustainSource.EXPLICIT_HOLD
+            or self.chain_mode != ChainMode.OFF
+        )
+
+    def _effective_score_weights(self) -> tuple[float, ...]:
+        """Return the ordered scoring timeline after applying chain mode.
+
+        Authored holds always become head + weighted tail. When generated chains
+        are enabled, only their first source note remains a timed head; the
+        intermediate repeated notes are ignored and the chain end becomes the
+        same weighted tail judgement used by authored holds.
+        """
+        suppressed_indices: set[int] = set()
+        timeline: list[tuple[float, int, int, float]] = []
+
+        for chain in self.chains:
+            if not self._sustain_enabled(chain):
+                continue
+            definition = chain.definition
+            if definition.source == SustainSource.IMPLICIT_CHAIN:
+                suppressed_indices.update(definition.note_indices[1:])
+            # Runtime updates process sustain tails before source notes at the
+            # same song time, so preserve that ordering in the theoretical max.
+            timeline.append(
+                (definition.end_time, 0, definition.id, SUSTAIN_TAIL_SCORE_WEIGHT)
+            )
+
+        for index, note in enumerate(self._source_notes):
+            if index in suppressed_indices:
+                continue
+            timeline.append((note.time, 1, index, 1.0))
+
+        timeline.sort(key=lambda item: (item[0], item[1], item[2]))
+        return tuple(item[3] for item in timeline)
+
     def restart(self) -> None:
         _stop_music()
         self.notes = fresh_notes(self._source_notes)
@@ -122,13 +160,8 @@ class GameSession:
             definitions = self.chart.sustains or self.chart.chains
         self.chains = [RuntimeChain(definition=chain) for chain in definitions]
         self._chain_by_id = {chain.definition.id: chain for chain in self.chains}
-        explicit_hold_tails = sum(
-            1 for chain in self.chains if chain.definition.source == SustainSource.EXPLICIT_HOLD
-        )
-        # A hold has a timed head plus one virtual completion judgement at its
-        # tail, so sustaining it matters to score/combo without adding hidden
-        # per-frame checkpoints.
-        self.stats = RunStats(total_notes=len(self._source_notes) + explicit_hold_tails)
+        score_weights = self._effective_score_weights()
+        self.stats = RunStats(total_notes=len(score_weights), score_weights=score_weights)
         self.running = False
         self.ready_since = None
         self.started = time.monotonic()
@@ -302,7 +335,7 @@ class GameSession:
             self.stats.register_miss()
 
         # Keep live/exported audio sparse and musical: only GREAT/PERFECT
-        # confirmations get a cue, and both use the same sound.  Record the
+        # confirmations get a cue, and both use the same sound. Record the
         # event at the authored note time so reconstructed clips reinforce the
         # beat rather than raw camera/motion timing.
         if hit and quality in (HitQuality.GREAT, HitQuality.PERFECT):
@@ -343,12 +376,6 @@ class GameSession:
         occupied = body.foot_lanes if chain.definition.kind == NoteKind.FOOT else body.hand_lanes
         return required.issubset(occupied)
 
-    def _sustain_enabled(self, chain: RuntimeChain) -> bool:
-        return (
-            chain.definition.source == SustainSource.EXPLICIT_HOLD
-            or self.chain_mode != ChainMode.OFF
-        )
-
     def _update_active_chains(self, body: BodyState, t: float) -> None:
         for chain in self.chains:
             if not self._sustain_enabled(chain):
@@ -356,48 +383,31 @@ class GameSession:
 
             definition = chain.definition
             if chain.state == ChainState.ACTIVE:
-                satisfied = self._chain_satisfied(chain, body)
-                if satisfied:
+                if self._chain_satisfied(chain, body):
                     chain.last_occupancy_at = t
-                else:
-                    grace = (
-                        HOLD_OCCUPANCY_GRACE_SECONDS
-                        if definition.source == SustainSource.EXPLICIT_HOLD
-                        else CHAIN_OCCUPANCY_GRACE_SECONDS
-                    )
-                    if (
-                        chain.last_occupancy_at is not None
-                        and t - chain.last_occupancy_at > grace
-                    ):
-                        chain.state = ChainState.BROKEN
-                        chain.broken_at = t
-                        self._gameplay_events.append(
-                            GameplayEvent(
-                                time=t,
-                                event_type=GameplayEventType.SUSTAIN_BREAK,
-                                kind=definition.kind,
-                                quality=None,
-                                hit=False,
-                            )
-                        )
-                        if (
-                            definition.source == SustainSource.EXPLICIT_HOLD
-                            and not chain.completion_judged
-                        ):
-                            self.stats.register_miss()
-                            chain.completion_judged = True
-
-                # Explicit holds use the same sustained occupancy state as
-                # implicit chains, but their tail is a virtual completion
-                # checkpoint rather than another source note.
-                if (
-                    chain.state == ChainState.ACTIVE
-                    and definition.source == SustainSource.EXPLICIT_HOLD
-                    and t >= definition.end_time
+                elif (
+                    chain.last_occupancy_at is not None
+                    and t - chain.last_occupancy_at > HOLD_OCCUPANCY_GRACE_SECONDS
                 ):
+                    chain.state = ChainState.BROKEN
+                    chain.broken_at = t
+                    self._gameplay_events.append(
+                        GameplayEvent(
+                            time=t,
+                            event_type=GameplayEventType.SUSTAIN_BREAK,
+                            kind=definition.kind,
+                            quality=None,
+                            hit=False,
+                        )
+                    )
+
+                if chain.state == ChainState.ACTIVE and t >= definition.end_time:
                     chain.state = ChainState.COMPLETE
                     if not chain.completion_judged:
-                        self.stats.register_hit(chain.quality)
+                        self.stats.register_hit(
+                            chain.quality,
+                            score_weight=SUSTAIN_TAIL_SCORE_WEIGHT,
+                        )
                         chain.completion_judged = True
                         self._gameplay_events.append(
                             GameplayEvent(
@@ -408,17 +418,31 @@ class GameSession:
                                 hit=True,
                             )
                         )
+                        # Reuse the renderer's existing receptor pulse as visual
+                        # feedback for a successful sustain tail. These events are
+                        # visual-only: they do not enter MotionTracker and cannot
+                        # satisfy or upgrade a later note judgement.
+                        for lane in definition.lanes:
+                            self.recent_motion_events.append(
+                                MotionEvent(
+                                    kind=definition.kind,
+                                    lane=int(lane),
+                                    song_time=t,
+                                    limb="sustain",
+                                    strength=2.2,
+                                    source="sustain_complete",
+                                )
+                            )
 
-            # If the head itself was missed, the hold is already broken. Its
-            # tail still counts as the failed completion, but we defer that
-            # second miss until the tail reaches the receptor.
+            # A broken sustain still owns one failed tail judgement, but it is a
+            # scoring/performance penalty only. It must never destroy a combo
+            # rebuilt after the head or after the player left the sustain.
             if (
                 chain.state == ChainState.BROKEN
-                and definition.source == SustainSource.EXPLICIT_HOLD
                 and not chain.completion_judged
                 and t >= definition.end_time
             ):
-                self.stats.register_miss()
+                self.stats.register_miss(break_combo=False)
                 chain.completion_judged = True
 
     def update(self, body: BodyState, ready_to_start: bool) -> None:
@@ -462,7 +486,6 @@ class GameSession:
         for note in self.notes:
             if note.judged:
                 continue
-            delta = t - note.time
             chain = self._chain_by_id.get(note.chain_id) if note.chain_id is not None else None
             if chain is not None and not self._sustain_enabled(chain):
                 chain = None
@@ -483,35 +506,10 @@ class GameSession:
                         chain.broken_at = t
                 continue
 
-            # Continuation checkpoints are intentionally simple. An active
-            # chain already proves continuous occupancy, so timing motion is not
-            # required again. Once broken, the remainder never resumes.
-            if chain.state == ChainState.ACTIVE and delta >= 0.0:
-                # The initiating timing judgement applies to the phrase: the
-                # player only has to time the head, then sustain the chain.
-                self._judge(note, True, t, quality=chain.quality)
-                if note.chain_index == note.chain_length - 1:
-                    chain.state = ChainState.COMPLETE
-                    self._gameplay_events.append(
-                        GameplayEvent(
-                            time=t,
-                            event_type=GameplayEventType.SUSTAIN_COMPLETE,
-                            kind=chain.definition.kind,
-                            quality=chain.quality,
-                            hit=True,
-                        )
-                    )
-                continue
-
-            if chain.state == ChainState.BROKEN and delta > HIT_WINDOW_SECONDS:
-                self._judge(note, False, t)
-                continue
-
-            # A pending chain can only occur before its head has resolved. If a
-            # malformed/extremely dense chart lets a continuation pass anyway,
-            # fail it rather than granting a free hit.
-            if chain.state == ChainState.PENDING and delta > HIT_WINDOW_SECONDS:
-                self._judge(note, False, t)
+            # Generated-chain intermediate notes remain available to DEBUG
+            # rendering but are not gameplay judgements while chaining is on.
+            # The shared sustain owns the single weighted tail judgement.
+            continue
 
         raw_performance = self.stats.performance_state
         if raw_performance in ("warning", "danger", "failed"):

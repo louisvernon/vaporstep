@@ -37,6 +37,15 @@ def test_chart_key_does_not_depend_on_absolute_song_directory(tmp_path: Path):
     assert chart_key(song, chart) == chart_key(other, chart)
 
 
+def test_chart_key_separates_virtual_chains_on_and_off(tmp_path: Path):
+    song, chart = _song_chart(tmp_path)
+    chains_on = chart_key(song, chart, chains_enabled=True)
+    chains_off = chart_key(song, chart, chains_enabled=False)
+
+    assert chains_on != chains_off
+    assert chart_key(song, chart) == chains_on
+
+
 def test_record_store_only_replaces_high_score(tmp_path: Path):
     path = tmp_path / "scores.json"
     store = RecordStore(path)

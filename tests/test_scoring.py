@@ -28,6 +28,16 @@ def test_hit_scoring_uses_post_hit_combo_and_miss_resets():
     assert stats.max_combo == 5
 
 
+def test_nonbreaking_miss_preserves_combo():
+    stats = RunStats(total_notes=4)
+    stats.register_hit()
+    stats.register_hit()
+    stats.register_miss(break_combo=False)
+    assert stats.misses == 1
+    assert stats.combo == 2
+    assert stats.judgements == [True, True, False]
+
+
 def test_max_score_is_perfect_combo_simulation():
     # PERFECT is 1.5x quality: first four at combo 1x, fifth at combo 2x.
     assert theoretical_max_score(5) == 9000
@@ -37,6 +47,21 @@ def test_max_score_is_perfect_combo_simulation():
     assert stats.score == stats.max_score
     assert stats.score_ratio == 1.0
     assert stats.grade == "S"
+
+
+def test_weighted_tail_uses_current_combo_and_has_matching_theoretical_max():
+    stats = RunStats(total_notes=2, score_weights=(1.0, 2.0))
+    assert stats.register_hit(HitQuality.HIT) == 1000
+    assert stats.register_hit(HitQuality.HIT, score_weight=2.0) == 2000
+    assert stats.combo == 2
+    assert stats.score == 3000
+    assert stats.max_score == 4500
+
+    perfect = RunStats(total_notes=2, score_weights=(1.0, 2.0))
+    perfect.register_hit(HitQuality.PERFECT)
+    perfect.register_hit(HitQuality.PERFECT, score_weight=2.0)
+    assert perfect.score == perfect.max_score
+    assert perfect.score_ratio == 1.0
 
 
 def test_timing_quality_adds_score_without_changing_combo_rules():
@@ -106,4 +131,3 @@ def test_recent_hit_rate_expands_to_chart_relative_window_then_rolls():
     for _ in range(10):
         stats.register_miss()
     assert stats.recent_window_size == 20
-

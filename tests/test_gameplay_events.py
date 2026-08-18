@@ -53,7 +53,6 @@ def test_perfect_judgement_emits_one_timing_audio_event(monkeypatch):
     assert events[0].time == 1.0
 
 
-
 def test_early_great_emits_confirmation_at_the_note_time(monkeypatch):
     clock = [0.0]
     monkeypatch.setattr(GameSession, "time", property(lambda self: clock[0]))
@@ -76,6 +75,7 @@ def test_early_great_emits_confirmation_at_the_note_time(monkeypatch):
     assert events[0].quality == HitQuality.GREAT
     assert events[0].time == 1.0
 
+
 def test_basic_hit_is_silent(monkeypatch):
     clock = [0.0]
     monkeypatch.setattr(GameSession, "time", property(lambda self: clock[0]))
@@ -84,8 +84,8 @@ def test_basic_hit_is_silent(monkeypatch):
 
     clock[0] = 0.90
     session.update(_body(0.90, 1), True)
-    clock[0] = 1.10
-    session.update(_body(1.10, 1), True)
+    clock[0] = 1.16
+    session.update(_body(1.16, 1), True)
 
     assert session.notes[0].judgement == HitQuality.HIT
     assert session.drain_gameplay_events() == ()
@@ -97,8 +97,8 @@ def test_miss_is_silent(monkeypatch):
     session = GameSession(demo_notes=[GameNote(time=1.0, lanes=(1,), kind=NoteKind.FOOT)])
     session.running = True
 
-    clock[0] = 1.11
-    session.update(_body(1.11, 2), True)
+    clock[0] = 1.16
+    session.update(_body(1.16, 2), True)
     assert session.drain_gameplay_events() == ()
     assert session.notes[0].judged and not session.notes[0].hit
 

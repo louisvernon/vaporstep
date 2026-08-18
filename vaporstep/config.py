@@ -36,15 +36,16 @@ PLAYER_HORIZONTAL_ZOOM = 1.10
 # 0.0 = old fixed-width horizontal mapping; 1.0 = literal rendered perspective.
 LANE_PERSPECTIVE_STRENGTH = 0.45
 
-
 # Lower-body lane position uses a virtual point part-way down the shin rather
-# than the knee itself. This makes a planted foot less likely to drift lanes
-# when the player flexes/leans to move the other leg. Stomp timing still uses
-# knee vertical motion. The ankle contribution fades near the bottom camera
-# edge and disappears automatically when the ankle is not reliably tracked.
-LOWER_BODY_ANKLE_BLEND = 0.45
-LOWER_BODY_ANKLE_EDGE_FADE_START = 0.92
-LOWER_BODY_ANKLE_EDGE_FADE_END = 1.02
+# than the knee itself. Ankle influence follows MediaPipe confidence instead of
+# camera-edge position so a confidently estimated ankle can still help when it
+# is near or slightly beyond the visible frame. Only the ankle contribution
+# weight is smoothed; the resulting x/y position follows each pose sample
+# directly so fast lateral steps are not delayed. Stomp timing uses the raw knee.
+LOWER_BODY_ANKLE_BLEND = 0.55
+LOWER_BODY_ANKLE_CONFIDENCE_LOW = 0.25
+LOWER_BODY_ANKLE_CONFIDENCE_HIGH = 0.70
+LOWER_BODY_WEIGHT_SMOOTH_ALPHA = 0.35
 
 LANDMARK_VISIBILITY_THRESHOLD = 0.45
 
@@ -67,8 +68,9 @@ LOOKAHEAD_SECONDS = 4.0
 # Basic occupancy hits are deliberately much tighter than timing-bonus motion.
 # The player must still occupy the lane at the beat (or within a very short
 # recent/late grace), preventing a quick sweep through several lanes from
-# latching many notes.
-HIT_WINDOW_SECONDS = 0.10
+# latching many notes. The late side is slightly wider to absorb camera/inference
+# latency; the early side remains OCCUPANCY_GRACE_SECONDS.
+HIT_WINDOW_SECONDS = 0.15
 OCCUPANCY_GRACE_SECONDS = 0.10
 HIT_FLASH_SECONDS = 0.38
 
@@ -78,4 +80,3 @@ VANISH_Y = 0.50
 HAND_HIT_Y = 0.10
 FOOT_HIT_Y = 0.90
 VANISH_HALF_WIDTH = 0.055
-
