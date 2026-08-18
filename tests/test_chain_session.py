@@ -30,16 +30,10 @@ def _body(ts: float, lane: int | None) -> BodyState:
     return BodyState(left_knee=point, pose_visible=lane is not None, timestamp=ts)
 
 
-def _chart():
-    notes = [
-        GameNote(time=1.0, beat=2.0, lanes=(1,), kind=NoteKind.FOOT),
-        GameNote(time=1.5, beat=3.0, lanes=(1,), kind=NoteKind.FOOT),
-        GameNote(time=2.0, beat=4.0, lanes=(1,), kind=NoteKind.FOOT),
-    ]
-    chains = assign_implicit_chains(notes)
+def _song_info(path: str = "/tmp/song.sm") -> tuple[SongInfo, ChartInfo]:
     info = ChartInfo(index=0, difficulty="Medium", meter=5)
     song = SongInfo(
-        simfile_path=Path("/tmp/song.sm"),
+        simfile_path=Path(path),
         song_dir=Path("/tmp"),
         title="Song",
         subtitle="",
@@ -49,50 +43,114 @@ def _chart():
         background_path=None,
         charts=(info,),
     )
-    return LoadedChart(song=song, chart=info, notes=tuple(notes), initial_bpm=120, last_note_time=2.0, chains=chains)
+    return song, info
 
 
-def test_active_chain_continuations_do_not_require_new_timing_motion(monkeypatch):
+def _chart():
+    notes = [
+        GameNote(time=1.0, beat=2.0, lanes=(1,), kind=NoteKind.FOOT),
+        GameNote(time=1.5, beat=3.0, lanes=(1,), kind=NoteKind.FOOT),
+        GameNote(time=2.0, beat=4.0, lanes=(1,), kind=NoteKind.FOOT),
+    ]
+    chains = assign_implicit_chains(notes)
+    song, info = _song_info()
+    return LoadedChart(
+        song=song,
+        chart=info,
+        notes=tuple(notes),
+        initial_bpm=120,
+        last_note_time=2.0,
+        chains=chains,
+    )
+
+
+def test_generated_chain_collapses_to_head_and_weighted_tail(monkeypatch):
     clock = [0.0]
     monkeypatch.setattr(GameSession, "time", property(lambda self: clock[0]))
     session = GameSession(chart=_chart(), chain_mode=ChainMode.BLOCKS)
     session.running = True
 
+    assert session.stats.total_notes == 2
+    assert session.stats.score_weights == (1.0, 2.0)
+
     clock[0] = 0.90
-    session.update(_body(1.0, 1), True)
+    session.update(_body(0.90, 1), True)
     clock[0] = 1.10
-    session.update(_body(1.1, 1), True)
+    session.update(_body(1.10, 1), True)
     assert session.notes[0].hit
     assert session.chains[0].state == ChainState.ACTIVE
 
-    clock[0] = 1.50
-    session.update(_body(1.5, 1), True)
-    assert session.notes[1].hit
-    assert session.notes[1].judgement.value == "hit"
+    # The authored intermediate repeated step is retained for debug rendering,
+    # but it is no longer a gameplay judgement when chaining is enabled.
+    clock[0] = 1.60
+    session.update(_body(1.60, 1), True)
+    assert not session.notes[1].judged
+    assert session.stats.hits == 1
+
+    clock[0] = 2.01
+    session.update(_body(2.01, 1), True)
+    assert session.chains[0].state == ChainState.COMPLETE
+    assert session.stats.hits == 2
+    assert session.stats.misses == 0
+    assert session.stats.combo == 2
+    assert session.stats.score == 3000  # 1x head + 2x tail at combo 2
 
 
-def test_broken_chain_does_not_resume(monkeypatch):
+def test_chain_off_restores_individual_source_notes(monkeypatch):
+    clock = [0.0]
+    monkeypatch.setattr(GameSession, "time", property(lambda self: clock[0]))
+    session = GameSession(chart=_chart(), chain_mode=ChainMode.OFF)
+    session.running = True
+
+    assert session.stats.total_notes == 3
+    assert session.stats.score_weights == (1.0, 1.0, 1.0)
+
+    for note_time, timestamp in ((1.0, 1.0), (1.5, 1.5), (2.0, 2.0)):
+        clock[0] = note_time - 0.05
+        session.update(_body(timestamp - 0.05, 1), True)
+        clock[0] = note_time + 0.16
+        session.update(_body(timestamp + 0.16, 1), True)
+
+    assert all(note.judged and note.hit for note in session.notes)
+    assert session.stats.hits == 3
+    assert session.stats.combo == 3
+
+
+def test_broken_generated_chain_preserves_combo_and_does_not_resume(monkeypatch):
     clock = [0.0]
     monkeypatch.setattr(GameSession, "time", property(lambda self: clock[0]))
     session = GameSession(chart=_chart(), chain_mode=ChainMode.BLOCKS)
     session.running = True
 
     clock[0] = 0.90
-    session.update(_body(1.0, 1), True)
+    session.update(_body(0.90, 1), True)
     clock[0] = 1.10
-    session.update(_body(1.1, 1), True)
+    session.update(_body(1.10, 1), True)
     assert session.chains[0].state == ChainState.ACTIVE
+    assert session.stats.combo == 1
 
-    # Stay away longer than the 200 ms tracking/dropout grace.
+    # Generated holds use the same 300 ms dropout/cross-step grace as authored holds.
     clock[0] = 1.35
     session.update(_body(1.35, 2), True)
+    assert session.chains[0].state == ChainState.ACTIVE
+
+    clock[0] = 1.41
+    session.update(_body(1.41, 2), True)
+    assert session.chains[0].state == ChainState.BROKEN
+    assert session.stats.combo == 1
+    assert session.stats.misses == 0
+
+    # Returning to the lane does not reactivate the sustain.
+    clock[0] = 1.70
+    session.update(_body(1.70, 1), True)
     assert session.chains[0].state == ChainState.BROKEN
 
-    # Returning to the lane does not reactivate the chain.
-    clock[0] = 1.61
-    session.update(_body(1.61, 1), True)
-    assert session.chains[0].state == ChainState.BROKEN
-    assert session.notes[1].judged and not session.notes[1].hit
+    # The single failed tail judgement hurts score/performance but not combo.
+    clock[0] = 2.01
+    session.update(_body(2.01, 1), True)
+    assert session.stats.misses == 1
+    assert session.stats.combo == 1
+    assert session.chains[0].completion_judged
 
 
 def _hold_chart():
@@ -109,18 +167,7 @@ def _hold_chart():
         )
     ]
     chains, sustains = assign_sustains(notes)
-    info = ChartInfo(index=0, difficulty="Medium", meter=5)
-    song = SongInfo(
-        simfile_path=Path("/tmp/hold.sm"),
-        song_dir=Path("/tmp"),
-        title="Hold Song",
-        subtitle="",
-        artist="Artist",
-        music_path=None,
-        banner_path=None,
-        background_path=None,
-        charts=(info,),
-    )
+    song, info = _song_info("/tmp/hold.sm")
     return LoadedChart(
         song=song,
         chart=info,
@@ -132,11 +179,14 @@ def _hold_chart():
     )
 
 
-def test_explicit_hold_remains_active_when_implicit_chains_are_off(monkeypatch):
+def test_explicit_hold_is_head_plus_weighted_tail_even_when_chains_are_off(monkeypatch):
     clock = [0.0]
     monkeypatch.setattr(GameSession, "time", property(lambda self: clock[0]))
     session = GameSession(chart=_hold_chart(), chain_mode=ChainMode.OFF)
     session.running = True
+
+    assert session.stats.total_notes == 2
+    assert session.stats.score_weights == (1.0, 2.0)
 
     clock[0] = 0.90
     session.update(_body(0.90, 1), True)
@@ -148,12 +198,13 @@ def test_explicit_hold_remains_active_when_implicit_chains_are_off(monkeypatch):
     clock[0] = 2.01
     session.update(_body(2.01, 1), True)
     assert session.chains[0].state == ChainState.COMPLETE
-    assert session.stats.hits == 2  # timed head + virtual hold completion
+    assert session.stats.hits == 2
     assert session.stats.misses == 0
     assert session.stats.total_notes == 2
+    assert session.stats.score == 3000
 
 
-def test_dropping_explicit_hold_breaks_combo_and_does_not_resume(monkeypatch):
+def test_dropping_explicit_hold_preserves_combo_and_does_not_resume(monkeypatch):
     clock = [0.0]
     monkeypatch.setattr(GameSession, "time", property(lambda self: clock[0]))
     session = GameSession(chart=_hold_chart(), chain_mode=ChainMode.BLOCKS)
@@ -164,8 +215,8 @@ def test_dropping_explicit_hold_breaks_combo_and_does_not_resume(monkeypatch):
     clock[0] = 1.10
     session.update(_body(1.10, 1), True)
     assert session.chains[0].state == ChainState.ACTIVE
+    assert session.stats.combo == 1
 
-    # Explicit holds deliberately get a 300 ms dropout/cross-step grace.
     clock[0] = 1.35
     session.update(_body(1.35, 2), True)
     assert session.chains[0].state == ChainState.ACTIVE
@@ -176,10 +227,68 @@ def test_dropping_explicit_hold_breaks_combo_and_does_not_resume(monkeypatch):
     clock[0] = 1.41
     session.update(_body(1.41, 2), True)
     assert session.chains[0].state == ChainState.BROKEN
-    assert session.stats.misses == 1
-    assert session.stats.combo == 0
+    assert session.stats.misses == 0
+    assert session.stats.combo == 1
 
     clock[0] = 1.60
     session.update(_body(1.60, 1), True)
     assert session.chains[0].state == ChainState.BROKEN
+
+    clock[0] = 2.01
+    session.update(_body(2.01, 1), True)
     assert session.stats.misses == 1
+    assert session.stats.combo == 1
+
+
+def test_missed_hold_head_breaks_combo_once_and_tail_does_not_break_it_again(monkeypatch):
+    clock = [0.0]
+    monkeypatch.setattr(GameSession, "time", property(lambda self: clock[0]))
+    session = GameSession(chart=_hold_chart(), chain_mode=ChainMode.BLOCKS)
+    session.running = True
+
+    # Build a combo before the hold, then miss the head.
+    session.stats.register_hit()
+    session.stats.register_hit()
+    assert session.stats.combo == 2
+
+    clock[0] = 1.16
+    session.update(_body(1.16, None), True)
+    assert session.notes[0].judged and not session.notes[0].hit
+    assert session.stats.combo == 0
+    assert session.chains[0].state == ChainState.BROKEN
+
+    # Rebuild a combo before the tail arrives.
+    session.stats.register_hit()
+    session.stats.register_hit()
+    assert session.stats.combo == 2
+
+    clock[0] = 2.01
+    session.update(_body(2.01, None), True)
+    assert session.stats.misses == 2  # head + one virtual tail failure
+    assert session.stats.combo == 2
+
+
+def test_late_occupancy_within_camera_grace_counts_as_hit(monkeypatch):
+    clock = [0.0]
+    monkeypatch.setattr(GameSession, "time", property(lambda self: clock[0]))
+    note = GameNote(time=1.0, beat=2.0, lanes=(1,), kind=NoteKind.FOOT)
+    song, info = _song_info("/tmp/single.sm")
+    chart = LoadedChart(
+        song=song,
+        chart=info,
+        notes=(note,),
+        initial_bpm=120,
+        last_note_time=1.0,
+    )
+    session = GameSession(chart=chart)
+    session.running = True
+
+    # A pose result arriving 140 ms late is still accepted. It can disappear on
+    # the next frame and the remembered occupancy is awarded at window close.
+    clock[0] = 1.14
+    session.update(_body(1.14, 1), True)
+    assert not session.notes[0].judged
+
+    clock[0] = 1.16
+    session.update(_body(1.16, None), True)
+    assert session.notes[0].judged and session.notes[0].hit
