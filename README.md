@@ -51,7 +51,7 @@ If you have a medical condition or concern about physical activity, seek appropr
 
 ## Privacy
 
-Raw webcam frames are processed locally and are not saved or uploaded by VaporStep. The camera is used only during calibration and gameplay. If **Record Play** is enabled, VaporStep saves only the rendered game view — including your stylized silhouette — and reconstructed game audio to a local video file. The MediaPipe runtime used for pose tracking may send performance/utilization metrics to Google; camera/video input itself is processed on-device.
+Raw webcam frames are processed locally and are not saved or uploaded by VaporStep. The camera is used only during calibration and gameplay. If **Record Play** is enabled, VaporStep saves only the rendered game view — including your stylized silhouette — and reconstructed game audio to a local video file. VaporStep uses MediaPipe for on-device pose detection and tracking; the MediaPipe runtime may send performance/utilization metrics to Google, but camera/video input itself is processed on-device.
 
 Song libraries and high scores remain local to your computer. See [SECURITY.md](SECURITY.md) for security reporting and additional implementation notes.
 
