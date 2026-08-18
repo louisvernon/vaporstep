@@ -21,9 +21,6 @@ jobs:
           - os: windows-latest
             artifact: VaporStep-Windows-x86_64
             package: VaporStep-Windows-x86_64.zip
-          - os: macos-15-intel
-            artifact: VaporStep-macOS-Intel
-            package: VaporStep-macOS-Intel.zip
           - os: macos-latest
             artifact: VaporStep-macOS-AppleSilicon
             package: VaporStep-macOS-AppleSilicon.zip
