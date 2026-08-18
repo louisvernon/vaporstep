@@ -294,9 +294,13 @@ class PoseCameraInput:
         presence = max(0.0, min(1.0, float(lm.presence or 0.0)))
         return min(visibility, presence)
 
-    @classmethod
-    def _visible(cls, lm) -> bool:
-        return cls._confidence(lm) >= LANDMARK_VISIBILITY_THRESHOLD
+    @staticmethod
+    def _visible(lm) -> bool:
+        # Preserve the existing pose-acceptance rule for wrists/knees. Ankle
+        # blending uses the continuous confidence value separately below.
+        visibility = float(lm.visibility or 0.0)
+        presence = float(lm.presence or 0.0)
+        return visibility >= LANDMARK_VISIBILITY_THRESHOLD and presence >= 0.35
 
     def _camera_point(self, lm, *, visible: bool | None = None) -> BodyPoint:
         """Return a displayed camera-space point without resolving a lane."""
