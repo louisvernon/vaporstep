@@ -68,8 +68,9 @@ LOOKAHEAD_SECONDS = 4.0
 # Basic occupancy hits are deliberately much tighter than timing-bonus motion.
 # The player must still occupy the lane at the beat (or within a very short
 # recent/late grace), preventing a quick sweep through several lanes from
-# latching many notes.
-HIT_WINDOW_SECONDS = 0.10
+# latching many notes. The late side is slightly wider to absorb camera/inference
+# latency; the early side remains OCCUPANCY_GRACE_SECONDS.
+HIT_WINDOW_SECONDS = 0.15
 OCCUPANCY_GRACE_SECONDS = 0.10
 HIT_FLASH_SECONDS = 0.38
 
