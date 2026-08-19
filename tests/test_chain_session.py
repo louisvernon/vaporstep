@@ -92,6 +92,7 @@ def test_generated_chain_collapses_to_head_and_weighted_tail(monkeypatch):
     assert session.chains[0].state == ChainState.COMPLETE
     assert session.stats.hits == 2
     assert session.stats.misses == 0
+    assert session.stats.dropped_holds == 0
     assert session.stats.combo == 2
     assert session.stats.score == 3000  # 1x head + 2x tail at combo 2
 
@@ -139,16 +140,18 @@ def test_broken_generated_chain_preserves_combo_and_does_not_resume(monkeypatch)
     assert session.chains[0].state == ChainState.BROKEN
     assert session.stats.combo == 1
     assert session.stats.misses == 0
+    assert session.stats.dropped_holds == 0
 
     # Returning to the lane does not reactivate the sustain.
     clock[0] = 1.70
     session.update(_body(1.70, 1), True)
     assert session.chains[0].state == ChainState.BROKEN
 
-    # The single failed tail judgement hurts score/performance but not combo.
+    # The single failed tail judgement hurts score/performance but not combo or timed misses.
     clock[0] = 2.01
     session.update(_body(2.01, 1), True)
-    assert session.stats.misses == 1
+    assert session.stats.misses == 0
+    assert session.stats.dropped_holds == 1
     assert session.stats.combo == 1
     assert session.chains[0].completion_judged
 
@@ -200,6 +203,7 @@ def test_explicit_hold_is_head_plus_weighted_tail_even_when_chains_are_off(monke
     assert session.chains[0].state == ChainState.COMPLETE
     assert session.stats.hits == 2
     assert session.stats.misses == 0
+    assert session.stats.dropped_holds == 0
     assert session.stats.total_notes == 2
     assert session.stats.score == 3000
 
@@ -228,6 +232,7 @@ def test_dropping_explicit_hold_preserves_combo_and_does_not_resume(monkeypatch)
     session.update(_body(1.47, 2), True)
     assert session.chains[0].state == ChainState.BROKEN
     assert session.stats.misses == 0
+    assert session.stats.dropped_holds == 0
     assert session.stats.combo == 1
 
     clock[0] = 1.60
@@ -236,7 +241,8 @@ def test_dropping_explicit_hold_preserves_combo_and_does_not_resume(monkeypatch)
 
     clock[0] = 2.01
     session.update(_body(2.01, 1), True)
-    assert session.stats.misses == 1
+    assert session.stats.misses == 0
+    assert session.stats.dropped_holds == 1
     assert session.stats.combo == 1
 
 
@@ -264,7 +270,8 @@ def test_missed_hold_head_breaks_combo_once_and_tail_does_not_break_it_again(mon
 
     clock[0] = 2.01
     session.update(_body(2.01, None), True)
-    assert session.stats.misses == 2  # head + one virtual tail failure
+    assert session.stats.misses == 1  # missed head remains a timed-target miss
+    assert session.stats.dropped_holds == 1  # failed tail is reported separately
     assert session.stats.combo == 2
 
 
