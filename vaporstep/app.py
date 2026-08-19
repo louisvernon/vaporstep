@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from datetime import date, datetime, timedelta, timezone
 import math
 import os
 from pathlib import Path
@@ -10,11 +11,21 @@ import time
 import pygame
 
 from . import __version__
+from .activity import ActivityStore, RunActivity, counts_as_song, run_progress, target_activity, week_start
+from .activity_ui import (
+    NamePrompt,
+    ProfilePicker,
+    draw_activity_dashboard,
+    draw_name_prompt,
+    draw_profile_badge,
+    draw_profile_picker,
+)
 from .audio_fx import GameplaySounds, MenuSounds
 from .config import TARGET_FPS, WINDOW_HEIGHT, WINDOW_WIDTH
 from .demo import make_demo_notes
 from .directory_browser import DirectoryBrowser
 from .domain import BodyState, ChainMode
+from .home_ui import MAIN_OPTIONS, draw_home
 from .keyboard_input import KeyboardBodyInput
 from .library_index import LibraryIndexer, LibraryScanSnapshot
 from .menu import HeldMenuRepeater, MenuAction, SongMenu, action_for_event
@@ -29,17 +40,15 @@ from .session import GameSession
 from .settings import (
     HORIZONTAL_REACH_STEP,
     PRIVACY_NOTICE_VERSION,
-    MAX_HORIZONTAL_REACH,
-    MIN_HORIZONTAL_REACH,
     SettingsStore,
     clamp_horizontal_reach,
 )
 from .simfile_loader import load_chart
 from .tracking_overlay import draw_lower_body_tracking_overlay
+from .user_paths import activity_path, profile_highscores_path
 
 
 APP_VERSION = __version__
-MAIN_OPTIONS = ("PLAY", "CALIBRATE", "SONG FOLDER", "ABOUT", "QUIT")
 RECORD_RESULTS_HOLD_SECONDS = 3.0
 
 
@@ -185,6 +194,20 @@ def main(argv: list[str] | None = None) -> int:
     if args.reach is not None:
         settings_store.settings.horizontal_reach = clamp_horizontal_reach(args.reach)
 
+    activity_store = ActivityStore(activity_path())
+    active_profile = activity_store.active_profile()
+    if active_profile is not None:
+        prefs = active_profile.settings
+        settings_store.settings.horizontal_reach = clamp_horizontal_reach(
+            float(prefs.get("horizontal_reach", settings_store.settings.horizontal_reach))
+        )
+        settings_store.settings.favorite_song_keys = list(prefs.get("favorite_song_keys", []))
+        settings_store.settings.played_song_keys = list(prefs.get("played_song_keys", []))
+        settings_store.settings.last_song_key = str(prefs.get("last_song_key", ""))
+        settings_store.settings.preferred_difficulty = str(
+            prefs.get("preferred_difficulty", settings_store.settings.preferred_difficulty)
+        )
+
     pygame.init()
     pygame.display.set_caption(f"VaporStep V{APP_VERSION}")
     try:
@@ -202,7 +225,9 @@ def main(argv: list[str] | None = None) -> int:
     keyboard = KeyboardBodyInput()
     menu_sounds = MenuSounds()
     gameplay_sounds = GameplaySounds()
-    records = RecordStore()
+    records: RecordStore | None = (
+        RecordStore(profile_highscores_path(active_profile.id)) if active_profile is not None else None
+    )
     preview = SongPreviewPlayer()
     library_indexer = LibraryIndexer()
 
@@ -220,6 +245,13 @@ def main(argv: list[str] | None = None) -> int:
     active_recording: RunRecorder | None = None
     result_recording: RunRecorder | None = None
     applied_scan_complete = False
+    stats_week = week_start(date.today())
+    profile_picker = ProfilePicker()
+    profile_return_mode = "home"
+    name_return_mode = "home"
+    name_prompt: NamePrompt | None = None
+    activity_started_at: datetime | None = None
+    activity_run_recorded = False
 
     def chains_enabled(mode: ChainMode) -> bool:
         return mode != ChainMode.OFF
@@ -227,10 +259,28 @@ def main(argv: list[str] | None = None) -> int:
     def record_key(song, chart, mode: ChainMode) -> str:
         return chart_key(song, chart, chains_enabled=chains_enabled(mode))
 
+    def save_profile_preferences() -> None:
+        nonlocal active_profile
+        if active_profile is None:
+            return
+        activity_store.update_profile_settings(
+            active_profile.id,
+            {
+                "horizontal_reach": settings_store.settings.horizontal_reach,
+                "favorite_song_keys": sorted(favorite_keys),
+                "played_song_keys": sorted(played_keys),
+                "last_song_key": settings_store.settings.last_song_key,
+                "preferred_difficulty": settings_store.settings.preferred_difficulty,
+            },
+        )
+        active_profile = activity_store.get_profile(active_profile.id)
+
     def song_was_played(song) -> bool:
         key = song_key(song)
         if key in played_keys:
             return True
+        if records is None:
+            return False
         return any(
             records.get(chart_key(song, chart, chains_enabled=enabled)).played_at
             for chart in song.charts
@@ -256,6 +306,25 @@ def main(argv: list[str] | None = None) -> int:
                 menu.select_song_index(min(max(0, fallback_index), len(visible) - 1))
         elif visible:
             menu.select_song_index(min(max(0, fallback_index), len(visible) - 1))
+
+    def apply_profile(profile) -> None:
+        nonlocal active_profile, records, favorite_keys, played_keys
+        active_profile = profile
+        activity_store.set_active_profile(profile.id)
+        records = RecordStore(profile_highscores_path(profile.id))
+        prefs = profile.settings
+        favorite_keys = set(prefs.get("favorite_song_keys", []))
+        played_keys = set(prefs.get("played_song_keys", []))
+        settings_store.settings.favorite_song_keys = sorted(favorite_keys)
+        settings_store.settings.played_song_keys = sorted(played_keys)
+        settings_store.settings.last_song_key = str(prefs.get("last_song_key", ""))
+        settings_store.settings.preferred_difficulty = str(prefs.get("preferred_difficulty", "Medium"))
+        settings_store.settings.horizontal_reach = clamp_horizontal_reach(
+            float(prefs.get("horizontal_reach", settings_store.settings.horizontal_reach))
+        )
+        renderer.set_player_horizontal_zoom(settings_store.settings.horizontal_reach)
+        rebuild_song_menu()
+        _safe_settings_save(settings_store)
 
     def _adopt_song_list(new_songs, new_errors) -> None:
         nonlocal songs, scan_errors, load_error
@@ -286,13 +355,59 @@ def main(argv: list[str] | None = None) -> int:
         if show_progress:
             mode = "library_scan"
 
+    def reset_activity_run() -> None:
+        nonlocal activity_started_at, activity_run_recorded
+        activity_started_at = None
+        activity_run_recorded = False
+
+    def finalize_activity_run(outcome: str) -> None:
+        nonlocal activity_run_recorded
+        if activity_run_recorded or active_profile is None or session is None or session.chart is None:
+            return
+        song_time = session.failed_song_time if session.failed_song_time is not None else session.time
+        if activity_started_at is None or song_time <= 0.0:
+            return
+        progress = run_progress(song_time, session.chart.last_note_time)
+        stomps, punches = target_activity(session.notes)
+        qualifies = counts_as_song(progress)
+        if qualifies:
+            played_keys.add(song_key(session.chart.song))
+            settings_store.settings.played_song_keys = sorted(played_keys)
+        local_now = datetime.now().astimezone()
+        activity_store.record_run(
+            RunActivity(
+                profile_id=active_profile.id,
+                started_at_utc=activity_started_at.astimezone(timezone.utc).isoformat(),
+                local_date=local_now.date().isoformat(),
+                duration_seconds=max(0.0, min(song_time, session.chart.last_note_time)),
+                song_key=song_key(session.chart.song),
+                chart_key=record_key(session.chart.song, session.chart.chart, session.chain_mode),
+                outcome=outcome,
+                progress=progress,
+                counts_as_song=qualifies,
+                stomps=stomps,
+                punches=punches,
+                score=session.stats.score,
+            )
+        )
+        activity_run_recorded = True
+        save_profile_preferences()
+
     privacy_pending = (
         not args.demo
         and settings_store.settings.privacy_notice_version < PRIVACY_NOTICE_VERSION
     )
 
     repeater = HeldMenuRepeater()
-    mode = "game" if args.demo else ("privacy" if privacy_pending else "home")
+    if args.demo:
+        mode = "game"
+    elif privacy_pending:
+        mode = "privacy"
+    elif active_profile is None:
+        name_prompt = NamePrompt("CREATE PROFILE")
+        mode = "profile_name"
+    else:
+        mode = "home"
     main_index = 0
     folder_browser: DirectoryBrowser | None = None
     session = GameSession(demo_notes=make_demo_notes()) if args.demo else None
@@ -300,7 +415,7 @@ def main(argv: list[str] | None = None) -> int:
     result_new_high = False
     result_failed = False
 
-    if songs_root is not None and not args.demo and not privacy_pending:
+    if songs_root is not None and not args.demo and not privacy_pending and active_profile is not None:
         start_library_scan(show_progress=False)
 
     camera: PoseCameraInput | None = None
@@ -375,7 +490,7 @@ def main(argv: list[str] | None = None) -> int:
         camera_probe_ok = probe_camera(settings_store.settings.camera_index)
         camera_error = ""
 
-    if mode != "privacy":
+    if mode not in ("privacy", "profile_name"):
         run_camera_probe()
 
     if args.demo:
@@ -403,11 +518,25 @@ def main(argv: list[str] | None = None) -> int:
         repeater.clear()
         mode = "folder"
 
+    def open_profile_picker(return_mode: str) -> None:
+        nonlocal mode, profile_return_mode
+        profiles = activity_store.profiles()
+        if not profiles:
+            return
+        save_profile_preferences()
+        profile_return_mode = return_mode
+        profile_picker.index = next(
+            (index for index, profile in enumerate(profiles) if active_profile and profile.id == active_profile.id),
+            0,
+        )
+        mode = "profiles"
+
     def handle_song_menu_action(action: MenuAction) -> None:
         nonlocal mode, session, load_error, result_failed, active_recording
         if action == MenuAction.BACK:
             preview.stop(reset_selection=True)
             repeater.clear()
+            save_profile_preferences()
             _safe_settings_save(settings_store)
             mode = "home"
             return
@@ -426,16 +555,17 @@ def main(argv: list[str] | None = None) -> int:
         song, chart = choice
         preview.stop(reset_selection=True)
         menu_sounds.select()
-        played_keys.add(song_key(song))
-        settings_store.settings.played_song_keys = sorted(played_keys)
         settings_store.settings.last_song_key = song_key(song)
         settings_store.settings.preferred_difficulty = menu.preferred_difficulty
+        save_profile_preferences()
         _safe_settings_save(settings_store)
         try:
             loaded = load_chart(song, chart)
+            assert records is not None
             record = records.get(record_key(song, chart, chain_mode))
             active_recording = None
             session = GameSession(chart=loaded, best_score=record.score, chain_mode=chain_mode)
+            reset_activity_run()
             restart_camera()
             renderer.reset_game_effects()
             repeater.clear()
@@ -471,11 +601,74 @@ def main(argv: list[str] | None = None) -> int:
 
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
+                    if mode == "game":
+                        finalize_activity_run("escaped")
                     running = False
                     continue
 
                 if event.type == pygame.KEYDOWN and event.key == pygame.K_F11:
                     toggle_fullscreen()
+                    continue
+
+                if mode in ("home", "song_menu", "results", "stats", "about"):
+                    if (
+                        event.type == pygame.KEYDOWN
+                        and event.key == pygame.K_u
+                        and bool(getattr(event, "mod", 0) & pygame.KMOD_SHIFT)
+                    ):
+                        open_profile_picker(mode)
+                        menu_sounds.select()
+                        continue
+
+                if mode == "profile_name":
+                    assert name_prompt is not None
+                    result = name_prompt.handle(event)
+                    if result == "cancel":
+                        if active_profile is None:
+                            running = False
+                        else:
+                            mode = name_return_mode
+                        continue
+                    if result == "submit":
+                        if name_prompt.profile_id is None:
+                            profile = activity_store.create_profile(name_prompt.value)
+                        else:
+                            profile = activity_store.rename_profile(name_prompt.profile_id, name_prompt.value)
+                        apply_profile(profile)
+                        name_prompt = None
+                        if active_profile is not None and songs_root is not None and not library_indexer.snapshot().running:
+                            start_library_scan(show_progress=False)
+                        run_camera_probe()
+                        mode = name_return_mode
+                        menu_sounds.select()
+                    continue
+
+                if mode == "profiles":
+                    profiles = activity_store.profiles()
+                    profile_picker.clamp(profiles)
+                    if event.type == pygame.KEYDOWN:
+                        if event.key == pygame.K_ESCAPE:
+                            mode = profile_return_mode
+                        elif event.key in (pygame.K_UP, pygame.K_w):
+                            profile_picker.index = (profile_picker.index - 1) % len(profiles)
+                            menu_sounds.tick()
+                        elif event.key in (pygame.K_DOWN, pygame.K_s):
+                            profile_picker.index = (profile_picker.index + 1) % len(profiles)
+                            menu_sounds.tick()
+                        elif event.key == pygame.K_n:
+                            name_prompt = NamePrompt("CREATE PROFILE")
+                            name_return_mode = "profiles"
+                            mode = "profile_name"
+                        elif event.key == pygame.K_r and profiles:
+                            selected = profiles[profile_picker.index]
+                            name_prompt = NamePrompt("RENAME PROFILE", selected.name, selected.id)
+                            name_return_mode = "profiles"
+                            mode = "profile_name"
+                        elif event.key == pygame.K_RETURN and profiles:
+                            save_profile_preferences()
+                            apply_profile(profiles[profile_picker.index])
+                            mode = profile_return_mode
+                            menu_sounds.select()
                     continue
 
                 if mode == "library_scan":
@@ -490,10 +683,15 @@ def main(argv: list[str] | None = None) -> int:
                     elif action == MenuAction.SELECT:
                         settings_store.settings.privacy_notice_version = PRIVACY_NOTICE_VERSION
                         _safe_settings_save(settings_store)
-                        run_camera_probe()
-                        mode = "home"
-                        if songs_root is not None:
-                            start_library_scan(show_progress=False)
+                        if active_profile is None:
+                            name_prompt = NamePrompt("CREATE PROFILE")
+                            name_return_mode = "home"
+                            mode = "profile_name"
+                        else:
+                            run_camera_probe()
+                            mode = "home"
+                            if songs_root is not None:
+                                start_library_scan(show_progress=False)
                         menu_sounds.select()
                     continue
 
@@ -515,19 +713,37 @@ def main(argv: list[str] | None = None) -> int:
                             else:
                                 mode = "song_menu"
                         elif main_index == 1:
+                            stats_week = week_start(date.today())
+                            preview.stop(reset_selection=True)
+                            mode = "stats"
+                        elif main_index == 2:
                             preview.stop(reset_selection=True)
                             restart_camera()
                             calibration_session.restart()
                             calibration_last_beat = None
                             renderer.reset_game_effects()
                             mode = "calibration"
-                        elif main_index == 2:
-                            open_folder_browser()
                         elif main_index == 3:
+                            open_folder_browser()
+                        elif main_index == 4:
                             preview.stop(reset_selection=True)
                             mode = "about"
                         else:
                             running = False
+                    continue
+
+                if mode == "stats":
+                    if event.type == pygame.KEYDOWN:
+                        if event.key == pygame.K_ESCAPE:
+                            mode = "home"
+                        elif event.key in (pygame.K_LEFT, pygame.K_a):
+                            stats_week -= timedelta(days=7)
+                            menu_sounds.tick()
+                        elif event.key in (pygame.K_RIGHT, pygame.K_d):
+                            next_week = stats_week + timedelta(days=7)
+                            if next_week <= week_start(date.today()):
+                                stats_week = next_week
+                                menu_sounds.tick()
                     continue
 
                 if mode == "about":
@@ -560,6 +776,7 @@ def main(argv: list[str] | None = None) -> int:
                 if mode == "calibration":
                     if event.type == pygame.KEYDOWN:
                         if event.key == pygame.K_ESCAPE:
+                            save_profile_preferences()
                             _safe_settings_save(settings_store)
                             calibration_session.stop()
                             stop_camera()
@@ -616,6 +833,7 @@ def main(argv: list[str] | None = None) -> int:
                                 else:
                                     favorite_keys.add(current_key)
                                 settings_store.settings.favorite_song_keys = sorted(favorite_keys)
+                                save_profile_preferences()
                                 _safe_settings_save(settings_store)
                                 if favorites_only:
                                     preview.stop(reset_selection=True)
@@ -665,6 +883,7 @@ def main(argv: list[str] | None = None) -> int:
                         session.set_best_score(result_record.score)
                         restart_camera()
                         session.restart()
+                        reset_activity_run()
                         renderer.reset_game_effects()
                         result_failed = False
                         mode = "game"
@@ -684,7 +903,7 @@ def main(argv: list[str] | None = None) -> int:
                     if event.key == pygame.K_v and session is not None and not session.running:
                         chain_mode = chain_mode.shifted()
                         session.set_chain_mode(chain_mode)
-                        if session.chart is not None:
+                        if session.chart is not None and records is not None:
                             current_record = records.get(
                                 record_key(session.chart.song, session.chart.chart, chain_mode)
                             )
@@ -695,6 +914,7 @@ def main(argv: list[str] | None = None) -> int:
                         if args.demo:
                             running = False
                         else:
+                            finalize_activity_run("escaped")
                             if session is not None:
                                 session.stop()
                             if active_recording is not None:
@@ -706,10 +926,12 @@ def main(argv: list[str] | None = None) -> int:
                     elif event.key == pygame.K_d:
                         debug = not debug
                     elif event.key == pygame.K_r and session is not None:
+                        finalize_activity_run("escaped")
                         if active_recording is not None:
                             active_recording.abort()
                             active_recording = None
                         session.restart()
+                        reset_activity_run()
                         renderer.reset_game_effects()
                     elif event.key == pygame.K_k:
                         toggle_keyboard_input()
@@ -720,8 +942,45 @@ def main(argv: list[str] | None = None) -> int:
                 clock.tick(TARGET_FPS)
                 continue
 
+            if mode == "profile_name":
+                renderer.screen.fill((2, 2, 8))
+                renderer._draw_background(time.monotonic(), 0.0, False)
+                assert name_prompt is not None
+                draw_name_prompt(renderer, name_prompt)
+                pygame.display.flip()
+                clock.tick(TARGET_FPS)
+                continue
+
+            if mode == "profiles":
+                if profile_return_mode == "home" and active_profile is not None:
+                    draw_home(
+                        renderer,
+                        main_index,
+                        songs_root,
+                        len(songs),
+                        settings_store.settings.camera_index,
+                        settings_store.settings.horizontal_reach,
+                        camera_status(),
+                        active_profile.name,
+                    )
+                else:
+                    renderer.screen.fill((2, 2, 8))
+                    renderer._draw_background(time.monotonic(), 0.0, False)
+                draw_profile_picker(renderer, activity_store.profiles(), profile_picker)
+                pygame.display.flip()
+                clock.tick(TARGET_FPS)
+                continue
+
             if mode == "about":
                 renderer.draw_about()
+                draw_profile_badge(renderer, active_profile)
+                pygame.display.flip()
+                clock.tick(TARGET_FPS)
+                continue
+
+            if mode == "stats":
+                assert active_profile is not None
+                draw_activity_dashboard(renderer, activity_store, active_profile, stats_week)
                 pygame.display.flip()
                 clock.tick(TARGET_FPS)
                 continue
@@ -733,6 +992,7 @@ def main(argv: list[str] | None = None) -> int:
                 continue
 
             if mode == "home":
+                assert active_profile is not None
                 status_text = camera_status()
                 if scan_snapshot.running:
                     if scan_snapshot.phase == "discovering":
@@ -741,13 +1001,15 @@ def main(argv: list[str] | None = None) -> int:
                         status_text += (
                             f"  ·  library {scan_snapshot.files_processed:,}/{scan_snapshot.stepfiles_found:,}"
                         )
-                renderer.draw_main_menu(
+                draw_home(
+                    renderer,
                     main_index,
                     songs_root,
                     len(songs),
                     settings_store.settings.camera_index,
                     settings_store.settings.horizontal_reach,
                     status_text,
+                    active_profile.name,
                 )
                 pygame.display.flip()
                 clock.tick(TARGET_FPS)
@@ -756,6 +1018,7 @@ def main(argv: list[str] | None = None) -> int:
             if mode == "folder":
                 assert folder_browser is not None
                 renderer.draw_directory_browser(folder_browser)
+                draw_profile_badge(renderer, active_profile)
                 pygame.display.flip()
                 clock.tick(TARGET_FPS)
                 continue
@@ -766,7 +1029,7 @@ def main(argv: list[str] | None = None) -> int:
                 menu.animate(frame_dt)
                 preview.update(menu.song, now)
                 selected_record = ChartRecord()
-                if menu.song is not None and menu.chart is not None:
+                if menu.song is not None and menu.chart is not None and records is not None:
                     selected_record = records.get(record_key(menu.song, menu.chart, chain_mode))
                 renderer.draw_song_menu(
                     menu,
@@ -781,6 +1044,7 @@ def main(argv: list[str] | None = None) -> int:
                     chain_mode=chain_mode,
                     recording_enabled=record_play_enabled,
                 )
+                draw_profile_badge(renderer, active_profile)
                 pygame.display.flip()
                 clock.tick(TARGET_FPS)
                 continue
@@ -798,6 +1062,7 @@ def main(argv: list[str] | None = None) -> int:
                     failed=result_failed,
                     recording_status=(result_recording.snapshot().message if result_recording is not None else ""),
                 )
+                draw_profile_badge(renderer, active_profile)
                 pygame.display.flip()
                 clock.tick(TARGET_FPS)
                 continue
@@ -877,7 +1142,10 @@ def main(argv: list[str] | None = None) -> int:
             assert session is not None
             if not use_keyboard and camera is not None:
                 status = _readiness_for_session(body, session)
+            was_running = session.running
             session.update(body, ready_to_start=(use_keyboard or status == "READY"))
+            if not was_running and session.running and activity_started_at is None and session.chart is not None:
+                activity_started_at = datetime.now(timezone.utc)
 
             if (
                 record_play_enabled
@@ -899,12 +1167,15 @@ def main(argv: list[str] | None = None) -> int:
                 active_recording.add_events(gameplay_events)
 
             if session.finished and not args.demo:
+                outcome = "failed" if session.failed else "completed"
+                finalize_activity_run(outcome)
                 session.stop()
                 stop_camera()
                 assert session.chart is not None
                 key = record_key(session.chart.song, session.chart.chart, session.chain_mode)
                 result_failed = session.failed
                 result_recording = active_recording
+                assert records is not None
                 if result_failed:
                     result_record = records.get(key)
                     result_new_high = False
@@ -939,6 +1210,7 @@ def main(argv: list[str] | None = None) -> int:
                         failed=result_failed,
                         recording_status=result_recording.snapshot().message,
                     )
+                draw_profile_badge(renderer, active_profile)
                 pygame.display.flip()
                 clock.tick(TARGET_FPS)
                 continue
@@ -980,15 +1252,19 @@ def main(argv: list[str] | None = None) -> int:
             pygame.display.flip()
             clock.tick(TARGET_FPS)
     finally:
+        if mode == "game":
+            finalize_activity_run("escaped")
         preview.stop(reset_selection=True)
         settings_store.settings.favorite_song_keys = sorted(favorite_keys)
         settings_store.settings.played_song_keys = sorted(played_keys)
+        save_profile_preferences()
         _safe_settings_save(settings_store)
         if session is not None:
             session.stop()
         if active_recording is not None:
             active_recording.abort()
         stop_camera()
+        activity_store.close()
         pygame.quit()
 
     return 0
