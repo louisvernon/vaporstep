@@ -23,6 +23,10 @@ def highscores_path() -> Path:
     return state_dir() / "highscores.json"
 
 
+def profile_highscores_path(profile_id: int) -> Path:
+    return state_dir() / "Profiles" / str(int(profile_id)) / "highscores.json"
+
+
 def activity_path() -> Path:
     return state_dir() / "activity.sqlite3"
 
