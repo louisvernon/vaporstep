@@ -23,6 +23,14 @@ python -m vaporstep --songs "/path/to/Songs"
 
 MediaPipe is currently pinned to `0.10.21` for the tested pose-tracking path. `setuptools<82` is retained because `simfile==2.1.1` imports `pkg_resources`.
 
+## Versioning
+
+VaporStep derives its version from Git using `setuptools-scm`; there is no manually maintained package version.
+
+Release tags use the `vMAJOR.MINOR.PATCH` form. An exact tag such as `v0.14.0` produces application/package version `0.14.0`. Untagged development builds include distance-from-tag and commit metadata, for example `0.14.1.dev5+gabcdef0`, with dirty local trees marked accordingly.
+
+CI uses full Git history so tags are available when calculating the version. The generated `vaporstep/_version.py` is build output and is not committed.
+
 ## Tests
 
 Install build/development dependencies and run the suite:
