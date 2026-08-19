@@ -202,7 +202,8 @@ def draw_activity_dashboard(
         chart_y += chart_h
 
     compare_count = 7
-    if start == week_start(today):
+    current_week = week_start(today)
+    if start == current_week:
         compare_count = today.weekday() + 1
     cur_time, cur_stomps, cur_punches, cur_songs = _sum_days(current, compare_count)
     prev_time, prev_stomps, prev_punches, prev_songs = _sum_days(previous, compare_count)
@@ -219,7 +220,8 @@ def draw_activity_dashboard(
     screen.blit(goal, (right_x, y + 74))
 
     y += 126
-    heading = renderer.font.render("THIS WEEK", True, CYAN)
+    period_heading = "THIS WEEK" if start == current_week else "WEEK TOTAL"
+    heading = renderer.font.render(period_heading, True, CYAN)
     screen.blit(heading, (right_x, y))
     comparisons = (
         ("TIME", _format_duration(cur_time), _comparison(cur_time, prev_time)),
