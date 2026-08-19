@@ -4,13 +4,20 @@
 
 **VaporStep turns your webcam into a full-body rhythm game.** Step, reach, stomp and pump your hands through the lanes as notes arrive with the music — no dance pad or motion controllers required.
 
-VaporStep has out of the box support for StepMania style step files, so you should be able to point it at your existing libraries and play.
+VaporStep has out of the box support for StepMania style step/sim files, so you should be able to point it at your existing libraries and play.
 
-<img width="400" alt="VaporStep-Menu" src="https://github.com/user-attachments/assets/860be5eb-57bd-4e0b-ba67-fa7656de887d" />
+<p float="left">
+  <img width="20%" alt="VaporStep-Menu" src="https://github.com/user-attachments/assets/fb53254e-31ec-465c-af79-1c3df5e6029d" />
+  <img width="20%" alt="VaporStep-SongList" src="https://github.com/user-attachments/assets/414f7d41-2655-4fd8-bec1-0287f9c5dd19" />
+  <img width="20%" alt="VaporStep-Play" src="https://github.com/user-attachments/assets/5ceb5b3a-ab57-46bd-8c93-12aa61ebd476" />
+  <img width="20%"alt="VaportStep-ResultsScreen" src="https://github.com/user-attachments/assets/b4713e77-7489-4baf-aff5-572da87bc4a1" />
+</p>
 
 
-[▶ Gameplay demo](https://github.com/user-attachments/assets/3a2fa1ee-74b9-48e2-b936-ef7079737c6f)
 
+[▶ Gameplay demo](https://github.com/user-attachments/assets/f7e4009d-6738-4d5f-801c-370e0ecce669)
+
+🎵 “Neutralize” by SiLiS — [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/).
 
 ## What you can do
 
@@ -38,9 +45,13 @@ The easiest way to use VaporStep is with a packaged build from the project relea
 
 On first launch your operating system may ask for camera access. VaporStep releases the camera whenever you are browsing menus or results and acquires it only for calibration and gameplay. If you later choose a song folder in an operating-system protected location, the OS may separately ask for permission to access it.
 
+This app is not signed so you may have to jump through some hoops to launch it on MacOS and Windows.
+
 ## Song libraries
 
 VaporStep currently supports selected StepMania-compatible `.sm` and `.ssc` charts, including `dance-single` and `ds3ddx-single` charts.
+
+Need songs? Try out the awesome [OutFox Serenity](https://github.com/TeamRizu/OutFox-Serenity/releases/tag/v2.5) pack.
 
 For details on chart compatibility, how VaporStep interprets holds/repeated steps, and notes for making compatible charts, see [Stepfiles and chart authoring](docs/STEPFILES.md).
 
