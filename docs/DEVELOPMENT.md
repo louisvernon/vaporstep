@@ -21,7 +21,7 @@ python -m vaporstep --songs "/path/to/Songs"
 
 `VAPORSTEP_SONGS` provides the same override through the environment. Without an override or saved choice, VaporStep uses `~/VaporStep/Songs` and creates that directory if needed.
 
-MediaPipe is currently pinned to `0.10.35` for the tested pose-tracking path. `setuptools<82` is retained because `simfile==2.1.1` imports `pkg_resources`.
+MediaPipe is currently pinned to `0.10.21` for the tested pose-tracking path. `setuptools<82` is retained because `simfile==2.1.1` imports `pkg_resources`.
 
 ## Tests
 

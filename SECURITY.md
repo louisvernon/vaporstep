@@ -17,5 +17,4 @@ VaporStep is a local desktop application. It does not intentionally upload song
 libraries or camera frames. Raw camera frames are not persisted; the optional
 Record Play feature stores only the rendered gameplay surface and reconstructed
 game audio in a user-local video file. See the Privacy and security section of `README.md`
-for camera lifetime, MediaPipe metrics, model downloads, and handling of local
-stepfile content.
+for camera lifetime, model downloads, and handling of local stepfile content.

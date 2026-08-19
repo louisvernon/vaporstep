@@ -199,7 +199,6 @@ class Renderer:
         self.screen.blit(privacy_title, privacy_title.get_rect(center=(w // 2, int(h * 0.45))))
         privacy_lines = (
             "Camera frames are processed on this device and are not saved or uploaded by VaporStep.",
-            "MediaPipe Tasks may send performance and usage metrics to Google.",
             "The camera is active only during calibration and gameplay.",
         )
         y = int(h * 0.51)
@@ -232,7 +231,6 @@ class Renderer:
             )),
             ("PRIVACY", CYAN, (
                 "Webcam images are processed locally and are not saved or uploaded by VaporStep.",
-                "MediaPipe Tasks may send performance/utilization metrics to Google.",
                 "Record Play saves the rendered game view and reconstructed game audio locally.",
             )),
             ("LICENSES", CYAN, (
