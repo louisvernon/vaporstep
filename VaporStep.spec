@@ -1,6 +1,7 @@
 # PyInstaller build for VaporStep.
 from pathlib import Path
 from importlib.metadata import PackageNotFoundError, distribution
+import os
 import re
 import sys
 
@@ -10,6 +11,17 @@ import imageio_ffmpeg
 
 root = Path(SPECPATH)
 assets = root / "assets"
+
+codesign_identity = (
+    os.environ.get("VAPORSTEP_CODESIGN_IDENTITY")
+    if sys.platform == "darwin"
+    else None
+)
+entitlements_file = (
+    str(root / "macos-entitlements.plist")
+    if sys.platform == "darwin"
+    else None
+)
 
 # MediaPipe ships native libraries and task resources that are easy to miss in
 # frozen apps. Collecting the package is intentionally conservative for this
@@ -117,6 +129,8 @@ else:
         upx=False,
         console=False,
         icon=icon,
+        codesign_identity=codesign_identity,
+        entitlements_file=entitlements_file,
     )
     coll = COLLECT(
         exe,
