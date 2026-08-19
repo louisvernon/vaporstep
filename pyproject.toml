@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=77,<82", "wheel"]
+requires = ["setuptools>=80,<82", "wheel", "setuptools-scm>=9.2,<10"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -27,8 +27,8 @@ vaporstep = "vaporstep.app:main"
 [tool.setuptools.packages.find]
 include = ["vaporstep*"]
 
-[tool.setuptools.dynamic]
-version = {attr = "vaporstep.__version__"}
+[tool.setuptools_scm]
+version_file = "vaporstep/_version.py"
 
 [project.optional-dependencies]
 build = [
