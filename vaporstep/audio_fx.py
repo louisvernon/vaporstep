@@ -102,12 +102,15 @@ def synthesize_menu_ambience(
 
     # Every frequency and the slow modulation complete a whole number of
     # cycles over four seconds, keeping the loop boundary free of a click.
+    # Keep the foundation above the ominous sub-bass range and give the upper
+    # harmonics more presence for a calm, bright starship-bridge character.
     body = (
-        0.62 * np.sin(2.0 * math.pi * 55.0 * t)
-        + 0.25 * np.sin(2.0 * math.pi * 82.5 * t)
-        + 0.13 * np.sin(2.0 * math.pi * 110.0 * t)
+        0.42 * np.sin(2.0 * math.pi * 82.5 * t)
+        + 0.34 * np.sin(2.0 * math.pi * 123.75 * t)
+        + 0.18 * np.sin(2.0 * math.pi * 165.0 * t)
+        + 0.06 * np.sin(2.0 * math.pi * 247.5 * t)
     )
-    breathing = 0.82 + 0.18 * np.sin(2.0 * math.pi * 0.25 * t - math.pi / 2.0)
+    breathing = 0.90 + 0.10 * np.sin(2.0 * math.pi * 0.25 * t - math.pi / 2.0)
     return _pcm(body * breathing * MENU_AMBIENCE_VOLUME, channels)
 
 
