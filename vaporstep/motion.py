@@ -186,7 +186,36 @@ class MotionTracker:
             self._events = [e for e in self._events if not e.consumed and e.song_time >= cutoff]
         return generated
 
-    def match(self, kind: NoteKind, lanes: tuple[int, ...], note_time: float) -> tuple[HitQuality, float] | None:
+    def record_input(
+        self,
+        kind: NoteKind,
+        lane: int,
+        song_time: float,
+        *,
+        source: str,
+        limb: str,
+        strength: float = 1.0,
+    ) -> MotionEvent:
+        """Record a discrete non-camera input in the shared timing queue."""
+        event = MotionEvent(
+            kind=NoteKind(kind),
+            lane=int(lane),
+            song_time=float(song_time),
+            limb=str(limb),
+            strength=float(strength),
+            source=str(source),
+        )
+        self._events.append(event)
+        return event
+
+    def match(
+        self,
+        kind: NoteKind,
+        lanes: tuple[int, ...],
+        note_time: float,
+        *,
+        sources: frozenset[str] | None = None,
+    ) -> tuple[HitQuality, float] | None:
         """Consume one event per required lane and return timing quality/delta.
 
         For a two-hand target, both required hand lanes need their own fresh
@@ -202,6 +231,7 @@ class MotionTracker:
                 and id(e) not in used_ids
                 and e.kind == kind
                 and e.lane == lane
+                and (sources is None or e.source in sources)
                 and abs(e.song_time - note_time) <= GREAT_WINDOW_SECONDS
             ]
             if not candidates:

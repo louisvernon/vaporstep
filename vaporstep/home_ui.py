@@ -19,7 +19,7 @@ def draw_home(
     selected: int,
     songs_root,
     song_count: int,
-    camera_index: int,
+    camera_index: int | None,
     horizontal_reach: float,
     camera_status: str,
     profile_name: str,
@@ -54,8 +54,9 @@ def draw_home(
     root_text = str(songs_root) if songs_root is not None else "not configured"
     library = renderer.small_font.render(f"SONGS  {song_count}   •   {root_text}", True, DIM)
     screen.blit(library, library.get_rect(midbottom=(w // 2, h - 66)))
+    camera_label = "OFF" if camera_index is None else str(camera_index)
     camera = renderer.small_font.render(
-        f"CAMERA {camera_index}   •   REACH {horizontal_reach:.2f}x" +
+        f"CAMERA {camera_label}   •   REACH {horizontal_reach:.2f}x" +
         (f"   •   {camera_status}" if camera_status else ""),
         True,
         DIM,

@@ -33,6 +33,7 @@ def clamp_horizontal_reach(value: float) -> float:
 class AppSettings:
     song_folder: str = field(default_factory=default_song_folder)
     camera_index: int = 0
+    camera_enabled: bool = True
     horizontal_reach: float = PLAYER_HORIZONTAL_ZOOM
     favorite_song_keys: list[str] = field(default_factory=list)
     played_song_keys: list[str] = field(default_factory=list)
@@ -55,6 +56,7 @@ class AppSettings:
         return AppSettings(
             song_folder=str(self.song_folder or default_song_folder()),
             camera_index=max(0, int(self.camera_index)),
+            camera_enabled=bool(self.camera_enabled),
             horizontal_reach=clamp_horizontal_reach(self.horizontal_reach),
             favorite_song_keys=clean_keys(self.favorite_song_keys),
             played_song_keys=clean_keys(self.played_song_keys),
@@ -91,6 +93,7 @@ class SettingsStore:
             self.settings = AppSettings(
                 song_folder=str(raw.get("song_folder") or default_song_folder()),
                 camera_index=int(raw.get("camera_index", 0)),
+                camera_enabled=bool(raw.get("camera_enabled", True)),
                 horizontal_reach=float(raw.get("horizontal_reach", PLAYER_HORIZONTAL_ZOOM)),
                 favorite_song_keys=raw.get("favorite_song_keys", []),
                 played_song_keys=raw.get("played_song_keys", []),

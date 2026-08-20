@@ -23,6 +23,7 @@ from .config import (
     VANISH_Y,
 )
 from .domain import BodyPoint, BodyState, ChainMode, ChainState, GameNote, HitQuality, NoteKind, RuntimeChain, SustainSource
+from .keyboard_input import label_for_lane
 from .menu import SongMenu
 from .motion import MOTION_EVENT_VISUAL_SECONDS, MotionEvent
 from .records import ChartRecord, song_key
@@ -296,7 +297,7 @@ class Renderer:
         selected: int,
         songs_root,
         song_count: int,
-        camera_index: int,
+        camera_index: int | None,
         horizontal_reach: float,
         camera_status: str = "",
     ) -> None:
@@ -327,8 +328,9 @@ class Renderer:
         library = f"SONGS  {song_count}   •   {root_text}"
         lib = self.small_font.render(library, True, DIM)
         self.screen.blit(lib, lib.get_rect(midbottom=(w // 2, h - 64)))
+        camera_label = "OFF" if camera_index is None else str(camera_index)
         camera = self.small_font.render(
-            f"CAMERA {camera_index}   •   REACH {horizontal_reach:.2f}x" + (f"   •   {camera_status}" if camera_status else ""),
+            f"CAMERA {camera_label}   •   REACH {horizontal_reach:.2f}x" + (f"   •   {camera_status}" if camera_status else ""),
             True,
             DIM,
         )
@@ -377,7 +379,7 @@ class Renderer:
 
     def draw_calibration_overlay(
         self,
-        camera_index: int,
+        camera_index: int | None,
         horizontal_reach: float,
         camera_status: str,
     ) -> None:
@@ -385,12 +387,13 @@ class Renderer:
         panel = pygame.Surface((min(660, w - 40), 108), pygame.SRCALPHA)
         panel.fill((*BG, 210))
         self.screen.blit(panel, (20, h - 128))
+        camera_label = "OFF (KEYBOARD)" if camera_index is None else str(camera_index)
         line1 = self.font.render(
-            f"CAMERA  {camera_index}      REACH  {horizontal_reach:.2f}x", True, WHITE
+            f"CAMERA  {camera_label}      REACH  {horizontal_reach:.2f}x", True, WHITE
         )
         self.screen.blit(line1, (38, h - 118))
         line2 = self.small_font.render(
-            "←/→ reach    ↑/↓ camera    Esc save & return", True, CYAN
+            "←/→ reach    ↑/↓ camera (below 0 = keyboard)    Esc save & return", True, CYAN
         )
         self.screen.blit(line2, (38, h - 88))
         tracking = self.small_font.render(
@@ -1481,7 +1484,7 @@ class Renderer:
                     self.screen.blit(surf, surf.get_rect(center=(center_x, text_y)))
 
                 lane_label = self.small_font.render(
-                    str(lane),
+                    label_for_lane(kind, lane),
                     True,
                     WHITE if is_occupied else (DIM if enabled else _blend(DIM, BG, 0.55)),
                 )
@@ -1677,10 +1680,18 @@ class Renderer:
         self.screen.blit(surf, surf.get_rect(midbottom=(w // 2, h - 8)))
 
     def _draw_status(self, status, input_name, song_title, chart_label, audio_error) -> None:
-        good = status == "READY" or input_name == "keyboard"
-        color = GREEN if good else WHITE
-        text = "READY" if input_name == "keyboard" else status
-        lines = [(text, color, self.font), (song_title, WHITE, self.small_font), (chart_label, DIM, self.small_font)]
+        status_lines = str(status).splitlines()
+        lines = []
+        for index, value in enumerate(status_lines):
+            line_color = GREEN if index == 0 and value == "READY" else WHITE
+            font = self.font if index == 0 else self.small_font
+            lines.append((value, line_color, font))
+        lines.extend(
+            (
+                (song_title, WHITE, self.small_font),
+                (chart_label, DIM, self.small_font),
+            )
+        )
         if audio_error:
             lines.append((f"Audio unavailable: {audio_error}", RED, self.small_font))
         x, y = 14, 12

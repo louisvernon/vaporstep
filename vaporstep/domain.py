@@ -24,16 +24,19 @@ class BodyState:
     right_ankle: BodyPoint = field(default_factory=BodyPoint)
     left_foot_control: BodyPoint = field(default_factory=BodyPoint)
     right_foot_control: BodyPoint = field(default_factory=BodyPoint)
+    supplemental_hand_lanes: frozenset[int] = field(default_factory=frozenset)
+    supplemental_foot_lanes: frozenset[int] = field(default_factory=frozenset)
     pose_visible: bool = False
     timestamp: float = 0.0
 
     @property
     def hand_lanes(self) -> frozenset[int]:
-        return frozenset(
+        tracked = frozenset(
             p.lane
             for p in (self.left_wrist, self.right_wrist)
             if p.visible and p.lane is not None
         )
+        return tracked | self.supplemental_hand_lanes
 
     @property
     def foot_lanes(self) -> frozenset[int]:
@@ -49,11 +52,12 @@ class BodyState:
             points = controls
         else:
             points = (self.left_knee, self.right_knee)
-        return frozenset(
+        tracked = frozenset(
             p.lane
             for p in points
             if p.visible and p.lane is not None
         )
+        return tracked | self.supplemental_foot_lanes
 
 
 class NoteKind(str, Enum):

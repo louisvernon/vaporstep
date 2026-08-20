@@ -16,6 +16,22 @@ def test_settings_round_trip(tmp_path: Path):
     assert reloaded.settings.horizontal_reach == 1.20
 
 
+def test_keyboard_only_camera_choice_round_trips(tmp_path: Path):
+    path = tmp_path / "settings.json"
+    store = SettingsStore(path)
+    store.settings.camera_enabled = False
+    store.save()
+
+    assert SettingsStore(path).settings.camera_enabled is False
+
+
+def test_existing_settings_default_to_camera_enabled(tmp_path: Path):
+    path = tmp_path / "settings.json"
+    path.write_text(json.dumps({"camera_index": 1}), encoding="utf-8")
+
+    assert SettingsStore(path).settings.camera_enabled is True
+
+
 def test_settings_are_clamped_on_load(tmp_path: Path):
     path = tmp_path / "settings.json"
     path.write_text(json.dumps({"camera_index": -4, "horizontal_reach": 9.0}), encoding="utf-8")

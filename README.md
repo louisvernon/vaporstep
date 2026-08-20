@@ -61,6 +61,10 @@ For details on chart compatibility, how VaporStep interprets holds/repeated step
 
 StepMania, Dance Super Station and related names are referenced only to describe file/chart compatibility. VaporStep is an independent project and is not affiliated with or endorsed by those projects.
 
+## Keyboard play
+
+Keyboard input is always available, including while a camera is active. The hand lanes use **A S D F** and the foot lanes use **J K L ;** from left to right. Press any lane key to start a song, tap for timed notes, and hold the corresponding key for sustained notes. To play without starting a camera, press Down past camera 0 in **Calibration** and select **Camera Off (Keyboard)**.
+
 ## Health & Safety
 
 VaporStep is a physically active game involving stepping, reaching, twisting and rapid movement. Make sure you have a clear, stable play area with enough room to move safely. Wear appropriate footwear, play within your own abilities, and stop playing if you feel pain, dizziness, unusual shortness of breath, or otherwise feel unwell.
