@@ -26,3 +26,26 @@ def test_receptor_renderer_has_no_removed_timing_hint_references() -> None:
     # `hint`/`hint_y` caused calibration to crash whenever input_flash fired.
     assert "hint" not in loaded_names
     assert "hint_y" not in loaded_names
+
+
+def test_activity_dashboard_animates_its_background() -> None:
+    source = Path("vaporstep/activity_ui.py").read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    dashboard = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and node.name == "draw_activity_dashboard"
+    )
+    background_call = next(
+        node
+        for node in ast.walk(dashboard)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "_draw_background"
+    )
+
+    assert not (
+        isinstance(background_call.args[0], ast.Constant)
+        and background_call.args[0].value == 0.0
+    )

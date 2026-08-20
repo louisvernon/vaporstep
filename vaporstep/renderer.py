@@ -174,6 +174,43 @@ class Renderer:
         label = self.small_font.render("● REC", True, RED)
         self.screen.blit(label, label.get_rect(topright=(w - 18, 94)))
 
+    def draw_startup_splash(self, status: str = "INITIALIZING") -> None:
+        self.screen.fill(BG)
+        now = pygame.time.get_ticks() / 1000.0
+        self._draw_background(now, 0.0, False)
+        w, h = self.size
+
+        pulse = 0.5 + 0.5 * math.sin(now * 2.4)
+        title_color = _blend(MAGENTA, WHITE, pulse * 0.12)
+        title = self.huge_font.render("VAPORSTEP", True, title_color)
+        self.screen.blit(title, title.get_rect(center=(w // 2, int(h * 0.39))))
+        subtitle = self.small_font.render("FULL-BODY RHYTHM", True, CYAN)
+        self.screen.blit(subtitle, subtitle.get_rect(center=(w // 2, int(h * 0.50))))
+
+        segment_count = 7
+        segment_w = 28
+        segment_gap = 10
+        rail_w = segment_count * segment_w + (segment_count - 1) * segment_gap
+        rail_x = (w - rail_w) // 2
+        rail_y = int(h * 0.60)
+        active = int(now * 7.0) % segment_count
+        for index in range(segment_count):
+            distance = (active - index) % segment_count
+            if distance == 0:
+                color = CYAN
+            elif distance in (1, 2):
+                color = _blend(GRID, CYAN, 0.45 if distance == 1 else 0.20)
+            else:
+                color = GRID
+            pygame.draw.rect(
+                self.screen,
+                color,
+                (rail_x + index * (segment_w + segment_gap), rail_y, segment_w, 3),
+            )
+
+        status_text = self.small_font.render(status.upper(), True, DIM)
+        self.screen.blit(status_text, status_text.get_rect(center=(w // 2, rail_y + 38)))
+
     def draw_privacy_notice(self) -> None:
         self.screen.fill(BG)
         now = pygame.time.get_ticks() / 1000.0
@@ -209,7 +246,7 @@ class Renderer:
 
         accept = self.font.render("ENTER  I UNDERSTAND — CONTINUE", True, CYAN)
         self.screen.blit(accept, accept.get_rect(center=(w // 2, int(h * 0.74))))
-        more = self.small_font.render("Safety, privacy and license information is available from About.", True, DIM)
+        more = self.small_font.render("See About for safety, privacy, and licensing details.", True, DIM)
         self.screen.blit(more, more.get_rect(center=(w // 2, int(h * 0.81))))
         quit_text = self.small_font.render("Esc quit", True, GRID)
         self.screen.blit(quit_text, quit_text.get_rect(center=(w // 2, int(h * 0.86))))
