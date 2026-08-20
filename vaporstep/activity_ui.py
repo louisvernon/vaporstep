@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date, timedelta
+import math
 
 import pygame
 
@@ -56,12 +57,39 @@ def _format_duration(seconds: float) -> str:
     return f"{hours}h {minutes:02d}m"
 
 
-def _comparison(current: float, previous: float, *, suffix: str = "") -> str:
-    if previous <= 0:
-        return "NEW" if current > 0 else "—"
-    change = (current - previous) / previous * 100.0
-    sign = "+" if change >= 0 else ""
-    return f"{sign}{change:.0f}%{suffix}"
+def _record_badge(current: float, previous_best: float, *, has_history: bool) -> str:
+    if not has_history or current <= previous_best:
+        return ""
+    return "NEW RECORD"
+
+
+def _nice_axis_max(value: float) -> float:
+    value = max(0.0, float(value))
+    if value == 0.0:
+        return 1.0
+    magnitude = 10.0 ** math.floor(math.log10(value))
+    scaled = value / magnitude
+    for step in (1.0, 2.0, 5.0, 10.0):
+        if scaled <= step:
+            return step * magnitude
+    return 10.0 * magnitude
+
+
+def _axis_scale(metric: str, maximum: float) -> tuple[float, str]:
+    if metric == "time":
+        if maximum < 60.0:
+            divisor, suffix = 1.0, "s"
+        elif maximum < 3600.0:
+            divisor, suffix = 60.0, "m"
+        else:
+            divisor, suffix = 3600.0, "h"
+        display_max = _nice_axis_max(maximum / divisor)
+        label = f"{display_max:g}{suffix}"
+        return display_max * divisor, label
+
+    axis_max = _nice_axis_max(maximum)
+    label = f"{int(axis_max):,}" if axis_max >= 1.0 else f"{axis_max:g}"
+    return axis_max, label
 
 
 def _sum_days(days: list[DayActivity], count: int = 7) -> tuple[float, int, int, int]:
@@ -138,14 +166,24 @@ def _draw_bars(renderer, x: int, y: int, width: int, height: int, days: list[Day
         values = [(float(day.stomps), float(day.punches)) for day in days]
     else:
         values = [(float(day.songs), 0.0) for day in days]
-    maximum = max((a + b for a, b in values), default=0.0)
-    maximum = max(1.0, maximum)
+    maximum, axis_label = _axis_scale(
+        metric,
+        max((a + b for a, b in values), default=0.0),
+    )
+    tick = renderer.small_font.render(axis_label, True, DIM)
+    axis_margin = max(38, tick.get_width() + 10)
+    plot_x = x + axis_margin
+    plot_width = max(70, width - axis_margin)
     gap = 12
-    bar_w = max(8, (width - gap * 6) // 7)
+    bar_w = max(8, (plot_width - gap * 6) // 7)
     baseline = y + height - 24
     graph_h = max(24, height - 42)
+    top = baseline - graph_h
+    screen.blit(tick, tick.get_rect(midright=(plot_x - 7, top)))
+    pygame.draw.line(screen, GRID, (plot_x, top), (plot_x + plot_width, top), 1)
+    pygame.draw.line(screen, GRID, (plot_x, top), (plot_x, baseline), 1)
     for index, (primary, secondary) in enumerate(values):
-        left = x + index * (bar_w + gap)
+        left = plot_x + index * (bar_w + gap)
         primary_h = int(graph_h * primary / maximum)
         secondary_h = int(graph_h * secondary / maximum)
         if primary_h:
@@ -158,7 +196,7 @@ def _draw_bars(renderer, x: int, y: int, width: int, height: int, days: list[Day
             )
         day_label = renderer.small_font.render(days[index].day.strftime("%a")[0], True, DIM)
         screen.blit(day_label, day_label.get_rect(center=(left + bar_w // 2, baseline + 12)))
-    pygame.draw.line(screen, GRID, (x, baseline), (x + width, baseline), 1)
+    pygame.draw.line(screen, GRID, (plot_x, baseline), (plot_x + plot_width, baseline), 1)
 
 
 def draw_activity_dashboard(
@@ -172,7 +210,6 @@ def draw_activity_dashboard(
     today = today or date.today()
     start = week_start(shown_week)
     current = store.week(profile.id, start)
-    previous = store.week(profile.id, start - timedelta(days=7))
     totals = store.totals(profile.id, today=today)
 
     screen = renderer.screen
@@ -206,9 +243,8 @@ def draw_activity_dashboard(
     if start == current_week:
         compare_count = today.weekday() + 1
     cur_time, cur_stomps, cur_punches, cur_songs = _sum_days(current, compare_count)
-    prev_time, prev_stomps, prev_punches, prev_songs = _sum_days(previous, compare_count)
     cur_actions = cur_stomps + cur_punches
-    prev_actions = prev_stomps + prev_punches
+    records = store.weekly_records(profile.id, before=start, day_count=compare_count)
 
     right_x = int(w * 0.67)
     y = 122
@@ -224,15 +260,27 @@ def draw_activity_dashboard(
     heading = renderer.font.render(period_heading, True, CYAN)
     screen.blit(heading, (right_x, y))
     comparisons = (
-        ("TIME", _format_duration(cur_time), _comparison(cur_time, prev_time)),
-        ("ACTIONS", f"{cur_actions:,}", _comparison(cur_actions, prev_actions)),
-        ("SONGS", f"{cur_songs:,}", _comparison(cur_songs, prev_songs)),
+        (
+            "TIME",
+            _format_duration(cur_time),
+            _record_badge(cur_time, records.duration_seconds, has_history=records.has_history),
+        ),
+        (
+            "ACTIONS",
+            f"{cur_actions:,}",
+            _record_badge(cur_actions, records.actions, has_history=records.has_history),
+        ),
+        (
+            "SONGS",
+            f"{cur_songs:,}",
+            _record_badge(cur_songs, records.songs, has_history=records.has_history),
+        ),
     )
     y += 38
     for label, value, delta in comparisons:
         ls = renderer.small_font.render(label, True, DIM)
         vs = renderer.font.render(value, True, WHITE)
-        ds = renderer.small_font.render(delta, True, GREEN if not delta.startswith("-") else MAGENTA)
+        ds = renderer.small_font.render(delta, True, GREEN)
         screen.blit(ls, (right_x, y))
         screen.blit(vs, (right_x + 95, y - 5))
         screen.blit(ds, (right_x + 220, y))

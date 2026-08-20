@@ -176,3 +176,59 @@ def test_streak_keeps_yesterdays_run_until_today_reaches_goal(tmp_path: Path):
 
 def test_week_starts_on_monday():
     assert week_start(date(2026, 8, 19)) == date(2026, 8, 17)
+
+
+def test_weekly_records_compare_the_same_number_of_days(tmp_path: Path):
+    store = ActivityStore(tmp_path / "activity.sqlite3")
+    profile = store.create_profile("Player")
+
+    runs = (
+        # Monday and Wednesday count in a three-day comparison; Friday does not.
+        ("2026-07-27", 60, 10, 1),
+        ("2026-07-29", 30, 5, 1),
+        ("2026-07-31", 900, 500, 5),
+        # This later week holds the comparable time and action records.
+        ("2026-08-03", 120, 20, 1),
+        ("2026-08-04", 60, 20, 2),
+    )
+    for local_date, duration, actions, songs in runs:
+        store.record_run(
+            RunActivity(
+                profile_id=profile.id,
+                started_at_utc=f"{local_date}T12:00:00+00:00",
+                local_date=local_date,
+                duration_seconds=duration,
+                song_key="song",
+                chart_key="chart",
+                outcome="completed",
+                progress=1.0,
+                counts_as_song=bool(songs),
+                stomps=actions,
+                punches=0,
+                score=1000,
+            )
+        )
+        for song_index in range(1, songs):
+            store.record_run(
+                RunActivity(
+                    profile_id=profile.id,
+                    started_at_utc=f"{local_date}T12:0{song_index}:00+00:00",
+                    local_date=local_date,
+                    duration_seconds=0,
+                    song_key=f"song-{song_index}",
+                    chart_key=f"chart-{song_index}",
+                    outcome="completed",
+                    progress=1.0,
+                    counts_as_song=True,
+                    stomps=0,
+                    punches=0,
+                    score=0,
+                )
+            )
+
+    records = store.weekly_records(profile.id, before=date(2026, 8, 10), day_count=3)
+    assert records.has_history is True
+    assert records.duration_seconds == 180
+    assert records.actions == 40
+    assert records.songs == 3
+    store.close()

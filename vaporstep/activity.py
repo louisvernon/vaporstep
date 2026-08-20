@@ -68,6 +68,14 @@ class ActivityTotals:
         return self.stomps + self.punches
 
 
+@dataclass(frozen=True)
+class WeeklyRecords:
+    duration_seconds: float = 0.0
+    actions: int = 0
+    songs: int = 0
+    has_history: bool = False
+
+
 def target_activity(notes: Iterable[GameNote]) -> tuple[int, int]:
     """Return target-driven stomp and punch counts for successful note heads.
 
@@ -299,6 +307,55 @@ class ActivityStore:
             songs=int(row["songs"]),
             current_streak=current,
             best_streak=best,
+        )
+
+    def weekly_records(
+        self,
+        profile_id: int,
+        *,
+        before: date,
+        day_count: int = 7,
+    ) -> WeeklyRecords:
+        """Return the best comparable partial-week totals before ``before``.
+
+        For example, a Wednesday dashboard compares Monday-through-Wednesday
+        with the same three days from every earlier week. Each metric keeps its
+        own record, so a single unusual week does not define all three badges.
+        """
+        before = week_start(before)
+        day_count = max(1, min(7, int(day_count)))
+        rows = self._db.execute(
+            """
+            SELECT local_date,
+                   COALESCE(SUM(duration_seconds), 0) AS duration_seconds,
+                   COALESCE(SUM(stomps + punches), 0) AS actions,
+                   COALESCE(SUM(counts_as_song), 0) AS songs
+            FROM runs
+            WHERE profile_id = ? AND local_date < ?
+            GROUP BY local_date
+            ORDER BY local_date
+            """,
+            (int(profile_id), before.isoformat()),
+        ).fetchall()
+
+        weeks: dict[date, list[float]] = {}
+        for row in rows:
+            day = date.fromisoformat(row["local_date"])
+            start = week_start(day)
+            if (day - start).days >= day_count:
+                continue
+            values = weeks.setdefault(start, [0.0, 0.0, 0.0])
+            values[0] += float(row["duration_seconds"])
+            values[1] += int(row["actions"])
+            values[2] += int(row["songs"])
+
+        if not weeks:
+            return WeeklyRecords()
+        return WeeklyRecords(
+            duration_seconds=max(values[0] for values in weeks.values()),
+            actions=int(max(values[1] for values in weeks.values())),
+            songs=int(max(values[2] for values in weeks.values())),
+            has_history=True,
         )
 
     def streaks(self, profile_id: int, *, today: date | None = None) -> tuple[int, int]:
