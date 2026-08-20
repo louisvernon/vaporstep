@@ -7,10 +7,11 @@
 VaporStep has out of the box support for StepMania style step/sim files, so you should be able to point it at your existing libraries and play.
 
 <p float="left">
-  <img width="20%" alt="VaporStep-Menu" src="https://github.com/user-attachments/assets/fb53254e-31ec-465c-af79-1c3df5e6029d" />
-  <img width="20%" alt="VaporStep-SongList" src="https://github.com/user-attachments/assets/414f7d41-2655-4fd8-bec1-0287f9c5dd19" />
-  <img width="20%" alt="VaporStep-Play" src="https://github.com/user-attachments/assets/5ceb5b3a-ab57-46bd-8c93-12aa61ebd476" />
-  <img width="20%"alt="VaportStep-ResultsScreen" src="https://github.com/user-attachments/assets/b4713e77-7489-4baf-aff5-572da87bc4a1" />
+  <img width="18%" alt="VaporStep-Menu" src="https://github.com/user-attachments/assets/fb53254e-31ec-465c-af79-1c3df5e6029d" />
+  <img width="18%" alt="VaporStep-SongList" src="https://github.com/user-attachments/assets/414f7d41-2655-4fd8-bec1-0287f9c5dd19" />
+  <img width="18%" alt="VaporStep-Play" src="https://github.com/user-attachments/assets/5ceb5b3a-ab57-46bd-8c93-12aa61ebd476" />
+  <img width="18%"alt="VaportStep-ResultsScreen" src="https://github.com/user-attachments/assets/b4713e77-7489-4baf-aff5-572da87bc4a1" />
+  <img width="18%" alt="VaporStep-Stats" src="https://github.com/user-attachments/assets/377e4975-36be-4096-ad38-907b7a804ee5" />
 </p>
 
 
@@ -18,6 +19,9 @@ VaporStep has out of the box support for StepMania style step/sim files, so you 
 [▶ Gameplay demo](https://github.com/user-attachments/assets/f7e4009d-6738-4d5f-801c-370e0ecce669)
 
 🎵 “Neutralize” by SiLiS — [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/).
+
+
+
 
 ## What you can do
 
