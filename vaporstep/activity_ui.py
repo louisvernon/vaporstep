@@ -214,7 +214,7 @@ def draw_activity_dashboard(
 
     screen = renderer.screen
     screen.fill(BG)
-    renderer._draw_background(0.0, 0.0, False)
+    renderer._draw_background(pygame.time.get_ticks() / 1000.0, 0.0, False)
     w, h = renderer.size
 
     title = renderer.big_font.render(f"ACTIVITY — {profile.name.upper()}", True, MAGENTA)

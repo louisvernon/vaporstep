@@ -14,6 +14,8 @@ SFX_CHANNELS = 2
 GAMEPLAY_MUSIC_VOLUME = 0.82
 RECORDING_MUSIC_VOLUME = 0.82
 RECORDING_SFX_VOLUME = 1.00
+MENU_AMBIENCE_VOLUME = 0.055
+MENU_AMBIENCE_SECONDS = 4.0
 
 
 def _tone(
@@ -88,6 +90,23 @@ def _ui_click(duration: float, volume: float, sample_rate: int, *, seed: int) ->
         wave /= peak
     return wave * volume
 
+
+def synthesize_menu_ambience(
+    *,
+    sample_rate: int = SFX_SAMPLE_RATE,
+    channels: int = SFX_CHANNELS,
+) -> np.ndarray:
+    """Return a quiet, seamless starship-like menu ambience loop."""
+    count = max(1, int(round(sample_rate * MENU_AMBIENCE_SECONDS)))
+    t = np.arange(count, dtype=np.float64) / sample_rate
+
+    body = (
+        0.42 * np.sin(2.0 * math.pi * 80.5 * t)
+    )
+    breathing = 0.90 + 0.10 * np.sin(2.0 * math.pi * 0.25 * t - math.pi / 2.0)
+    return _pcm(body * breathing * MENU_AMBIENCE_VOLUME, channels)
+
+
 def _pcm(mono: np.ndarray, channels: int) -> np.ndarray:
     pcm = np.clip(mono * 32767.0, -32768, 32767).astype(np.int16)
     if channels > 1:
@@ -152,6 +171,55 @@ class MenuSounds:
     def select(self) -> None:
         if self._select is not None:
             self._select.play()
+
+
+class MenuAmbience:
+    """Low background hum on menus that do not have preview or gameplay music."""
+
+    def __init__(self) -> None:
+        self._channel = None
+        self._sound = None
+        self._enabled = False
+        try:
+            import pygame
+
+            if not pygame.mixer.get_init():
+                pygame.mixer.init()
+            init = pygame.mixer.get_init()
+            sample_rate = int(init[0]) if init else SFX_SAMPLE_RATE
+            channels = int(init[2]) if init else SFX_CHANNELS
+            pygame.mixer.set_reserved(1)
+            self._channel = pygame.mixer.Channel(0)
+            self._sound = pygame.sndarray.make_sound(
+                synthesize_menu_ambience(sample_rate=sample_rate, channels=channels)
+            )
+        except Exception:
+            # Audio is optional; startup and menus remain usable without it.
+            self._channel = None
+            self._sound = None
+
+    def set_enabled(self, enabled: bool) -> None:
+        enabled = bool(enabled)
+        if self._channel is None or self._sound is None:
+            self._enabled = enabled
+            return
+        try:
+            if enabled:
+                if not self._enabled or not self._channel.get_busy():
+                    self._channel.play(self._sound, loops=-1, fade_ms=450)
+            elif self._enabled:
+                self._channel.fadeout(300)
+        except Exception:
+            pass
+        self._enabled = enabled
+
+    def stop(self) -> None:
+        self._enabled = False
+        if self._channel is not None:
+            try:
+                self._channel.stop()
+            except Exception:
+                pass
 
 
 class GameplaySounds:
@@ -232,4 +300,3 @@ class GameplaySounds:
             sound.play()
         except Exception:
             pass
-

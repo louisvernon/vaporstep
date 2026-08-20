@@ -6,6 +6,7 @@ import math
 import os
 from pathlib import Path
 import sys
+import threading
 import time
 
 import pygame
@@ -20,7 +21,7 @@ from .activity_ui import (
     draw_profile_badge,
     draw_profile_picker,
 )
-from .audio_fx import GameplaySounds, MenuSounds
+from .audio_fx import GameplaySounds, MenuAmbience, MenuSounds
 from .config import TARGET_FPS, WINDOW_HEIGHT, WINDOW_WIDTH
 from .demo import make_demo_notes
 from .directory_browser import DirectoryBrowser
@@ -30,7 +31,6 @@ from .keyboard_input import KeyboardBodyInput
 from .library_index import LibraryIndexer, LibraryScanSnapshot
 from .menu import HeldMenuRepeater, MenuAction, SongMenu, action_for_event
 from .model_asset import ensure_pose_model
-from .pose_input import PoseCameraInput, probe_camera
 from .preview import SongPreviewPlayer
 from .records import ChartRecord, RecordStore, chart_key, song_key
 from .recording import RunRecorder, recording_backend_status
@@ -50,6 +50,65 @@ from .user_paths import activity_path, profile_highscores_path
 
 APP_VERSION = __version__
 RECORD_RESULTS_HOLD_SECONDS = 3.0
+STARTUP_MIN_VISIBLE_SECONDS = 0.55
+AMBIENT_MENU_MODES = frozenset(
+    {"privacy", "profile_name", "profiles", "about", "stats", "library_scan", "home", "folder"}
+)
+
+
+class _StartupCancelled(Exception):
+    pass
+
+
+def _draw_startup_frame(renderer: Renderer, clock: pygame.time.Clock, status: str) -> None:
+    renderer.draw_startup_splash(status)
+    pygame.display.flip()
+    clock.tick(TARGET_FPS)
+
+
+def _run_startup_task(renderer: Renderer, clock: pygame.time.Clock, status: str, task):
+    """Keep the splash responsive and animated around one blocking startup task."""
+    done = threading.Event()
+    result: dict[str, object] = {}
+
+    def worker() -> None:
+        try:
+            result["value"] = task()
+        except BaseException as exc:
+            result["error"] = exc
+        finally:
+            done.set()
+
+    threading.Thread(target=worker, name="vaporstep-startup", daemon=True).start()
+    while not done.is_set():
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                raise _StartupCancelled
+        _draw_startup_frame(renderer, clock, status)
+
+    if "error" in result:
+        raise result["error"]
+    return result.get("value")
+
+
+def _finish_startup_splash(
+    renderer: Renderer,
+    clock: pygame.time.Clock,
+    started_at: float,
+) -> None:
+    """Avoid a single-frame flash on fast starts without delaying slow ones."""
+    while time.monotonic() - started_at < STARTUP_MIN_VISIBLE_SECONDS:
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                raise _StartupCancelled
+        _draw_startup_frame(renderer, clock, "READY")
+
+
+def _load_pose_components():
+    """Defer the expensive MediaPipe import until the splash is visible."""
+    from .pose_input import PoseCameraInput, probe_camera
+
+    return PoseCameraInput, probe_camera
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -194,6 +253,22 @@ def main(argv: list[str] | None = None) -> int:
     if args.reach is not None:
         settings_store.settings.horizontal_reach = clamp_horizontal_reach(args.reach)
 
+    pygame.init()
+    pygame.display.set_caption(f"VaporStep V{APP_VERSION}")
+    try:
+        icon_path = resource_path("assets/vaporstep_icon.png")
+        if icon_path.exists():
+            pygame.display.set_icon(pygame.image.load(str(icon_path)))
+    except Exception:
+        pass
+
+    fullscreen = bool(args.fullscreen)
+    screen = display_mode(fullscreen)
+    clock = pygame.time.Clock()
+    renderer = Renderer(screen)
+    startup_started_at = time.monotonic()
+    _draw_startup_frame(renderer, clock, "LOADING PROFILE")
+
     activity_store = ActivityStore(activity_path())
     active_profile = activity_store.active_profile()
     if active_profile is not None:
@@ -208,23 +283,25 @@ def main(argv: list[str] | None = None) -> int:
             prefs.get("preferred_difficulty", settings_store.settings.preferred_difficulty)
         )
 
-    pygame.init()
-    pygame.display.set_caption(f"VaporStep V{APP_VERSION}")
-    try:
-        icon_path = resource_path("assets/vaporstep_icon.png")
-        if icon_path.exists():
-            pygame.display.set_icon(pygame.image.load(str(icon_path)))
-    except Exception:
-        pass
-
-    fullscreen = bool(args.fullscreen)
-    screen = display_mode(fullscreen)
-    clock = pygame.time.Clock()
-    renderer = Renderer(screen)
     renderer.set_player_horizontal_zoom(settings_store.settings.horizontal_reach)
     keyboard = KeyboardBodyInput()
+    _draw_startup_frame(renderer, clock, "PREPARING AUDIO")
     menu_sounds = MenuSounds()
+    menu_ambience = MenuAmbience()
+    menu_ambience.set_enabled(True)
     gameplay_sounds = GameplaySounds()
+    try:
+        PoseCameraInput, probe_camera = _run_startup_task(
+            renderer,
+            clock,
+            "LOADING MOTION TRACKING",
+            _load_pose_components,
+        )
+    except _StartupCancelled:
+        menu_ambience.stop()
+        activity_store.close()
+        pygame.quit()
+        return 0
     records: RecordStore | None = (
         RecordStore(profile_highscores_path(active_profile.id)) if active_profile is not None else None
     )
@@ -415,10 +492,7 @@ def main(argv: list[str] | None = None) -> int:
     result_new_high = False
     result_failed = False
 
-    if songs_root is not None and not args.demo and not privacy_pending and active_profile is not None:
-        start_library_scan(show_progress=False)
-
-    camera: PoseCameraInput | None = None
+    camera = None
     camera_error = ""
     camera_probe_ok: bool | None = None
     force_keyboard = bool(args.keyboard)
@@ -490,11 +564,33 @@ def main(argv: list[str] | None = None) -> int:
         camera_probe_ok = probe_camera(settings_store.settings.camera_index)
         camera_error = ""
 
-    if mode not in ("privacy", "profile_name"):
-        run_camera_probe()
+    try:
+        if mode not in ("privacy", "profile_name") and not force_keyboard:
+            camera_probe_ok = bool(
+                _run_startup_task(
+                    renderer,
+                    clock,
+                    "CHECKING CAMERA",
+                    lambda: probe_camera(settings_store.settings.camera_index),
+                )
+            )
+            camera_error = ""
+        elif force_keyboard:
+            camera_error = "Keyboard mode"
 
-    if args.demo:
-        restart_camera()
+        if songs_root is not None and not args.demo and not privacy_pending and active_profile is not None:
+            _draw_startup_frame(renderer, clock, "STARTING SONG LIBRARY")
+            start_library_scan(show_progress=False)
+
+        if args.demo:
+            restart_camera()
+
+        _finish_startup_splash(renderer, clock, startup_started_at)
+    except _StartupCancelled:
+        menu_ambience.stop()
+        activity_store.close()
+        pygame.quit()
+        return 0
 
     debug = False
     running = True
@@ -936,6 +1032,8 @@ def main(argv: list[str] | None = None) -> int:
                     elif event.key == pygame.K_k:
                         toggle_keyboard_input()
 
+            menu_ambience.set_enabled(mode in AMBIENT_MENU_MODES)
+
             if mode == "privacy":
                 renderer.draw_privacy_notice()
                 pygame.display.flip()
@@ -1264,6 +1362,7 @@ def main(argv: list[str] | None = None) -> int:
         if active_recording is not None:
             active_recording.abort()
         stop_camera()
+        menu_ambience.stop()
         activity_store.close()
         pygame.quit()
 
