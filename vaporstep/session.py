@@ -23,7 +23,7 @@ from .domain import (
     RuntimeChain,
     SustainSource,
 )
-from .motion import MOTION_EVENT_VISUAL_SECONDS, MotionEvent, MotionTracker
+from .motion import GREAT_WINDOW_SECONDS, MOTION_EVENT_VISUAL_SECONDS, MotionEvent, MotionTracker
 from .scoring import RunStats
 from .song import LoadedChart
 
@@ -93,6 +93,7 @@ class GameSession:
         self.motion = MotionTracker()
         self.recent_motion_events: list[MotionEvent] = []
         self._gameplay_events: list[GameplayEvent] = []
+        self.keyboard_mode = False
         self.restart()
 
     def _music_path(self):
@@ -114,6 +115,23 @@ class GameSession:
 
     def set_best_score(self, value: int) -> None:
         self.best_score = int(value)
+
+    def set_keyboard_mode(self, enabled: bool) -> None:
+        self.keyboard_mode = bool(enabled)
+
+    def register_keyboard_press(self, kind: NoteKind, lane: int) -> MotionEvent | None:
+        """Queue one keyboard timing impulse at the current chart time."""
+        if not self.running or not self.keyboard_mode:
+            return None
+        event = self.motion.record_input(
+            kind,
+            lane,
+            self.time,
+            source="keyboard",
+            limb="keyboard",
+        )
+        self.recent_motion_events.append(event)
+        return event
 
     def _sustain_enabled(self, chain: RuntimeChain) -> bool:
         return (
@@ -357,17 +375,30 @@ class GameSession:
         ):
             note.last_occupancy_at = t
 
+        if delta >= 0.0 and self.keyboard_mode:
+            timed = self.motion.match(
+                note.kind,
+                note.lanes,
+                note.time,
+                sources=frozenset(("keyboard",)),
+            )
+            if timed is not None:
+                quality, timing_delta = timed
+                self._judge(note, True, t, quality=quality, timing_delta=timing_delta)
+                return
+
+        settle_window = GREAT_WINDOW_SECONDS if self.keyboard_mode else HIT_WINDOW_SECONDS
         if delta >= 0.0 and note.last_occupancy_at is not None:
             timed = self.motion.match(note.kind, note.lanes, note.time)
             if timed is not None:
                 quality, timing_delta = timed
                 self._judge(note, True, t, quality=quality, timing_delta=timing_delta)
                 return
-            if delta >= HIT_WINDOW_SECONDS:
+            if delta >= settle_window:
                 self._judge(note, True, t, quality=HitQuality.HIT)
                 return
 
-        if delta > HIT_WINDOW_SECONDS:
+        if delta > settle_window:
             self._judge(note, False, t)
 
     @staticmethod
@@ -445,7 +476,13 @@ class GameSession:
                 self.stats.register_miss(break_combo=False)
                 chain.completion_judged = True
 
-    def update(self, body: BodyState, ready_to_start: bool) -> None:
+    def update(
+        self,
+        body: BodyState,
+        ready_to_start: bool,
+        *,
+        start_immediately: bool = False,
+    ) -> None:
         now = time.monotonic()
 
         # Hold the failed playfield on screen for a moment before results.
@@ -460,7 +497,12 @@ class GameSession:
             self.motion.update(body, None)
             self.recent_motion_events = []
             if ready_to_start:
-                if self.ready_since is None:
+                if start_immediately:
+                    self._start(now)
+                    self.motion.reset()
+                    self.recent_motion_events = []
+                    self.motion.update(body, None)
+                elif self.ready_since is None:
                     self.ready_since = now
                 elif now - self.ready_since >= READY_HOLD_SECONDS:
                     self._start(now)

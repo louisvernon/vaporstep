@@ -250,6 +250,7 @@ def main(argv: list[str] | None = None) -> int:
     settings_store = SettingsStore()
     if args.camera is not None:
         settings_store.settings.camera_index = max(0, args.camera)
+        settings_store.settings.camera_enabled = True
     if args.reach is not None:
         settings_store.settings.horizontal_reach = clamp_horizontal_reach(args.reach)
 
@@ -496,7 +497,10 @@ def main(argv: list[str] | None = None) -> int:
     camera_error = ""
     camera_probe_ok: bool | None = None
     force_keyboard = bool(args.keyboard)
-    use_keyboard = force_keyboard
+    use_keyboard = force_keyboard or not settings_store.settings.camera_enabled
+    keyboard_start_requested = False
+    if session is not None:
+        session.set_keyboard_mode(use_keyboard)
 
     def stop_camera() -> None:
         nonlocal camera
@@ -508,10 +512,11 @@ def main(argv: list[str] | None = None) -> int:
         nonlocal camera, camera_error, use_keyboard
         if index is not None:
             settings_store.settings.camera_index = max(0, int(index))
+            settings_store.settings.camera_enabled = True
         stop_camera()
-        if force_keyboard:
+        if force_keyboard or not settings_store.settings.camera_enabled:
             use_keyboard = True
-            camera_error = "Keyboard mode"
+            camera_error = "Keyboard only"
             return
         try:
             model_path = ensure_pose_model()
@@ -529,8 +534,8 @@ def main(argv: list[str] | None = None) -> int:
             use_keyboard = False
 
     def camera_status() -> str:
-        if force_keyboard or (use_keyboard and camera is None):
-            return camera_error or "Keyboard mode"
+        if force_keyboard or not settings_store.settings.camera_enabled or (use_keyboard and camera is None):
+            return camera_error or "Keyboard only"
         if camera is None:
             if camera_error:
                 return camera_error
@@ -542,30 +547,33 @@ def main(argv: list[str] | None = None) -> int:
         snap = camera.snapshot()
         return snap.message
 
-    def toggle_keyboard_input() -> None:
+    def select_keyboard_input() -> None:
         nonlocal use_keyboard, camera_error
-        if force_keyboard:
-            use_keyboard = True
-            camera_error = "Keyboard mode"
-            stop_camera()
-            return
-        if use_keyboard:
-            restart_camera()
-        else:
-            stop_camera()
-            use_keyboard = True
-            camera_error = "Keyboard mode"
+        stop_camera()
+        settings_store.settings.camera_enabled = False
+        use_keyboard = True
+        camera_error = "Keyboard only"
+        keyboard.reset()
+
+    def displayed_camera_index() -> int | None:
+        if force_keyboard or not settings_store.settings.camera_enabled:
+            return None
+        return settings_store.settings.camera_index
 
     def run_camera_probe() -> None:
         nonlocal camera_probe_ok, camera_error
-        if force_keyboard:
-            camera_error = "Keyboard mode"
+        if force_keyboard or not settings_store.settings.camera_enabled:
+            camera_error = "Keyboard only"
             return
         camera_probe_ok = probe_camera(settings_store.settings.camera_index)
         camera_error = ""
 
     try:
-        if mode not in ("privacy", "profile_name") and not force_keyboard:
+        if (
+            mode not in ("privacy", "profile_name")
+            and not force_keyboard
+            and settings_store.settings.camera_enabled
+        ):
             camera_probe_ok = bool(
                 _run_startup_task(
                     renderer,
@@ -575,8 +583,8 @@ def main(argv: list[str] | None = None) -> int:
                 )
             )
             camera_error = ""
-        elif force_keyboard:
-            camera_error = "Keyboard mode"
+        elif force_keyboard or not settings_store.settings.camera_enabled:
+            camera_error = "Keyboard only"
 
         if songs_root is not None and not args.demo and not privacy_pending and active_profile is not None:
             _draw_startup_frame(renderer, clock, "STARTING SONG LIBRARY")
@@ -628,7 +636,7 @@ def main(argv: list[str] | None = None) -> int:
         mode = "profiles"
 
     def handle_song_menu_action(action: MenuAction) -> None:
-        nonlocal mode, session, load_error, result_failed, active_recording
+        nonlocal mode, session, load_error, result_failed, active_recording, keyboard_start_requested
         if action == MenuAction.BACK:
             preview.stop(reset_selection=True)
             repeater.clear()
@@ -663,6 +671,9 @@ def main(argv: list[str] | None = None) -> int:
             session = GameSession(chart=loaded, best_score=record.score, chain_mode=chain_mode)
             reset_activity_run()
             restart_camera()
+            session.set_keyboard_mode(use_keyboard)
+            keyboard.reset()
+            keyboard_start_requested = False
             renderer.reset_game_effects()
             repeater.clear()
             load_error = None
@@ -701,6 +712,8 @@ def main(argv: list[str] | None = None) -> int:
                         finalize_activity_run("escaped")
                     running = False
                     continue
+
+                keyboard_press = keyboard.handle_event(event)
 
                 if event.type == pygame.KEYDOWN and event.key == pygame.K_F11:
                     toggle_fullscreen()
@@ -816,6 +829,8 @@ def main(argv: list[str] | None = None) -> int:
                             preview.stop(reset_selection=True)
                             restart_camera()
                             calibration_session.restart()
+                            calibration_session.set_keyboard_mode(use_keyboard)
+                            keyboard.reset()
                             calibration_last_beat = None
                             renderer.reset_game_effects()
                             mode = "calibration"
@@ -870,6 +885,8 @@ def main(argv: list[str] | None = None) -> int:
                     continue
 
                 if mode == "calibration":
+                    if keyboard_press is not None and use_keyboard and calibration_session.running:
+                        calibration_session.register_keyboard_press(*keyboard_press)
                     if event.type == pygame.KEYDOWN:
                         if event.key == pygame.K_ESCAPE:
                             save_profile_preferences()
@@ -878,7 +895,7 @@ def main(argv: list[str] | None = None) -> int:
                             stop_camera()
                             renderer.reset_game_effects()
                             mode = "home"
-                        elif event.key in (pygame.K_LEFT, pygame.K_a):
+                        elif event.key == pygame.K_LEFT:
                             settings_store.settings.horizontal_reach = clamp_horizontal_reach(
                                 settings_store.settings.horizontal_reach - HORIZONTAL_REACH_STEP
                             )
@@ -886,7 +903,7 @@ def main(argv: list[str] | None = None) -> int:
                             if camera is not None:
                                 camera.set_horizontal_zoom(settings_store.settings.horizontal_reach)
                             menu_sounds.tick()
-                        elif event.key in (pygame.K_RIGHT, pygame.K_d):
+                        elif event.key == pygame.K_RIGHT:
                             settings_store.settings.horizontal_reach = clamp_horizontal_reach(
                                 settings_store.settings.horizontal_reach + HORIZONTAL_REACH_STEP
                             )
@@ -894,18 +911,31 @@ def main(argv: list[str] | None = None) -> int:
                             if camera is not None:
                                 camera.set_horizontal_zoom(settings_store.settings.horizontal_reach)
                             menu_sounds.tick()
-                        elif event.key in (pygame.K_UP, pygame.K_w):
-                            restart_camera(settings_store.settings.camera_index + 1)
+                        elif event.key == pygame.K_UP:
+                            if not force_keyboard:
+                                next_index = (
+                                    settings_store.settings.camera_index
+                                    if not settings_store.settings.camera_enabled
+                                    else settings_store.settings.camera_index + 1
+                                )
+                                restart_camera(next_index)
                             calibration_session.restart()
+                            calibration_session.set_keyboard_mode(use_keyboard)
+                            keyboard.reset()
                             renderer.reset_game_effects()
                             menu_sounds.tick()
-                        elif event.key in (pygame.K_DOWN, pygame.K_s):
-                            restart_camera(max(0, settings_store.settings.camera_index - 1))
+                        elif event.key == pygame.K_DOWN:
+                            if force_keyboard or not settings_store.settings.camera_enabled:
+                                select_keyboard_input()
+                            elif settings_store.settings.camera_index <= 0:
+                                select_keyboard_input()
+                            else:
+                                restart_camera(settings_store.settings.camera_index - 1)
                             calibration_session.restart()
+                            calibration_session.set_keyboard_mode(use_keyboard)
+                            keyboard.reset()
                             renderer.reset_game_effects()
                             menu_sounds.tick()
-                        elif event.key == pygame.K_k:
-                            toggle_keyboard_input()
                     continue
 
                 if mode == "song_menu":
@@ -979,6 +1009,9 @@ def main(argv: list[str] | None = None) -> int:
                         session.set_best_score(result_record.score)
                         restart_camera()
                         session.restart()
+                        session.set_keyboard_mode(use_keyboard)
+                        keyboard.reset()
+                        keyboard_start_requested = False
                         reset_activity_run()
                         renderer.reset_game_effects()
                         result_failed = False
@@ -994,6 +1027,12 @@ def main(argv: list[str] | None = None) -> int:
                         if action == MenuAction.SELECT:
                             menu_sounds.select()
                     continue
+
+                if keyboard_press is not None and use_keyboard and session is not None:
+                    if session.running:
+                        session.register_keyboard_press(*keyboard_press)
+                    else:
+                        keyboard_start_requested = True
 
                 if event.type == pygame.KEYDOWN:
                     if event.key == pygame.K_v and session is not None and not session.running:
@@ -1019,7 +1058,7 @@ def main(argv: list[str] | None = None) -> int:
                             stop_camera()
                             repeater.clear()
                             mode = "song_menu"
-                    elif event.key == pygame.K_d:
+                    elif event.key == pygame.K_F3:
                         debug = not debug
                     elif event.key == pygame.K_r and session is not None:
                         finalize_activity_run("escaped")
@@ -1027,10 +1066,11 @@ def main(argv: list[str] | None = None) -> int:
                             active_recording.abort()
                             active_recording = None
                         session.restart()
+                        session.set_keyboard_mode(use_keyboard)
+                        keyboard.reset()
+                        keyboard_start_requested = False
                         reset_activity_run()
                         renderer.reset_game_effects()
-                    elif event.key == pygame.K_k:
-                        toggle_keyboard_input()
 
             menu_ambience.set_enabled(mode in AMBIENT_MENU_MODES)
 
@@ -1056,7 +1096,7 @@ def main(argv: list[str] | None = None) -> int:
                         main_index,
                         songs_root,
                         len(songs),
-                        settings_store.settings.camera_index,
+                        displayed_camera_index(),
                         settings_store.settings.horizontal_reach,
                         camera_status(),
                         active_profile.name,
@@ -1104,7 +1144,7 @@ def main(argv: list[str] | None = None) -> int:
                     main_index,
                     songs_root,
                     len(songs),
-                    settings_store.settings.camera_index,
+                    displayed_camera_index(),
                     settings_store.settings.horizontal_reach,
                     status_text,
                     active_profile.name,
@@ -1168,13 +1208,20 @@ def main(argv: list[str] | None = None) -> int:
             if use_keyboard:
                 body = keyboard.body_state()
                 mask = None
-                status = "READY"
+                if mode == "game" and session is not None and not session.running:
+                    status = (
+                        "STARTING…"
+                        if keyboard_start_requested
+                        else "PRESS A S D F / J K L ; TO START"
+                    )
+                else:
+                    status = "KEYBOARD ONLY"
                 pose_fps = 0.0
                 input_name = "keyboard"
             elif camera is None:
                 body = BodyState()
                 mask = None
-                status = camera_error or "Camera unavailable — press K for keyboard mode"
+                status = camera_error or "Camera unavailable — select CAMERA OFF in Calibration"
                 pose_fps = 0.0
                 input_name = "camera unavailable"
             else:
@@ -1187,6 +1234,7 @@ def main(argv: list[str] | None = None) -> int:
 
             if mode == "calibration":
                 calibration_ready = use_keyboard or status == "READY"
+                calibration_session.set_keyboard_mode(use_keyboard)
                 calibration_session.update(body, ready_to_start=calibration_ready)
                 gameplay_sounds.play(calibration_session.drain_gameplay_events())
                 if calibration_session.finished or calibration_session.failed:
@@ -1228,7 +1276,7 @@ def main(argv: list[str] | None = None) -> int:
                     show_lower_body_sources=True,
                 )
                 renderer.draw_calibration_overlay(
-                    settings_store.settings.camera_index,
+                    displayed_camera_index(),
                     settings_store.settings.horizontal_reach,
                     camera_status(),
                 )
@@ -1240,10 +1288,17 @@ def main(argv: list[str] | None = None) -> int:
             assert session is not None
             if not use_keyboard and camera is not None:
                 status = _readiness_for_session(body, session)
+            session.set_keyboard_mode(use_keyboard)
             was_running = session.running
-            session.update(body, ready_to_start=(use_keyboard or status == "READY"))
+            session.update(
+                body,
+                ready_to_start=(keyboard_start_requested if use_keyboard else status == "READY"),
+                start_immediately=(use_keyboard and keyboard_start_requested),
+            )
             if not was_running and session.running and activity_started_at is None and session.chart is not None:
                 activity_started_at = datetime.now(timezone.utc)
+            if not was_running and session.running:
+                keyboard_start_requested = False
 
             if (
                 record_play_enabled

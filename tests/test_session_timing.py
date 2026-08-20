@@ -16,7 +16,10 @@ class _FakeMixer:
         return False
 
 
-sys.modules.setdefault("pygame", SimpleNamespace(mixer=_FakeMixer()))
+try:
+    import pygame  # noqa: F401
+except ImportError:
+    sys.modules.setdefault("pygame", SimpleNamespace(mixer=_FakeMixer()))
 
 from vaporstep.domain import BodyPoint, BodyState, GameNote, HitQuality, NoteKind
 from vaporstep.session import GameSession
@@ -73,6 +76,44 @@ def test_plain_occupancy_settles_to_hit_at_late_grace(monkeypatch):
     session.update(_body(1.16), ready_to_start=True)
     assert note.judged
     assert note.judgement == HitQuality.HIT
+
+
+def test_keyboard_press_scores_perfect_without_continuous_occupancy(monkeypatch):
+    session, clock = _session(monkeypatch)
+    session.set_keyboard_mode(True)
+    note = session.notes[0]
+
+    clock[0] = 0.94
+    session.register_keyboard_press(NoteKind.FOOT, 2)
+    session.update(BodyState(), ready_to_start=True)
+    assert not note.judged
+
+    clock[0] = 1.0
+    session.update(BodyState(), ready_to_start=True)
+    assert note.judgement == HitQuality.PERFECT
+
+
+def test_keyboard_press_can_score_late_great(monkeypatch):
+    session, clock = _session(monkeypatch)
+    session.set_keyboard_mode(True)
+    note = session.notes[0]
+
+    clock[0] = 1.20
+    session.register_keyboard_press(NoteKind.FOOT, 2)
+    session.update(BodyState(), ready_to_start=True)
+
+    assert note.judgement == HitQuality.GREAT
+
+
+def test_keyboard_start_request_begins_immediately(monkeypatch):
+    import vaporstep.session as session_module
+
+    monkeypatch.setattr(session_module.time, "monotonic", lambda: 10.0)
+    session = GameSession(demo_notes=[GameNote(time=1.0, lanes=(2,), kind=NoteKind.FOOT)])
+
+    session.update(BodyState(), ready_to_start=True, start_immediately=True)
+
+    assert session.running
 
 
 def test_chart_lead_in_starts_early_enough_for_first_note_to_enter_from_origin():

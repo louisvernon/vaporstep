@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import time
-
 import pygame
 
 from .config import (
@@ -10,11 +8,27 @@ from .config import (
     HAND_PLAYFIELD_LEFT,
     HAND_PLAYFIELD_RIGHT,
 )
-from .domain import BodyPoint, BodyState
+from .domain import BodyPoint, BodyState, NoteKind
 
 
-FOOT_KEYS = (pygame.K_1, pygame.K_2, pygame.K_3, pygame.K_4)
-HAND_KEYS = (pygame.K_q, pygame.K_w, pygame.K_e, pygame.K_r)
+HAND_KEYS = (pygame.K_a, pygame.K_s, pygame.K_d, pygame.K_f)
+FOOT_KEYS = (pygame.K_j, pygame.K_k, pygame.K_l, pygame.K_SEMICOLON)
+HAND_KEY_LABELS = ("A", "S", "D", "F")
+FOOT_KEY_LABELS = ("J", "K", "L", ";")
+
+_KEY_LANES = {
+    **{key: (NoteKind.HANDS, lane) for lane, key in enumerate(HAND_KEYS, start=1)},
+    **{key: (NoteKind.FOOT, lane) for lane, key in enumerate(FOOT_KEYS, start=1)},
+}
+
+
+def lane_for_key(key: int) -> tuple[NoteKind, int] | None:
+    return _KEY_LANES.get(int(key))
+
+
+def label_for_lane(kind: NoteKind, lane: int) -> str:
+    labels = HAND_KEY_LABELS if kind == NoteKind.HANDS else FOOT_KEY_LABELS
+    return labels[int(lane) - 1]
 
 
 def _point_for_lane(lane: int | None, y: float, left: float, right: float) -> BodyPoint:
@@ -26,10 +40,46 @@ def _point_for_lane(lane: int | None, y: float, left: float, right: float) -> Bo
 
 
 class KeyboardBodyInput:
+    """Keyboard lane occupancy plus discrete, non-repeating timing presses."""
+
+    def __init__(self) -> None:
+        self._pressed: set[int] = set()
+        self._latched: set[int] = set()
+
+    def reset(self) -> None:
+        self._pressed.clear()
+        self._latched.clear()
+
+    def press(self, key: int, *, repeat: bool = False) -> tuple[NoteKind, int] | None:
+        mapping = lane_for_key(key)
+        if mapping is None:
+            return None
+        first_press = int(key) not in self._pressed and not repeat
+        self._pressed.add(int(key))
+        if first_press:
+            # Keep very short taps occupied for one game update even if their
+            # KEYUP event arrives in the same rendered frame.
+            self._latched.add(int(key))
+            return mapping
+        return None
+
+    def release(self, key: int) -> None:
+        self._pressed.discard(int(key))
+
+    def handle_event(self, event) -> tuple[NoteKind, int] | None:
+        if event.type == pygame.KEYDOWN:
+            return self.press(event.key, repeat=bool(getattr(event, "repeat", False)))
+        if event.type == pygame.KEYUP:
+            self.release(event.key)
+        elif event.type == getattr(pygame, "WINDOWFOCUSLOST", -1):
+            self.reset()
+        return None
+
     def body_state(self) -> BodyState:
-        keys = pygame.key.get_pressed()
-        feet = [i + 1 for i, key in enumerate(FOOT_KEYS) if keys[key]][:2]
-        hands = [i + 1 for i, key in enumerate(HAND_KEYS) if keys[key]][:2]
+        active = self._pressed | self._latched
+        feet = [i + 1 for i, key in enumerate(FOOT_KEYS) if key in active][:2]
+        hands = [i + 1 for i, key in enumerate(HAND_KEYS) if key in active][:2]
+        self._latched.clear()
         feet += [None] * (2 - len(feet))
         hands += [None] * (2 - len(hands))
         return BodyState(
@@ -46,5 +96,8 @@ class KeyboardBodyInput:
                 feet[1], 0.69, FOOT_PLAYFIELD_LEFT, FOOT_PLAYFIELD_RIGHT
             ),
             pose_visible=bool(any(x is not None for x in feet + hands)),
-            timestamp=time.monotonic(),
+            # Keyboard presses enter MotionTracker explicitly. A zero body
+            # timestamp prevents held keys from generating camera-style lane
+            # transition events as well.
+            timestamp=0.0,
         )
