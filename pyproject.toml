@@ -12,7 +12,7 @@ license-files = ["LICENSE"]
 requires-python = ">=3.10"
 dependencies = [
   # Pinned until MediaPipe provides an update without telemetry.
-  "mediapipe==0.10.21",
+  "mediapipe==0.10.33",
   "opencv-python>=4.10",
   "pygame>=2.6",
   "numpy>=1.26",
