@@ -42,7 +42,7 @@ LANE_PERSPECTIVE_STRENGTH = 0.45
 # is near or slightly beyond the visible frame. Only the ankle contribution
 # weight is smoothed; the resulting x/y position follows each pose sample
 # directly so fast lateral steps are not delayed. Stomp timing uses the raw knee.
-LOWER_BODY_ANKLE_BLEND = 0.55
+LOWER_BODY_ANKLE_BLEND = 0.75
 LOWER_BODY_ANKLE_CONFIDENCE_LOW = 0.25
 LOWER_BODY_ANKLE_CONFIDENCE_HIGH = 0.70
 LOWER_BODY_WEIGHT_SMOOTH_ALPHA = 0.35
