@@ -28,13 +28,15 @@ def test_hit_scoring_uses_post_hit_combo_and_miss_resets():
     assert stats.max_combo == 5
 
 
-def test_nonbreaking_miss_preserves_combo():
+def test_nonbreaking_miss_is_tracked_as_dropped_hold():
     stats = RunStats(total_notes=4)
     stats.register_hit()
     stats.register_hit()
     stats.register_miss(break_combo=False)
-    assert stats.misses == 1
+    assert stats.misses == 0
+    assert stats.dropped_holds == 1
     assert stats.combo == 2
+    assert stats.hit_rate == 2 / 3
     assert stats.judgements == [True, True, False]
 
 

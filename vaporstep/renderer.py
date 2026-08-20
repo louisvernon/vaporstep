@@ -616,6 +616,7 @@ class Renderer:
             ("GREAT", f"{stats.greats:,}"),
             ("HIT", f"{stats.basic_hits:,}"),
             ("MISSED", f"{stats.misses:,}"),
+            ("DROPPED HOLDS", f"{stats.dropped_holds:,}"),
             ("MAX COMBO", f"{stats.max_combo:,}"),
             ("BEST SCORE", f"{best_score:,}"),
         ]

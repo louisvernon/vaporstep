@@ -122,6 +122,7 @@ class RunStats:
     score: int = 0
     hits: int = 0
     misses: int = 0
+    dropped_holds: int = 0
     combo: int = 0
     max_combo: int = 0
     perfects: int = 0
@@ -146,7 +147,7 @@ class RunStats:
 
     @property
     def hit_rate(self) -> float:
-        judged = self.hits + self.misses
+        judged = self.hits + self.misses + self.dropped_holds
         if judged <= 0:
             return 0.0
         return self.hits / judged
@@ -196,7 +197,9 @@ class RunStats:
         return points
 
     def register_miss(self, *, break_combo: bool = True) -> None:
-        self.misses += 1
         if break_combo:
+            self.misses += 1
             self.combo = 0
+        else:
+            self.dropped_holds += 1
         self.judgements.append(False)
