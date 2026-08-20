@@ -1,10 +1,11 @@
 import pygame
 
-from vaporstep.domain import NoteKind
+from vaporstep.domain import BodyPoint, BodyState, NoteKind
 from vaporstep.keyboard_input import (
     FOOT_KEY_LABELS,
     HAND_KEY_LABELS,
     KeyboardBodyInput,
+    add_keyboard_lanes,
     label_for_lane,
     lane_for_key,
 )
@@ -41,3 +42,22 @@ def test_held_key_occupies_lane_without_repeating_timing_press():
 
     keyboard.release(pygame.K_k)
     assert keyboard.body_state().foot_lanes == frozenset()
+
+
+def test_keyboard_lanes_supplement_camera_without_replacing_pose():
+    camera = BodyState(
+        left_wrist=BodyPoint(x=0.2, y=0.3, lane=1, visible=True),
+        left_foot_control=BodyPoint(x=0.3, y=0.8, lane=2, visible=True),
+        pose_visible=True,
+        timestamp=12.5,
+    )
+    keyboard = KeyboardBodyInput()
+    keyboard.press(pygame.K_f)
+    keyboard.press(pygame.K_l)
+
+    combined = add_keyboard_lanes(camera, keyboard.body_state())
+
+    assert combined.left_wrist == camera.left_wrist
+    assert combined.timestamp == camera.timestamp
+    assert combined.hand_lanes == frozenset((1, 4))
+    assert combined.foot_lanes == frozenset((2, 3))

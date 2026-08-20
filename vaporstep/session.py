@@ -387,18 +387,18 @@ class GameSession:
                 self._judge(note, True, t, quality=quality, timing_delta=timing_delta)
                 return
 
-        settle_window = GREAT_WINDOW_SECONDS if self.keyboard_mode else HIT_WINDOW_SECONDS
         if delta >= 0.0 and note.last_occupancy_at is not None:
             timed = self.motion.match(note.kind, note.lanes, note.time)
             if timed is not None:
                 quality, timing_delta = timed
                 self._judge(note, True, t, quality=quality, timing_delta=timing_delta)
                 return
-            if delta >= settle_window:
+            if delta >= HIT_WINDOW_SECONDS:
                 self._judge(note, True, t, quality=HitQuality.HIT)
                 return
 
-        if delta > settle_window:
+        miss_window = GREAT_WINDOW_SECONDS if self.keyboard_mode else HIT_WINDOW_SECONDS
+        if delta > miss_window:
             self._judge(note, False, t)
 
     @staticmethod

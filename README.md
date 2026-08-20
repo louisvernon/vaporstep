@@ -63,7 +63,7 @@ StepMania, Dance Super Station and related names are referenced only to describe
 
 ## Keyboard play
 
-VaporStep can also be played without a camera. In **Calibration**, press Down past camera 0 to select **Camera Off (Keyboard)**. The hand lanes use **A S D F** and the foot lanes use **J K L ;** from left to right. Press any lane key to start a song, tap for timed notes, and hold the corresponding key for sustained notes.
+Keyboard input is always available, including while a camera is active. The hand lanes use **A S D F** and the foot lanes use **J K L ;** from left to right. Press any lane key to start a song, tap for timed notes, and hold the corresponding key for sustained notes. To play without starting a camera, press Down past camera 0 in **Calibration** and select **Camera Off (Keyboard)**.
 
 ## Health & Safety
 

@@ -1680,10 +1680,18 @@ class Renderer:
         self.screen.blit(surf, surf.get_rect(midbottom=(w // 2, h - 8)))
 
     def _draw_status(self, status, input_name, song_title, chart_label, audio_error) -> None:
-        good = status == "READY" or input_name == "keyboard"
-        color = GREEN if good else WHITE
-        text = status
-        lines = [(text, color, self.font), (song_title, WHITE, self.small_font), (chart_label, DIM, self.small_font)]
+        status_lines = str(status).splitlines()
+        lines = []
+        for index, value in enumerate(status_lines):
+            line_color = GREEN if index == 0 and value == "READY" else WHITE
+            font = self.font if index == 0 else self.small_font
+            lines.append((value, line_color, font))
+        lines.extend(
+            (
+                (song_title, WHITE, self.small_font),
+                (chart_label, DIM, self.small_font),
+            )
+        )
         if audio_error:
             lines.append((f"Audio unavailable: {audio_error}", RED, self.small_font))
         x, y = 14, 12

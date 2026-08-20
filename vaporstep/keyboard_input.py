@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pygame
 
 from .config import (
@@ -29,6 +31,19 @@ def lane_for_key(key: int) -> tuple[NoteKind, int] | None:
 def label_for_lane(kind: NoteKind, lane: int) -> str:
     labels = HAND_KEY_LABELS if kind == NoteKind.HANDS else FOOT_KEY_LABELS
     return labels[int(lane) - 1]
+
+
+def add_keyboard_lanes(camera_body: BodyState, keyboard_body: BodyState) -> BodyState:
+    """Add held keyboard lanes without replacing webcam tracking data."""
+    return replace(
+        camera_body,
+        supplemental_hand_lanes=(
+            camera_body.supplemental_hand_lanes | keyboard_body.hand_lanes
+        ),
+        supplemental_foot_lanes=(
+            camera_body.supplemental_foot_lanes | keyboard_body.foot_lanes
+        ),
+    )
 
 
 def _point_for_lane(lane: int | None, y: float, left: float, right: float) -> BodyPoint:
