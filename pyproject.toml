@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools==80.9.0", "wheel", "setuptools-scm>=9.2,<10"]
+requires = ["setuptools==84.0.0", "wheel", "setuptools-scm>=9.2,<10"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -18,7 +18,7 @@ dependencies = [
   "numpy==2.5.2",
   "simfile==2.1.1",
   # Pygame 2.6.1 still imports pkg_resources, removed in setuptools 81.
-  "setuptools==80.9.0",
+  "setuptools==84.0.0",
   "imageio-ffmpeg==0.6.0",
 ]
 
