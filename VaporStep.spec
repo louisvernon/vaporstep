@@ -99,58 +99,40 @@ a = Analysis(
 )
 pyz = PYZ(a.pure)
 
-if sys.platform.startswith("win"):
-    # Windows is distributed as a single self-extracting executable. PyInstaller
-    # unpacks native libraries and data to a temporary runtime directory at launch.
-    exe = EXE(
-        pyz,
-        a.scripts,
-        a.binaries,
-        a.datas,
-        [],
-        name="VaporStep",
-        debug=False,
-        bootloader_ignore_signals=False,
-        strip=False,
-        upx=False,
-        console=False,
-        icon=icon,
-    )
-else:
-    exe = EXE(
-        pyz,
-        a.scripts,
-        [],
-        exclude_binaries=True,
-        name="VaporStep",
-        debug=False,
-        bootloader_ignore_signals=False,
-        strip=False,
-        upx=False,
-        console=False,
-        icon=icon,
-        codesign_identity=codesign_identity,
-        entitlements_file=entitlements_file,
-    )
-    coll = COLLECT(
-        exe,
-        a.binaries,
-        a.datas,
-        strip=False,
-        upx=False,
-        name="VaporStep",
-    )
+exe = EXE(
+    pyz,
+    a.scripts,
+    [],
+    exclude_binaries=True,
+    name="VaporStep",
+    debug=False,
+    bootloader_ignore_signals=False,
+    strip=False,
+    upx=False,
+    console=False,
+    icon=icon,
+    codesign_identity=codesign_identity,
+    entitlements_file=entitlements_file,
+)
+coll = COLLECT(
+    exe,
+    a.binaries,
+    a.datas,
+    strip=False,
+    upx=False,
+    name="VaporStep",
+)
 
-    if sys.platform == "darwin":
-        app = BUNDLE(
-            coll,
-            name="VaporStep.app",
-            icon=icon,
-            bundle_identifier="org.vaporstep.game",
-            info_plist={
-                "CFBundleName": "VaporStep",
-                "CFBundleDisplayName": "VaporStep",
-                "NSHighResolutionCapable": True,
-                "NSCameraUsageDescription": "VaporStep uses the camera to track your movement during gameplay.",
-            },
-        )
+if sys.platform == "darwin":
+    app = BUNDLE(
+        coll,
+        name="VaporStep.app",
+        icon=icon,
+        bundle_identifier="org.vaporstep.game",
+        info_plist={
+            "CFBundleName": "VaporStep",
+            "CFBundleDisplayName": "VaporStep",
+            "NSHighResolutionCapable": True,
+            "NSCameraUsageDescription": "VaporStep uses the camera to track your movement during gameplay.",
+        },
+    )

@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=80,<82", "wheel", "setuptools-scm>=9.2,<10"]
+requires = ["setuptools==80.9.0", "wheel", "setuptools-scm>=9.2,<10"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -9,15 +9,16 @@ description = "Cross-platform webcam full-body rhythm game"
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 dependencies = [
-  # Pinned until MediaPipe provides an update without telemetry.
-  "mediapipe==0.10.33",
-  "opencv-python>=4.10",
-  "pygame>=2.6",
-  "numpy>=1.26",
+  # Keep the native vision stack reproducible across local and release builds.
+  "mediapipe==0.10.31",
+  "opencv-python==5.0.0.93",
+  "pygame==2.6.1",
+  "numpy==2.5.2",
   "simfile==2.1.1",
-  "setuptools<82",
+  # Pygame 2.6.1 still imports pkg_resources, removed in setuptools 81.
+  "setuptools==80.9.0",
   "imageio-ffmpeg==0.6.0",
 ]
 
@@ -32,7 +33,8 @@ version_file = "vaporstep/_version.py"
 
 [project.optional-dependencies]
 build = [
-  "pyinstaller>=6.10,<7",
+  "pyinstaller==6.22.2",
+  "pyinstaller-hooks-contrib==2026.6",
   "pytest>=8",
   "pillow>=10",
 ]
