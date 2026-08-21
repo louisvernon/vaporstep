@@ -7,7 +7,9 @@ temporary extraction behavior at every launch.
 
 ## Build locally
 
-From a Windows PowerShell prompt with Python 3.12 and Inno Setup 6 installed:
+From a Windows PowerShell prompt with Python 3.12 and Inno Setup 6 installed.
+GitHub release builds install Inno Setup 6.7.1 explicitly rather than relying
+on the runner image:
 
 ```powershell
 python -m pip install -e ".[build]"

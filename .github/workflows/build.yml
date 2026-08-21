@@ -190,6 +190,16 @@ jobs:
       - name: Build application folder
         run: pyinstaller --noconfirm --clean VaporStep.spec
 
+      - name: Install Inno Setup 6.7.1
+        shell: pwsh
+        run: |
+          choco install innosetup --version=6.7.1 --yes --no-progress
+          $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) {
+            throw "Pinned Inno Setup compiler was not installed at $iscc."
+          }
+          Write-Host "Inno Setup $((Get-Item $iscc).VersionInfo.FileVersion)"
+
       - name: Package portable application
         shell: pwsh
         run: |
