@@ -9,17 +9,13 @@ description = "Cross-platform webcam full-body rhythm game"
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 dependencies = [
   # Keep the native vision stack reproducible across local and release builds.
-  "mediapipe==0.10.33",
-  # opencv-contrib-python includes the core cv2 modules MediaPipe and VaporStep
-  # use. Installing opencv-python beside it makes two distributions overwrite
-  # the same cv2 package.
-  "opencv-contrib-python==4.11.0.86",
+  "mediapipe==0.10.31",
+  "opencv-python==5.0.0.93",
   "pygame==2.6.1",
-  "numpy==1.26.4",
-  "protobuf==4.25.9",
+  "numpy==2.5.2",
   "simfile==2.1.1",
   # Pygame 2.6.1 still imports pkg_resources, removed in setuptools 81.
   "setuptools==80.9.0",

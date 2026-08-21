@@ -181,6 +181,11 @@ jobs:
           python -VV
           python -m pip freeze
 
+      - name: Verify native vision stack
+        shell: pwsh
+        run: |
+          python -c "import cv2, mediapipe, numpy; print('OpenCV', cv2.__version__, 'MediaPipe', mediapipe.__version__, 'NumPy', numpy.__version__)"
+
       - name: Run tests
         run: python -m pytest -q
 

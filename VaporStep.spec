@@ -48,7 +48,7 @@ datas = mp_datas + ffmpeg_datas + sim_datas + [
 # Preserve license/notice files from the exact distributions installed in the
 # build environment. This keeps frozen releases aligned with dependency
 # versions without maintaining copied license text by hand in this repository.
-for dist_name in ("mediapipe", "opencv-contrib-python", "pygame", "numpy", "simfile", "setuptools", "imageio-ffmpeg"):
+for dist_name in ("mediapipe", "opencv-python", "pygame", "numpy", "simfile", "setuptools", "imageio-ffmpeg"):
     try:
         dist = distribution(dist_name)
     except PackageNotFoundError:
