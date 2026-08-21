@@ -38,7 +38,7 @@ VaporStep does **not** include songs or song-pack artwork. You provide your own 
 
 ## Getting started
 
-The easiest way to use VaporStep is with a packaged build from the project releases page:
+The easiest way to use VaporStep is with a packaged build from the project releases page. Windows releases provide an installer plus a portable ZIP for users who prefer not to install the app:
 
 [Download the latest release](../../releases/latest)
 
@@ -49,7 +49,7 @@ The easiest way to use VaporStep is with a packaged build from the project relea
 
 On first launch your operating system may ask for camera access. VaporStep releases the camera whenever you are browsing menus or results and acquires it only for calibration and gameplay. If you later choose a song folder in an operating-system protected location, the OS may separately ask for permission to access it.
 
-This app is not signed so you may have to jump through some hoops to launch it on MacOS and Windows.
+macOS releases are signed and notarized. Windows releases are not yet signed and may trigger an operating-system warning.
 
 ## Song libraries
 

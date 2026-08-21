@@ -14,17 +14,18 @@ collects those files where they are provided by the packages.
 | --- | --- | --- |
 | MediaPipe | Pose inference | Apache-2.0 |
 | MediaPipe Pose Landmarker Full model | Pose model | Apache-2.0 |
-| OpenCV / opencv-python | Camera capture and image processing | OpenCV: Apache-2.0; opencv-python packaging: MIT; bundled wheel components retain their own licenses |
+| OpenCV / opencv-contrib-python | Camera capture and image processing | OpenCV: Apache-2.0; opencv-python packaging: MIT; bundled wheel components retain their own licenses |
 | Pygame | Rendering, input and audio | LGPL-2.1 |
 | NumPy | Numeric arrays | BSD-3-Clause and bundled notices |
 | simfile | SM/SSC parsing | MIT |
 | setuptools / pkg_resources | Compatibility dependency used by simfile | MIT and bundled notices |
 | imageio-ffmpeg | FFmpeg process discovery/wrapping for recording export | BSD-2-Clause; the bundled FFmpeg executable retains its own license |
 
-The opencv-python project documents additional licenses for native components
+The opencv-python project, which also publishes the opencv-contrib-python wheels,
+documents additional licenses for native components
 included in its wheels, including FFmpeg under LGPL-2.1; non-headless Linux
 wheels also include Qt under LGPL-3.0. Preserve `LICENSE-3RD-PARTY.txt` from the
-installed opencv-python distribution in binary releases.
+installed opencv-contrib-python distribution in binary releases.
 
 `imageio-ffmpeg==0.6.0` PyPI wheels include platform-specific FFmpeg executables. VaporStep release builds collect that executable so Record Play works without a separate system installation. FFmpeg remains a separate command-line program and retains the license of the exact supplied build. See `FFMPEG_PROVENANCE.md` for the filenames, version families, upstream source links, and the `imageio-ffmpeg` binary provenance chain.
 

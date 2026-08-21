@@ -171,8 +171,8 @@ class PoseCameraInput:
         if self._thread and self._thread.is_alive():
             return
 
-        # mediapipe==0.10.35 is pinned in pyproject.toml because a fresh 1.x
-        # install caused a native macOS graph/Metal abort during task startup.
+        # MediaPipe and the native vision stack are pinned in pyproject.toml so
+        # local and packaged builds exercise the same graph implementation.
         options = mp.tasks.vision.PoseLandmarkerOptions(
             base_options=mp.tasks.BaseOptions(model_asset_path=self.model_path),
             running_mode=mp.tasks.vision.RunningMode.LIVE_STREAM,

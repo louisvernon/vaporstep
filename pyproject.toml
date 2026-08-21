@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=80,<82", "wheel", "setuptools-scm>=9.2,<10"]
+requires = ["setuptools==80.9.0", "wheel", "setuptools-scm>=9.2,<10"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -11,13 +11,18 @@ license = "MIT"
 license-files = ["LICENSE"]
 requires-python = ">=3.10"
 dependencies = [
-  # Pinned until MediaPipe provides an update without telemetry.
+  # Keep the native vision stack reproducible across local and release builds.
   "mediapipe==0.10.33",
-  "opencv-python>=4.10",
-  "pygame>=2.6",
-  "numpy>=1.26",
+  # opencv-contrib-python includes the core cv2 modules MediaPipe and VaporStep
+  # use. Installing opencv-python beside it makes two distributions overwrite
+  # the same cv2 package.
+  "opencv-contrib-python==4.11.0.86",
+  "pygame==2.6.1",
+  "numpy==1.26.4",
+  "protobuf==4.25.9",
   "simfile==2.1.1",
-  "setuptools<82",
+  # Pygame 2.6.1 still imports pkg_resources, removed in setuptools 81.
+  "setuptools==80.9.0",
   "imageio-ffmpeg==0.6.0",
 ]
 
@@ -32,7 +37,8 @@ version_file = "vaporstep/_version.py"
 
 [project.optional-dependencies]
 build = [
-  "pyinstaller>=6.10,<7",
+  "pyinstaller==6.22.2",
+  "pyinstaller-hooks-contrib==2026.6",
   "pytest>=8",
   "pillow>=10",
 ]
