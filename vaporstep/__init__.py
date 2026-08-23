@@ -12,4 +12,10 @@ from ._version import __version__
 
 install_unicode_font_fallback()
 
+# Keep song-library-only polish out of the large gameplay renderer while still
+# applying it consistently to the console entry point and frozen builds.
+from .song_menu_overlay import install_song_menu_overlay
+
+install_song_menu_overlay()
+
 __all__ = ["__version__"]
