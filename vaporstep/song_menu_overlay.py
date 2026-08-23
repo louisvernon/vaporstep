@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import pygame
 
-from .renderer import BG, CYAN, DIM, MAGENTA, Renderer, WHITE, _blend
+from .domain import ChainMode
+from .renderer import BG, CYAN, DIM, MAGENTA, Renderer, _blend
 
 
 _installed = False
@@ -17,7 +18,7 @@ def _draw_library_overlay(
     library_count: int,
     favorites_only: bool,
     played_only: bool,
-    chain_mode,
+    chain_mode: ChainMode,
 ) -> None:
     w, h = renderer.size
 
@@ -28,12 +29,9 @@ def _draw_library_overlay(
         active_filters.append("PLAYED")
     filter_label = " + ".join(active_filters) if active_filters else "ALL SONGS"
 
-    # Replace the original filter line with pack scope + filters. A translucent
-    # backing keeps the animated menu background intact while hiding the old text.
     panel = pygame.Surface((min(w - 40, 920), 27), pygame.SRCALPHA)
     panel.fill((*BG, 238))
-    panel_rect = panel.get_rect(midtop=(w // 2, 84))
-    renderer.screen.blit(panel, panel_rect)
+    renderer.screen.blit(panel, panel.get_rect(midtop=(w // 2, 84)))
     count_total = library_count or len(menu._all_songs) or len(menu.songs)
     header = renderer.small_font.render(
         f"PACK {menu.active_pack}   •   {filter_label}   •   {len(menu.songs)}/{count_total} SONGS   •   VIRTUAL HOLDS {chain_mode.label}",
@@ -48,7 +46,6 @@ def _draw_library_overlay(
     if not menu.songs:
         return
 
-    # Mark songs that contain at least one explicit ds3ddx 8-column chart.
     center_y = int(h * 0.34)
     row_h = 42
     nearest = int(round(menu.visual_position))
@@ -97,7 +94,7 @@ def install_song_menu_overlay() -> None:
         favorite_keys=None,
         favorites_only=False,
         played_only=False,
-        chain_mode=None,
+        chain_mode=ChainMode.BLOCKS,
         recording_enabled=False,
     ):
         original(
