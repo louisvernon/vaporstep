@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 import math
 
-from .song import ChartInfo, SongInfo
+from .song import ChartInfo, SongInfo, difficulty_rank
 
 
 class MenuAction(str, Enum):
@@ -12,6 +12,8 @@ class MenuAction(str, Enum):
     DOWN = "down"
     LEFT = "left"
     RIGHT = "right"
+    NEXT_PACK = "next_pack"
+    PREVIOUS_PACK = "previous_pack"
     SELECT = "select"
     BACK = "back"
 
@@ -26,6 +28,8 @@ def action_for_event(event) -> MenuAction | None:
 
     if event.type != pygame.KEYDOWN:
         return None
+    if event.key == pygame.K_TAB:
+        return MenuAction.PREVIOUS_PACK if event.mod & pygame.KMOD_SHIFT else MenuAction.NEXT_PACK
     return {
         pygame.K_UP: MenuAction.UP,
         pygame.K_w: MenuAction.UP,
@@ -96,28 +100,26 @@ class SongMenu:
     scroll_target: int = 0
     visual_position: float = 0.0
     preferred_difficulty: str = "Medium"
-
-    _DIFFICULTY_ORDER = {
-        "beginner": 0,
-        "novice": 0,
-        "easy": 1,
-        "basic": 1,
-        "medium": 2,
-        "normal": 2,
-        "standard": 2,
-        "hard": 3,
-        "difficult": 3,
-        "challenge": 4,
-        "expert": 4,
-        "edit": 5,
-    }
+    _all_songs: list[SongInfo] = field(default_factory=list, init=False, repr=False)
+    pack_index: int = field(default=0, init=False)
 
     def __post_init__(self) -> None:
+        self._all_songs = list(self.songs)
         if self.songs:
             self.song_index %= len(self.songs)
             self.scroll_target = self.song_index
             self.visual_position = float(self.song_index)
             self._select_preferred_chart()
+
+    @property
+    def packs(self) -> tuple[str, ...]:
+        names = sorted({song.pack_name for song in self._all_songs}, key=str.casefold)
+        return ("ALL", *names)
+
+    @property
+    def active_pack(self) -> str:
+        packs = self.packs
+        return packs[self.pack_index % len(packs)] if packs else "ALL"
 
     @property
     def song(self) -> SongInfo | None:
@@ -132,9 +134,9 @@ class SongMenu:
             return None
         return song.charts[self.chart_index]
 
-    @classmethod
-    def _difficulty_rank(cls, value: str) -> int | None:
-        return cls._DIFFICULTY_ORDER.get((value or "").strip().casefold())
+    @staticmethod
+    def _difficulty_rank(value: str) -> int | None:
+        return difficulty_rank(value)
 
     def _preferred_chart_index(self, song: SongInfo) -> int:
         if not song.charts:
@@ -144,13 +146,13 @@ class SongMenu:
         if exact:
             return exact[0]
 
-        target_rank = self._difficulty_rank(preferred)
+        target_rank = difficulty_rank(preferred)
         if target_rank is None:
             return 0
 
         ranked = []
         for i, chart in enumerate(song.charts):
-            rank = self._difficulty_rank(chart.difficulty)
+            rank = difficulty_rank(chart.difficulty)
             if rank is None:
                 continue
             ranked.append((abs(rank - target_rank), rank, chart.meter, i))
@@ -159,6 +161,29 @@ class SongMenu:
     def _select_preferred_chart(self) -> None:
         song = self.song
         self.chart_index = 0 if song is None else self._preferred_chart_index(song)
+
+    def _apply_pack(self, preserve_song: SongInfo | None = None) -> None:
+        active = self.active_pack
+        self.songs = list(self._all_songs) if active == "ALL" else [
+            song for song in self._all_songs if song.pack_name == active
+        ]
+        self.song_index = 0
+        if preserve_song is not None and self.songs:
+            try:
+                self.song_index = self.songs.index(preserve_song)
+            except ValueError:
+                self.song_index = 0
+        self.scroll_target = self.song_index
+        self.visual_position = float(self.song_index)
+        self._select_preferred_chart()
+
+    def cycle_pack(self, delta: int) -> None:
+        packs = self.packs
+        if len(packs) <= 1:
+            return
+        current = self.song
+        self.pack_index = (self.pack_index + delta) % len(packs)
+        self._apply_pack(current)
 
     def select_song_index(self, index: int) -> None:
         if not self.songs:
@@ -175,6 +200,12 @@ class SongMenu:
             self.visual_position = float(self.scroll_target)
 
     def handle(self, action: MenuAction) -> tuple[SongInfo, ChartInfo] | None:
+        if action == MenuAction.NEXT_PACK:
+            self.cycle_pack(1)
+            return None
+        if action == MenuAction.PREVIOUS_PACK:
+            self.cycle_pack(-1)
+            return None
         if not self.songs:
             return None
         if action == MenuAction.UP:
