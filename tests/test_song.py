@@ -1,4 +1,4 @@
-from vaporstep.song import ChartInfo
+from vaporstep.song import ChartInfo, chart_sort_key, difficulty_rank
 
 
 def test_bpm_label_constant_and_range():
@@ -6,3 +6,35 @@ def test_bpm_label_constant_and_range():
     variable = ChartInfo(index=1, difficulty="Hard", meter=8, bpm_min=90.0, bpm_max=180.0)
     assert constant.bpm_label == "120"
     assert variable.bpm_label == "90–180"
+
+
+def test_difficulty_aliases_share_semantic_tiers():
+    assert difficulty_rank("Beginner") == difficulty_rank("Novice") == 0
+    assert difficulty_rank("Easy") == difficulty_rank("Basic") == 1
+    assert difficulty_rank("Medium") == difficulty_rank("Normal") == difficulty_rank("Standard") == 2
+    assert difficulty_rank("Hard") == difficulty_rank("Difficult") == 3
+    assert difficulty_rank("Challenge") == difficulty_rank("Expert") == 4
+    assert difficulty_rank("Edit") == 5
+
+
+def test_chart_sort_prefers_named_difficulty_over_meter():
+    charts = [
+        ChartInfo(index=0, difficulty="Medium", meter=2),
+        ChartInfo(index=1, difficulty="Easy", meter=7),
+        ChartInfo(index=2, difficulty="Beginner", meter=9),
+        ChartInfo(index=3, difficulty="Hard", meter=3),
+        ChartInfo(index=4, difficulty="Challenge", meter=1),
+        ChartInfo(index=5, difficulty="Edit", meter=1),
+        ChartInfo(index=6, difficulty="Mystery", meter=2),
+    ]
+
+    ordered = sorted(charts, key=chart_sort_key)
+    assert [chart.difficulty for chart in ordered] == [
+        "Beginner",
+        "Easy",
+        "Medium",
+        "Hard",
+        "Challenge",
+        "Edit",
+        "Mystery",
+    ]
