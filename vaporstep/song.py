@@ -6,6 +6,27 @@ from pathlib import Path
 from .domain import GameNote, ImplicitChain
 
 
+_DIFFICULTY_ORDER = {
+    "beginner": 0,
+    "novice": 0,
+    "easy": 1,
+    "basic": 1,
+    "medium": 2,
+    "normal": 2,
+    "standard": 2,
+    "hard": 3,
+    "difficult": 3,
+    "challenge": 4,
+    "expert": 4,
+    "edit": 5,
+}
+
+
+def difficulty_rank(value: str) -> int | None:
+    """Return VaporStep's semantic difficulty tier for a StepMania label."""
+    return _DIFFICULTY_ORDER.get((value or "").strip().casefold())
+
+
 @dataclass(frozen=True)
 class ChartInfo:
     index: int
@@ -19,6 +40,7 @@ class ChartInfo:
     bpm_min: float = 0.0
     bpm_max: float = 0.0
     chain_count: int = 0
+    native_8_lane: bool = False
 
     @property
     def label(self) -> str:
@@ -35,6 +57,23 @@ class ChartInfo:
         if abs(hi - lo) < 0.05:
             return f"{hi:.0f}"
         return f"{lo:.0f}–{hi:.0f}"
+
+
+def chart_sort_key(chart: ChartInfo) -> tuple[int, int, str, int]:
+    """Sort named difficulties first, then meter within each difficulty tier.
+
+    The familiar StepMania progression is more useful in the song browser than
+    globally sorting by meter: Beginner, Easy, Medium, Hard, Challenge, Edit.
+    Legacy aliases share the corresponding tier. Unknown labels follow those
+    tiers and remain deterministic by meter/name/source index.
+    """
+    rank = difficulty_rank(chart.difficulty)
+    return (
+        rank if rank is not None else 6,
+        chart.meter,
+        (chart.difficulty or "").strip().casefold(),
+        chart.index,
+    )
 
 
 @dataclass(frozen=True)
@@ -54,6 +93,15 @@ class SongInfo:
     @property
     def display_title(self) -> str:
         return self.title or self.song_dir.name
+
+    @property
+    def pack_name(self) -> str:
+        """Best-effort StepMania pack name for the conventional root/pack/song layout."""
+        return self.song_dir.parent.name or "Ungrouped"
+
+    @property
+    def has_native_8_lane(self) -> bool:
+        return any(chart.native_8_lane for chart in self.charts)
 
 
 @dataclass(frozen=True)
