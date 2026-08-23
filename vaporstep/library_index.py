@@ -11,7 +11,7 @@ from .song import ChartInfo, SongInfo
 from .user_paths import song_index_path
 
 
-INDEX_VERSION = 1
+INDEX_VERSION = 2
 
 
 @dataclass(frozen=True)
