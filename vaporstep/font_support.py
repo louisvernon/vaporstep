@@ -25,10 +25,18 @@ _original_font = pygame.font.Font
 _installed = False
 
 
+def _find_fallback_font() -> str | None:
+    for name in _FONT_CANDIDATES:
+        path = pygame.font.match_font(name)
+        if path:
+            return path
+    return None
+
+
 class _UnicodeFallbackFont:
     def __init__(self, size: int) -> None:
         self._primary = _original_font(None, size)
-        fallback_path = pygame.font.match_font(_FONT_CANDIDATES)
+        fallback_path = _find_fallback_font()
         self._fallback = _original_font(fallback_path, size) if fallback_path else self._primary
 
     @staticmethod
