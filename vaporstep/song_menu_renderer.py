@@ -209,7 +209,10 @@ def _draw_song_menu(
     song = menu.song
     chart = menu.chart
     if song is not None and chart is not None:
-        panel_top = int(h * 0.58)
+        # Leave a little more breathing room below the scrolling song list. The
+        # pack label is positioned above this origin, so 61% keeps it clear of
+        # the list clip without sacrificing a visible song row.
+        panel_top = int(h * 0.61)
         banner = self._load_banner(song.banner_path)
         if banner is not None:
             box = pygame.Rect(max(22, w // 2 - 430), panel_top, 230, 82)
