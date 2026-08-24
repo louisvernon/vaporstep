@@ -8,6 +8,9 @@ import os
 os.environ.setdefault("PYGAME_HIDE_SUPPORT_PROMPT", "1")
 
 from ._version import __version__
+from .simfile_encoding import install_simfile_encoding_detection
+
+install_simfile_encoding_detection()
 
 # Keep song-library-only polish out of the large gameplay renderer while still
 # applying it consistently to the console entry point and frozen builds.
