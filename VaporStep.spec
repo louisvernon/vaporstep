@@ -45,6 +45,15 @@ datas = mp_datas + ffmpeg_datas + sim_datas + [
     (str(root / "FFMPEG_PROVENANCE.md"), "."),
 ]
 
+# Noto Emoji is fetched as a pinned build asset alongside the pose model rather
+# than committed to the repository. Pack the exact font and its OFL license.
+noto_emoji = assets / "fonts" / "NotoEmoji[wght].ttf"
+noto_emoji_license = assets / "fonts" / "OFL.txt"
+if noto_emoji.exists():
+    datas.append((str(noto_emoji), "assets/fonts"))
+if noto_emoji_license.exists():
+    datas.append((str(noto_emoji_license), "third_party_licenses/Noto-Emoji"))
+
 # Preserve license/notice files from the exact distributions installed in the
 # build environment. This keeps frozen releases aligned with dependency
 # versions without maintaining copied license text by hand in this repository.
