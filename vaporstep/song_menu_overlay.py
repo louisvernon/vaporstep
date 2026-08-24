@@ -43,6 +43,18 @@ def _draw_capability_icons(renderer: Renderer, song, x: int, y: int, color) -> N
         renderer.screen.blit(badge, rect)
 
 
+def _metadata_fonts(renderer: Renderer) -> tuple[MetadataFont, MetadataFont]:
+    title = getattr(renderer, "_song_metadata_font", None)
+    artist = getattr(renderer, "_song_metadata_small_font", None)
+    if title is None:
+        title = MetadataFont(28)
+        renderer._song_metadata_font = title
+    if artist is None:
+        artist = MetadataFont(21)
+        renderer._song_metadata_small_font = artist
+    return title, artist
+
+
 def _draw_library_overlay(
     renderer: Renderer,
     menu,
@@ -81,15 +93,18 @@ def _draw_library_overlay(
     if not menu.songs:
         return
 
-    title_font = MetadataFont(28)
-    artist_font = MetadataFont(21)
+    title_font, artist_font = _metadata_fonts(renderer)
     center_y = int(h * 0.34)
     row_h = 42
     nearest = int(round(menu.visual_position))
     max_rows = min(7, len(menu.songs))
     half = max_rows // 2
-    text_x = max(38, w // 2 - 365)
-    icon_x = text_x - 66
+
+    # Keep the capability column to the right of the existing selection rail.
+    # This deliberately moves titles inward rather than painting over the rail.
+    icon_x = max(48, w // 2 - 350)
+    favorite_x = max(70, w // 2 - 282)
+    text_x = max(92, w // 2 - 260)
     artist_x = max(26, w // 2 + 115)
 
     for logical in range(nearest - half - 1, nearest + half + 2):
@@ -104,22 +119,22 @@ def _draw_library_overlay(
         color = WHITE if selected else _blend(DIM, BG, distance * 0.65)
         artist_color = MAGENTA if selected else _blend(GRID, BG, distance * 0.55)
 
-        # Clear only the old row text. The original renderer still owns the
-        # selection rails and all other fixed UI elements.
-        clear_left = max(8, icon_x - 14)
-        clear_right = min(w - 8, w // 2 + 375)
+        # Clear only the original title/artist row, starting to the right of the
+        # left selection rail and ending before the right selection rail.
+        clear_left = max(20, w // 2 - 374)
+        clear_right = min(w - 20, w // 2 + 374)
         pygame.draw.rect(renderer.screen, BG, (clear_left, y - 2, clear_right - clear_left, 35))
 
+        capability_color = CYAN if selected else _blend(DIM, BG, distance * 0.55)
+        _draw_capability_icons(renderer, song, icon_x, y + 13, capability_color)
+
         if song_key(song) in favorite_keys:
-            cx, cy = text_x - 18, y + 13
+            cx, cy = favorite_x, y + 13
             pygame.draw.polygon(
                 renderer.screen,
                 MAGENTA if selected else _blend(MAGENTA, BG, 0.45),
                 [(cx, cy - 5), (cx + 5, cy), (cx, cy + 5), (cx - 5, cy)],
             )
-
-        capability_color = CYAN if selected else _blend(DIM, BG, distance * 0.55)
-        _draw_capability_icons(renderer, song, icon_x, y + 13, capability_color)
 
         title = title_font.render(song.display_title, True, color)
         renderer.screen.blit(title, (text_x, y))
