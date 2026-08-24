@@ -5,7 +5,7 @@ from __future__ import annotations
 import pygame
 
 from .domain import ChainMode
-from .font_support import MetadataFont
+from .font_support import MetadataFont, SymbolFont
 from .records import song_key
 from .renderer import BG, CYAN, DIM, GRID, MAGENTA, Renderer, WHITE, _blend
 
@@ -13,16 +13,14 @@ from .renderer import BG, CYAN, DIM, GRID, MAGENTA, Renderer, WHITE, _blend
 _installed = False
 
 
-def _draw_foot(surface: pygame.Surface, center: tuple[int, int], color) -> None:
-    """Tiny abstract footprint icon drawn directly, independent of font glyphs."""
+def _draw_foot_fallback(surface: pygame.Surface, center: tuple[int, int], color) -> None:
     x, y = center
     pygame.draw.ellipse(surface, color, (x - 4, y - 5, 8, 12), 1)
     pygame.draw.circle(surface, color, (x + 4, y - 6), 2, 1)
     pygame.draw.circle(surface, color, (x + 1, y - 9), 2, 1)
 
 
-def _draw_hand(surface: pygame.Surface, center: tuple[int, int], color) -> None:
-    """Tiny line-art hand icon drawn directly, independent of font glyphs."""
+def _draw_hand_fallback(surface: pygame.Surface, center: tuple[int, int], color) -> None:
     x, y = center
     pygame.draw.rect(surface, color, (x - 4, y - 1, 8, 8), 1)
     for offset, height in ((-4, 7), (-1, 9), (2, 8), (5, 6)):
@@ -30,29 +28,53 @@ def _draw_hand(surface: pygame.Surface, center: tuple[int, int], color) -> None:
     pygame.draw.line(surface, color, (x - 4, y + 2), (x - 8, y - 1), 1)
 
 
+def _metadata_font(renderer: Renderer) -> MetadataFont:
+    font = getattr(renderer, "_song_metadata_font", None)
+    if font is None:
+        # Match the artist text scale rather than enlarging song titles.
+        font = MetadataFont(21)
+        renderer._song_metadata_font = font
+    return font
+
+
+def _symbol_font(renderer: Renderer) -> SymbolFont:
+    font = getattr(renderer, "_song_symbol_font", None)
+    if font is None:
+        font = SymbolFont(24)
+        renderer._song_symbol_font = font
+    return font
+
+
+def _blit_symbol_or_fallback(
+    renderer: Renderer,
+    glyph: str,
+    center: tuple[int, int],
+    color,
+    fallback,
+) -> None:
+    icon = _symbol_font(renderer).render(glyph, color, (17, 17))
+    if icon is None:
+        fallback(renderer.screen, center, color)
+        return
+    renderer.screen.blit(icon, icon.get_rect(center=center))
+
+
 def _draw_capability_icons(renderer: Renderer, song, x: int, y: int, color) -> None:
-    """Draw fixed-column feet, hands, and native-eight capability markers."""
+    """Draw a compact feet / hands / native-eight capability column."""
     if song.has_foot_targets:
-        _draw_foot(renderer.screen, (x, y), color)
+        _blit_symbol_or_fallback(renderer, "👣", (x, y), color, _draw_foot_fallback)
     if song.has_hand_targets:
-        _draw_hand(renderer.screen, (x + 23, y), color)
+        _blit_symbol_or_fallback(renderer, "✋", (x + 22, y), color, _draw_hand_fallback)
     if song.has_native_8_lane:
-        badge = renderer.small_font.render("8", True, color)
-        rect = badge.get_rect(center=(x + 46, y))
-        pygame.draw.rect(renderer.screen, color, rect.inflate(6, 3), 1, border_radius=3)
-        renderer.screen.blit(badge, rect)
-
-
-def _metadata_fonts(renderer: Renderer) -> tuple[MetadataFont, MetadataFont]:
-    title = getattr(renderer, "_song_metadata_font", None)
-    artist = getattr(renderer, "_song_metadata_small_font", None)
-    if title is None:
-        title = MetadataFont(28)
-        renderer._song_metadata_font = title
-    if artist is None:
-        artist = MetadataFont(21)
-        renderer._song_metadata_small_font = artist
-    return title, artist
+        # Keep the marker typographic and unboxed so it cannot read as a B.
+        eight_font = renderer.small_font
+        previous_italic = eight_font.get_italic()
+        eight_font.set_italic(True)
+        try:
+            glyph = eight_font.render("8", True, color)
+        finally:
+            eight_font.set_italic(previous_italic)
+        renderer.screen.blit(glyph, glyph.get_rect(center=(x + 44, y)))
 
 
 def _draw_library_overlay(
@@ -74,8 +96,6 @@ def _draw_library_overlay(
         active_filters.append("PLAYED")
     filter_label = " + ".join(active_filters) if active_filters else "ALL SONGS"
 
-    # Replace the original filter line with pack scope + filters. This stays on
-    # VaporStep's normal UI font; only user-supplied song metadata gets fallback.
     panel = pygame.Surface((min(w - 40, 920), 27), pygame.SRCALPHA)
     panel.fill((*BG, 238))
     renderer.screen.blit(panel, panel.get_rect(midtop=(w // 2, 84)))
@@ -93,53 +113,67 @@ def _draw_library_overlay(
     if not menu.songs:
         return
 
-    title_font, artist_font = _metadata_fonts(renderer)
+    metadata_font = _metadata_font(renderer)
     center_y = int(h * 0.34)
     row_h = 42
     nearest = int(round(menu.visual_position))
     max_rows = min(7, len(menu.songs))
     half = max_rows // 2
 
-    # Keep the capability column to the right of the existing selection rail.
-    # This deliberately moves titles inward rather than painting over the rail.
+    # Leave a real gap between the scrolling list and the lower detail panel.
+    # The overlay clips rows at that boundary instead of allowing interpolation
+    # to paint metadata over chart details while the selection is moving.
+    list_clip = pygame.Rect(0, 108, w, max(1, int(h * 0.56) - 108))
+    old_clip = renderer.screen.get_clip()
+    renderer.screen.set_clip(list_clip)
+
     icon_x = max(48, w // 2 - 350)
     favorite_x = max(70, w // 2 - 282)
     text_x = max(92, w // 2 - 260)
     artist_x = max(26, w // 2 + 115)
 
-    for logical in range(nearest - half - 1, nearest + half + 2):
-        offset = logical - menu.visual_position
-        if abs(offset) > half + 0.8:
-            continue
-        index = logical % len(menu.songs)
-        song = menu.songs[index]
-        y = center_y + int(offset * row_h)
-        distance = min(1.0, abs(offset) / max(half, 1))
-        selected = logical == menu.scroll_target
-        color = WHITE if selected else _blend(DIM, BG, distance * 0.65)
-        artist_color = MAGENTA if selected else _blend(GRID, BG, distance * 0.55)
+    try:
+        for logical in range(nearest - half - 1, nearest + half + 2):
+            offset = logical - menu.visual_position
+            if abs(offset) > half + 0.8:
+                continue
+            index = logical % len(menu.songs)
+            song = menu.songs[index]
+            y = center_y + int(offset * row_h)
+            distance = min(1.0, abs(offset) / max(half, 1))
+            selected = logical == menu.scroll_target
+            color = WHITE if selected else _blend(DIM, BG, distance * 0.65)
+            artist_color = MAGENTA if selected else _blend(GRID, BG, distance * 0.55)
 
-        # Clear only the original title/artist row, starting to the right of the
-        # left selection rail and ending before the right selection rail.
-        clear_left = max(20, w // 2 - 374)
-        clear_right = min(w - 20, w // 2 + 374)
-        pygame.draw.rect(renderer.screen, BG, (clear_left, y - 2, clear_right - clear_left, 35))
+            clear_left = max(20, w // 2 - 374)
+            clear_right = min(w - 20, w // 2 + 374)
+            pygame.draw.rect(renderer.screen, BG, (clear_left, y - 2, clear_right - clear_left, 35))
 
-        capability_color = CYAN if selected else _blend(DIM, BG, distance * 0.55)
-        _draw_capability_icons(renderer, song, icon_x, y + 13, capability_color)
+            capability_color = CYAN if selected else _blend(DIM, BG, distance * 0.55)
+            _draw_capability_icons(renderer, song, icon_x, y + 13, capability_color)
 
-        if song_key(song) in favorite_keys:
-            cx, cy = favorite_x, y + 13
-            pygame.draw.polygon(
-                renderer.screen,
-                MAGENTA if selected else _blend(MAGENTA, BG, 0.45),
-                [(cx, cy - 5), (cx + 5, cy), (cx, cy + 5), (cx - 5, cy)],
-            )
+            if song_key(song) in favorite_keys:
+                cx, cy = favorite_x, y + 13
+                pygame.draw.polygon(
+                    renderer.screen,
+                    MAGENTA if selected else _blend(MAGENTA, BG, 0.45),
+                    [(cx, cy - 5), (cx + 5, cy), (cx, cy + 5), (cx - 5, cy)],
+                )
 
-        title = title_font.render(song.display_title, True, color)
-        renderer.screen.blit(title, (text_x, y))
-        artist = artist_font.render(song.artist or "Unknown artist", True, artist_color)
-        renderer.screen.blit(artist, (artist_x, y + 4))
+            title = metadata_font.render(song.display_title, True, color)
+            renderer.screen.blit(title, (text_x, y + 4))
+            artist = metadata_font.render(song.artist or "Unknown artist", True, artist_color)
+            renderer.screen.blit(artist, (artist_x, y + 4))
+    finally:
+        renderer.screen.set_clip(old_clip)
+
+    # Show pack provenance for the currently selected song even while browsing
+    # the ALL scope, where the top header no longer tells you which pack it came from.
+    selected_song = menu.song
+    if selected_song is not None:
+        pack_label = renderer.small_font.render(f"PACK  {selected_song.pack_name}", True, DIM)
+        panel_top = int(h * 0.58)
+        renderer.screen.blit(pack_label, (max(24, w // 2 - 165), panel_top - 23))
 
 
 def install_song_menu_overlay() -> None:
