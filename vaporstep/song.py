@@ -103,6 +103,14 @@ class SongInfo:
     def has_native_8_lane(self) -> bool:
         return any(chart.native_8_lane for chart in self.charts)
 
+    @property
+    def has_foot_targets(self) -> bool:
+        return any(chart.foot_count > 0 for chart in self.charts)
+
+    @property
+    def has_hand_targets(self) -> bool:
+        return any(chart.hand_count > 0 for chart in self.charts)
+
 
 @dataclass(frozen=True)
 class BeatMarker:
