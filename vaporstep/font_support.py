@@ -1,70 +1,85 @@
 from __future__ import annotations
 
-"""Unicode fallback for Pygame's bundled default font.
+"""Fonts used only for user-supplied song metadata.
 
-VaporStep's fixed UI deliberately uses Pygame's compact bundled font. That font
-has limited glyph coverage, however, which is noticeable for user-supplied song
-metadata. This shim keeps the bundled font for ASCII text and uses a suitable
-system font only when text contains non-ASCII characters.
+Pygame's bundled default font is part of VaporStep's visual style, so we never
+replace it globally. Song titles and artists can contain scripts the bundled
+font does not cover; those strings use the best available broad system font.
 """
 
 import pygame
 
 
+# Prefer fonts that commonly ship with broad CJK + Latin coverage on each
+# supported desktop platform. ``match_font`` returns None when a candidate is
+# unavailable, so this remains portable without adding a bundled font asset.
 _FONT_CANDIDATES = (
     "Noto Sans CJK JP",
     "Noto Sans CJK SC",
-    "Noto Sans",
+    "Noto Sans CJK KR",
+    "PingFang SC",
+    "PingFang TC",
+    "Hiragino Sans",
+    "Yu Gothic UI",
+    "Yu Gothic",
+    "Meiryo",
+    "Microsoft YaHei UI",
+    "Microsoft YaHei",
+    "Malgun Gothic",
     "Arial Unicode MS",
-    "Segoe UI",
+    "Noto Sans",
     "DejaVu Sans",
     "Arial",
     "Helvetica",
 )
-_original_font = pygame.font.Font
-_installed = False
 
 
-def _find_fallback_font() -> str | None:
-    for name in _FONT_CANDIDATES:
-        path = pygame.font.match_font(name)
-        if path:
-            return path
-    return None
+def _font_supports(font: pygame.font.Font, text: str) -> bool:
+    if not text:
+        return True
+    try:
+        metrics = font.metrics(text)
+    except (AttributeError, UnicodeError):
+        return False
+    return metrics is not None and all(metric is not None for metric in metrics)
 
 
-class _UnicodeFallbackFont:
+class MetadataFont:
+    """Consistent song-metadata font with per-string glyph fallback."""
+
     def __init__(self, size: int) -> None:
-        self._primary = _original_font(None, size)
-        fallback_path = _find_fallback_font()
-        self._fallback = _original_font(fallback_path, size) if fallback_path else self._primary
+        self._default = pygame.font.Font(None, size)
+        fonts: list[pygame.font.Font] = []
+        seen: set[str] = set()
+        for name in _FONT_CANDIDATES:
+            path = pygame.font.match_font(name)
+            if not path or path in seen:
+                continue
+            seen.add(path)
+            try:
+                fonts.append(pygame.font.Font(path, size))
+            except (OSError, pygame.error):
+                continue
+        self._fonts = tuple(fonts)
+        # Use one metadata font for ordinary Latin text too, so titles do not
+        # randomly change typeface merely because one row contains Unicode.
+        self._primary = self._fonts[0] if self._fonts else self._default
 
-    @staticmethod
-    def _needs_fallback(text: object) -> bool:
-        return isinstance(text, str) and any(ord(char) > 127 for char in text)
+    def _font_for(self, text: str) -> pygame.font.Font:
+        if _font_supports(self._primary, text):
+            return self._primary
+        for font in self._fonts[1:]:
+            if _font_supports(font, text):
+                return font
+        if _font_supports(self._default, text):
+            return self._default
+        return self._primary
 
-    def render(self, text, *args, **kwargs):
-        font = self._fallback if self._needs_fallback(text) else self._primary
-        return font.render(text, *args, **kwargs)
+    def render(self, text: str, antialias: bool, color, background=None) -> pygame.Surface:
+        font = self._font_for(text)
+        if background is None:
+            return font.render(text, antialias, color)
+        return font.render(text, antialias, color, background)
 
-    def size(self, text):
-        font = self._fallback if self._needs_fallback(text) else self._primary
-        return font.size(text)
-
-    def __getattr__(self, name):
-        return getattr(self._primary, name)
-
-
-def install_unicode_font_fallback() -> None:
-    """Patch ``pygame.font.Font(None, size)`` without changing explicit fonts."""
-    global _installed
-    if _installed:
-        return
-
-    def font_factory(file, size, *args, **kwargs):
-        if file is None and not args and not kwargs:
-            return _UnicodeFallbackFont(size)
-        return _original_font(file, size, *args, **kwargs)
-
-    pygame.font.Font = font_factory
-    _installed = True
+    def size(self, text: str) -> tuple[int, int]:
+        return self._font_for(text).size(text)
