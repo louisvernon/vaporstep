@@ -9,6 +9,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from vaporstep.model_asset import load_pose_model_spec, verify_model
+from fetch_noto_emoji import main as fetch_noto_emoji
 
 
 root = ROOT
@@ -39,3 +40,7 @@ else:
     tmp.replace(out)
     print(f"Verified SHA-256: {spec.sha256}")
     print(f"Installed: {out}")
+
+# Release workflows already run this script before PyInstaller, so fetch the
+# deterministic UI symbol font here as a second pinned build asset.
+fetch_noto_emoji()
