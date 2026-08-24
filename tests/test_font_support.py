@@ -1,4 +1,6 @@
-from vaporstep.font_support import _candidate_names_for_text
+import pygame
+
+from vaporstep.font_support import SymbolFont, _bundled_symbol_font_path, _candidate_names_for_text
 
 
 def test_metadata_uses_one_cross_platform_glyph_fallback_pool():
@@ -21,3 +23,18 @@ def test_plain_latin_pool_still_contains_general_fallbacks():
     candidates = _candidate_names_for_text("Synthetic Track")
     assert "Noto Sans" in candidates
     assert "DejaVu Sans" in candidates
+
+
+def test_bundled_capability_font_renders_foot_and_hand():
+    path = _bundled_symbol_font_path()
+    assert path is not None
+    assert path.name == "VaporStepEmojiSymbols.ttf"
+
+    pygame.font.init()
+    font = SymbolFont(32)
+    for glyph in ("👣", "✋"):
+        rendered = font.render(glyph, (255, 255, 255), (32, 32))
+        assert rendered is not None
+        bounds = rendered.get_bounding_rect(min_alpha=8)
+        assert bounds.width > 0
+        assert bounds.height > 0
