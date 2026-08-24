@@ -5,32 +5,12 @@ from __future__ import annotations
 import pygame
 
 from .domain import ChainMode
-from .font_support import MetadataFont
+from .font_support import MetadataFont, SymbolFont
 from .records import song_key
 from .renderer import BG, CYAN, DIM, GRID, MAGENTA, Renderer, WHITE, _blend
 
 
 _installed = False
-
-
-def _draw_foot(surface: pygame.Surface, center: tuple[int, int], color) -> None:
-    """Small monochrome footprint silhouette drawn directly in VaporStep colors."""
-    x, y = center
-    # Heel / sole
-    pygame.draw.ellipse(surface, color, (x - 4, y - 2, 8, 10))
-    # Toes, intentionally asymmetric so it reads as a footprint rather than a blob.
-    pygame.draw.circle(surface, color, (x + 4, y - 6), 2)
-    pygame.draw.circle(surface, color, (x + 1, y - 8), 2)
-    pygame.draw.circle(surface, color, (x - 2, y - 8), 1)
-
-
-def _draw_hand(surface: pygame.Surface, center: tuple[int, int], color) -> None:
-    """Small monochrome open-hand silhouette drawn directly in VaporStep colors."""
-    x, y = center
-    pygame.draw.rect(surface, color, (x - 4, y - 1, 8, 8), border_radius=2)
-    for offset, top in ((-4, -8), (-1, -10), (2, -9), (5, -7)):
-        pygame.draw.line(surface, color, (x + offset, y), (x + offset, y + top), 2)
-    pygame.draw.line(surface, color, (x - 4, y + 2), (x - 8, y - 2), 2)
 
 
 def _metadata_font(renderer: Renderer) -> MetadataFont:
@@ -42,15 +22,35 @@ def _metadata_font(renderer: Renderer) -> MetadataFont:
     return font
 
 
+def _symbol_font(renderer: Renderer) -> SymbolFont:
+    font = getattr(renderer, "_song_symbol_font", None)
+    if font is None:
+        font = SymbolFont(24)
+        renderer._song_symbol_font = font
+    return font
+
+
+def _draw_symbol_or_letter(
+    renderer: Renderer,
+    glyph: str,
+    fallback: str,
+    center: tuple[int, int],
+    color,
+) -> None:
+    icon = _symbol_font(renderer).render(glyph, color, (18, 18))
+    if icon is not None:
+        renderer.screen.blit(icon, icon.get_rect(center=center))
+        return
+    label = renderer.small_font.render(fallback, True, color)
+    renderer.screen.blit(label, label.get_rect(center=center))
+
+
 def _draw_capability_icons(renderer: Renderer, song, x: int, y: int, color) -> None:
-    """Draw a compact feet / hands / native-eight capability column."""
-    # These are intentionally vector-drawn rather than font/emoji glyphs. SDL_ttf
-    # can render a missing glyph as a tofu box while still reporting success,
-    # making Unicode symbol fallback unreliable across platforms.
+    """Draw familiar Unicode capability icons with trivial letter fallbacks."""
     if song.has_foot_targets:
-        _draw_foot(renderer.screen, (x, y), color)
+        _draw_symbol_or_letter(renderer, "👣︎", "F", (x, y), color)
     if song.has_hand_targets:
-        _draw_hand(renderer.screen, (x + 22, y), color)
+        _draw_symbol_or_letter(renderer, "✋︎", "H", (x + 22, y), color)
     if song.has_native_8_lane:
         eight_font = renderer.small_font
         previous_italic = eight_font.get_italic()
