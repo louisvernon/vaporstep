@@ -9,6 +9,7 @@ glyph coverage rather than trying to classify metadata as Japanese/Korean/etc.
 """
 
 from pathlib import Path
+import sys
 
 import pygame
 
@@ -84,6 +85,20 @@ def _font_path(name: str) -> str | None:
     for hint in _FONT_PATH_HINTS.get(name, ()):
         if Path(hint).is_file():
             return hint
+    return None
+
+
+def _bundled_noto_emoji_path() -> Path | None:
+    """Find the pinned Noto Emoji asset in source or a PyInstaller bundle."""
+    roots: list[Path] = []
+    meipass = getattr(sys, "_MEIPASS", None)
+    if meipass:
+        roots.append(Path(meipass))
+    roots.append(Path(__file__).resolve().parents[1])
+    for root in roots:
+        candidate = root / "assets" / "fonts" / "NotoEmoji[wght].ttf"
+        if candidate.is_file():
+            return candidate
     return None
 
 
@@ -211,23 +226,42 @@ class SymbolFont:
         self._fonts: list[pygame.font.Font] = []
         self._coverage = _GlyphCoverage()
         seen: set[str] = set()
+
+        # Packaged releases and opted-in source checkouts use the same pinned
+        # monochrome font first, giving VaporStep identical symbols everywhere.
+        bundled = _bundled_noto_emoji_path()
+        if bundled is not None:
+            try:
+                self._fonts.append(pygame.font.Font(str(bundled), size))
+                seen.add(str(bundled.resolve()))
+            except (OSError, pygame.error):
+                pass
+
         for name in _SYMBOL_FONTS:
             path = _font_path(name)
-            if not path or path in seen:
+            if not path:
                 continue
-            seen.add(path)
+            try:
+                resolved = str(Path(path).resolve())
+            except (OSError, RuntimeError):
+                resolved = path
+            if resolved in seen:
+                continue
+            seen.add(resolved)
             try:
                 self._fonts.append(pygame.font.Font(path, size))
             except (OSError, pygame.error):
                 continue
 
     def render(self, glyph: str, color, max_size: tuple[int, int]) -> pygame.Surface | None:
+        # Noto Emoji is already monochrome, so render the base character rather
+        # than relying on platform-specific emoji/text variation-selector logic.
         base = glyph.replace("\ufe0e", "").replace("\ufe0f", "")
         for font in self._fonts:
             if not all(self._coverage.supports_glyph(font, char) for char in base):
                 continue
             try:
-                raw = font.render(glyph, True, (255, 255, 255))
+                raw = font.render(base, True, (255, 255, 255))
             except (UnicodeError, pygame.error):
                 continue
             bounds = raw.get_bounding_rect(min_alpha=8)
