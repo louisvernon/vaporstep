@@ -1,4 +1,6 @@
-from vaporstep.song import ChartInfo, chart_sort_key, difficulty_rank
+from pathlib import Path
+
+from vaporstep.song import ChartInfo, SongInfo, chart_sort_key, difficulty_rank
 
 
 def test_bpm_label_constant_and_range():
@@ -38,3 +40,25 @@ def test_chart_sort_prefers_named_difficulty_over_meter():
         "Edit",
         "Mystery",
     ]
+
+
+def test_song_capabilities_are_derived_across_charts():
+    song = SongInfo(
+        simfile_path=Path("/Pack/Song/song.sm"),
+        song_dir=Path("/Pack/Song"),
+        title="Song",
+        subtitle="",
+        artist="Artist",
+        music_path=None,
+        banner_path=None,
+        background_path=None,
+        charts=(
+            ChartInfo(index=0, difficulty="Easy", meter=3, foot_count=10),
+            ChartInfo(index=1, difficulty="Hard", meter=7, hand_count=5),
+            ChartInfo(index=2, difficulty="Challenge", meter=9, foot_count=8, hand_count=8, native_8_lane=True),
+        ),
+    )
+
+    assert song.has_foot_targets
+    assert song.has_hand_targets
+    assert song.has_native_8_lane
