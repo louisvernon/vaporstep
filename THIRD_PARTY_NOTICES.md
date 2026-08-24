@@ -21,7 +21,7 @@ collects those files where they are provided by the packages.
 | simfile | SM/SSC parsing | MIT |
 | setuptools / pkg_resources | Compatibility dependency used by simfile | MIT and bundled notices |
 | imageio-ffmpeg | FFmpeg process discovery/wrapping for recording export | BSD-2-Clause; the bundled FFmpeg executable retains its own license |
-| Noto Emoji | Monochrome hand/foot capability glyphs in packaged builds | SIL Open Font License 1.1 |
+| VaporStep Emoji Symbols (modified Noto Emoji subset) | Monochrome hand/foot capability glyphs | SIL Open Font License 1.1 |
 
 The opencv-python project documents additional licenses for native components
 included in its wheels, including FFmpeg under LGPL-2.1; non-headless Linux
@@ -42,12 +42,13 @@ Python license file from the interpreter used to create the build.
 The MediaPipe pose model is pinned by `assets/models.json` and verified before
 release builds.
 
-The monochrome Noto Emoji font used for capability symbols is fetched from the
-official Google Fonts repository by `scripts/fetch_noto_emoji.py`. The script
-pins an immutable upstream commit and verifies the downloaded font and OFL
-license by their Git blob hashes before they are included in a packaged build.
-The downloaded font binary is intentionally not committed to VaporStep's source
-tree.
+`assets/fonts/VaporStepEmojiSymbols.ttf` is a renamed, modified subset derived
+from Noto Emoji source glyphs for U+1F463 FOOTPRINTS and U+270B RAISED HAND.
+Only those presentation glyphs (plus required font bookkeeping glyphs) are kept,
+so VaporStep gets deterministic capability icons without shipping the complete
+emoji font. The subset is derived from the Noto Emoji source at upstream commit
+`8998f5dd683424a73e2314a8c1f1e359c19e8742`, and its upstream SIL OFL 1.1
+license is committed beside it as `assets/fonts/NotoEmoji-OFL.txt`.
 
 ## Song/chart content
 
