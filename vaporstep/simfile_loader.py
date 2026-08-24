@@ -4,10 +4,11 @@ from fractions import Fraction
 import math
 from pathlib import Path
 from typing import Iterable, Sequence
+import unicodedata
 
 from .chains import assign_implicit_chains, assign_sustains
 from .domain import GameNote, NoteKind, lanes_tuple
-from .song import BeatMarker, ChartInfo, LoadedChart, SongInfo
+from .song import BeatMarker, ChartInfo, LoadedChart, SongInfo, chart_sort_key
 
 
 AUDIO_EXTENSIONS = (".ogg", ".mp3", ".wav", ".flac", ".m4a")
@@ -27,6 +28,11 @@ def _safe_float(value, default: float = 0.0) -> float:
         return float(value)
     except (TypeError, ValueError):
         return float(default)
+
+
+def _normalized_text(value: str | None) -> str:
+    """Keep Unicode metadata intact while normalizing equivalent spellings."""
+    return unicodedata.normalize("NFC", value or "")
 
 
 def _contained_file(root: Path, candidate: Path, *, max_bytes: int | None = None) -> Path | None:
@@ -167,12 +173,13 @@ def scan_song(path: Path) -> SongInfo | None:
                 bpm_min=bpm_min,
                 bpm_max=bpm_max,
                 chain_count=chain_count,
+                native_8_lane=stepstype == "ds3ddx-single" and columns == 8,
             )
         )
 
     if not charts:
         return None
-    charts.sort(key=lambda c: (c.meter, c.difficulty.lower(), c.index))
+    charts.sort(key=chart_sort_key)
 
     song_dir = path.parent
     music_path = _resolve_asset(song_dir, sim.music) or _fallback_audio(song_dir)
@@ -190,9 +197,9 @@ def scan_song(path: Path) -> SongInfo | None:
     return SongInfo(
         simfile_path=path,
         song_dir=song_dir,
-        title=sim.title or song_dir.name,
-        subtitle=sim.subtitle or "",
-        artist=sim.artist or "",
+        title=_normalized_text(sim.title) or song_dir.name,
+        subtitle=_normalized_text(sim.subtitle),
+        artist=_normalized_text(sim.artist),
         music_path=music_path,
         banner_path=_resolve_asset(song_dir, sim.banner, max_bytes=MAX_IMAGE_ASSET_BYTES),
         background_path=_resolve_asset(song_dir, sim.background, max_bytes=MAX_IMAGE_ASSET_BYTES),
@@ -257,7 +264,6 @@ def convert_rows(rows: Iterable[Sequence[object]], engine) -> tuple[list[GameNot
     """
     notes: list[GameNote] = []
     skipped_rows = 0
-
     for row in rows:
         if not row:
             continue
@@ -292,7 +298,6 @@ def convert_rows(rows: Iterable[Sequence[object]], engine) -> tuple[list[GameNot
 
     notes.sort(key=lambda n: (n.time, n.lanes))
     return notes, skipped_rows
-
 
 
 # Dance Station 3DDX single charts use eight columns.  The canonical button
@@ -369,6 +374,7 @@ def convert_ds3ddx_rows(rows: Iterable[Sequence[object]], engine) -> tuple[list[
 
     notes.sort(key=lambda n: (n.time, n.kind.value, n.lanes))
     return notes, skipped_groups
+
 
 def load_chart(song: SongInfo, chart_info: ChartInfo) -> LoadedChart:
     if song.simfile_path.stat().st_size > MAX_SIMFILE_BYTES:

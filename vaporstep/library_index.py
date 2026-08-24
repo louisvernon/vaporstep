@@ -11,7 +11,10 @@ from .song import ChartInfo, SongInfo
 from .user_paths import song_index_path
 
 
-INDEX_VERSION = 1
+# Version 3 forces a reparse after VaporStep's legacy simfile encoding
+# detection changed. Version 2 caches may contain metadata decoded by
+# simfile's CP1252-before-CP949 fallback and must not be reused.
+INDEX_VERSION = 3
 
 
 @dataclass(frozen=True)

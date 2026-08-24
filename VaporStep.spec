@@ -39,6 +39,8 @@ sim_datas = collect_data_files("simfile")
 datas = mp_datas + ffmpeg_datas + sim_datas + [
     (str(assets / "vaporstep_icon.png"), "assets"),
     (str(assets / "models.json"), "assets"),
+    (str(assets / "fonts" / "VaporStepEmojiSymbols.ttf"), "assets/fonts"),
+    (str(assets / "fonts" / "NotoEmoji-OFL.txt"), "third_party_licenses/VaporStep-Emoji-Symbols"),
     (str(root / "LICENSE"), "."),
     (str(root / "THIRD_PARTY_NOTICES.md"), "."),
     (str(root / "MODEL_ASSETS.md"), "."),

@@ -3,14 +3,15 @@ from vaporstep.song import ChartInfo, SongInfo
 from pathlib import Path
 
 
-def _song(name: str, meters=(2, 5)) -> SongInfo:
+def _song(name: str, meters=(2, 5), pack: str | None = None) -> SongInfo:
     charts = tuple(
         ChartInfo(index=i, difficulty=f"D{i}", meter=meter)
         for i, meter in enumerate(meters)
     )
+    song_dir = Path(f"/{pack}/{name}") if pack else Path(f"/{name}")
     return SongInfo(
-        simfile_path=Path(f"/{name}/{name}.sm"),
-        song_dir=Path(f"/{name}"),
+        simfile_path=song_dir / f"{name}.sm",
+        song_dir=song_dir,
         title=name,
         subtitle="",
         artist="Artist",
@@ -101,3 +102,36 @@ def test_explicit_difficulty_change_updates_preference():
     assert menu.preferred_difficulty == "Hard"
     menu.handle(MenuAction.DOWN)
     assert menu.chart.difficulty == "Hard"
+
+
+def test_song_menu_cycles_pack_scope_after_external_filters():
+    songs = [
+        _song("A", pack="Pack One"),
+        _song("B", pack="Pack One"),
+        _song("C", pack="Pack Two"),
+    ]
+    menu = SongMenu(songs)
+
+    assert menu.active_pack == "ALL"
+    assert [song.title for song in menu.songs] == ["A", "B", "C"]
+
+    menu.handle(MenuAction.NEXT_PACK)
+    assert menu.active_pack == "Pack One"
+    assert [song.title for song in menu.songs] == ["A", "B"]
+
+    menu.handle(MenuAction.NEXT_PACK)
+    assert menu.active_pack == "Pack Two"
+    assert [song.title for song in menu.songs] == ["C"]
+
+    menu.handle(MenuAction.NEXT_PACK)
+    assert menu.active_pack == "ALL"
+    assert [song.title for song in menu.songs] == ["A", "B", "C"]
+
+
+def test_song_menu_pack_scope_uses_only_songs_supplied_to_menu():
+    # App-level Favorites/Played filtering happens before SongMenu construction.
+    filtered = [_song("Favorite", pack="Pack Two")]
+    menu = SongMenu(filtered)
+    assert menu.packs == ("ALL", "Pack Two")
+    menu.handle(MenuAction.NEXT_PACK)
+    assert [song.title for song in menu.songs] == ["Favorite"]
