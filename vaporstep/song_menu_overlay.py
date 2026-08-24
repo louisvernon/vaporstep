@@ -5,7 +5,7 @@ from __future__ import annotations
 import pygame
 
 from .domain import ChainMode
-from .font_support import MetadataFont, SymbolFont
+from .font_support import MetadataFont
 from .records import song_key
 from .renderer import BG, CYAN, DIM, GRID, MAGENTA, Renderer, WHITE, _blend
 
@@ -13,19 +13,24 @@ from .renderer import BG, CYAN, DIM, GRID, MAGENTA, Renderer, WHITE, _blend
 _installed = False
 
 
-def _draw_foot_fallback(surface: pygame.Surface, center: tuple[int, int], color) -> None:
+def _draw_foot(surface: pygame.Surface, center: tuple[int, int], color) -> None:
+    """Small monochrome footprint silhouette drawn directly in VaporStep colors."""
     x, y = center
-    pygame.draw.ellipse(surface, color, (x - 4, y - 5, 8, 12), 1)
-    pygame.draw.circle(surface, color, (x + 4, y - 6), 2, 1)
-    pygame.draw.circle(surface, color, (x + 1, y - 9), 2, 1)
+    # Heel / sole
+    pygame.draw.ellipse(surface, color, (x - 4, y - 2, 8, 10))
+    # Toes, intentionally asymmetric so it reads as a footprint rather than a blob.
+    pygame.draw.circle(surface, color, (x + 4, y - 6), 2)
+    pygame.draw.circle(surface, color, (x + 1, y - 8), 2)
+    pygame.draw.circle(surface, color, (x - 2, y - 8), 1)
 
 
-def _draw_hand_fallback(surface: pygame.Surface, center: tuple[int, int], color) -> None:
+def _draw_hand(surface: pygame.Surface, center: tuple[int, int], color) -> None:
+    """Small monochrome open-hand silhouette drawn directly in VaporStep colors."""
     x, y = center
-    pygame.draw.rect(surface, color, (x - 4, y - 1, 8, 8), 1)
-    for offset, height in ((-4, 7), (-1, 9), (2, 8), (5, 6)):
-        pygame.draw.line(surface, color, (x + offset, y), (x + offset, y - height), 1)
-    pygame.draw.line(surface, color, (x - 4, y + 2), (x - 8, y - 1), 1)
+    pygame.draw.rect(surface, color, (x - 4, y - 1, 8, 8), border_radius=2)
+    for offset, top in ((-4, -8), (-1, -10), (2, -9), (5, -7)):
+        pygame.draw.line(surface, color, (x + offset, y), (x + offset, y + top), 2)
+    pygame.draw.line(surface, color, (x - 4, y + 2), (x - 8, y - 2), 2)
 
 
 def _metadata_font(renderer: Renderer) -> MetadataFont:
@@ -37,39 +42,16 @@ def _metadata_font(renderer: Renderer) -> MetadataFont:
     return font
 
 
-def _symbol_font(renderer: Renderer) -> SymbolFont:
-    font = getattr(renderer, "_song_symbol_font", None)
-    if font is None:
-        font = SymbolFont(24)
-        renderer._song_symbol_font = font
-    return font
-
-
-def _blit_symbol_or_fallback(
-    renderer: Renderer,
-    glyph: str,
-    center: tuple[int, int],
-    color,
-    fallback,
-) -> None:
-    icon = _symbol_font(renderer).render(glyph, color, (17, 17))
-    if icon is None:
-        fallback(renderer.screen, center, color)
-        return
-    renderer.screen.blit(icon, icon.get_rect(center=center))
-
-
 def _draw_capability_icons(renderer: Renderer, song, x: int, y: int, color) -> None:
     """Draw a compact feet / hands / native-eight capability column."""
-    # U+FE0E explicitly requests text presentation. SymbolFont then converts
-    # the resulting monochrome glyph to an alpha mask and tints it, preserving
-    # VaporStep's palette instead of platform emoji colors.
+    # These are intentionally vector-drawn rather than font/emoji glyphs. SDL_ttf
+    # can render a missing glyph as a tofu box while still reporting success,
+    # making Unicode symbol fallback unreliable across platforms.
     if song.has_foot_targets:
-        _blit_symbol_or_fallback(renderer, "👣︎", (x, y), color, _draw_foot_fallback)
+        _draw_foot(renderer.screen, (x, y), color)
     if song.has_hand_targets:
-        _blit_symbol_or_fallback(renderer, "✋︎", (x + 22, y), color, _draw_hand_fallback)
+        _draw_hand(renderer.screen, (x + 22, y), color)
     if song.has_native_8_lane:
-        # Keep the marker typographic and unboxed so it cannot read as a B.
         eight_font = renderer.small_font
         previous_italic = eight_font.get_italic()
         eight_font.set_italic(True)
@@ -124,8 +106,6 @@ def _draw_library_overlay(
     half = max_rows // 2
 
     # Leave a real gap between the scrolling list and the lower detail panel.
-    # The overlay clips rows at that boundary instead of allowing interpolation
-    # to paint metadata over chart details while the selection is moving.
     list_clip = pygame.Rect(0, 108, w, max(1, int(h * 0.56) - 108))
     old_clip = renderer.screen.get_clip()
     renderer.screen.set_clip(list_clip)
@@ -170,8 +150,6 @@ def _draw_library_overlay(
     finally:
         renderer.screen.set_clip(old_clip)
 
-    # Show pack provenance for the currently selected song even while browsing
-    # the ALL scope, where the top header no longer tells you which pack it came from.
     selected_song = menu.song
     if selected_song is not None:
         pack_label = renderer.small_font.render(f"PACK  {selected_song.pack_name}", True, DIM)
