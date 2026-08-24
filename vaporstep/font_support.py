@@ -6,6 +6,10 @@ Unicode defines characters, not glyphs. Pygame/SDL_ttf does not provide the
 platform text stack's automatic per-character font fallback, so VaporStep keeps
 a small cross-platform list of likely system fonts and chooses one by actual
 glyph coverage rather than trying to classify metadata as Japanese/Korean/etc.
+
+The two capability symbols are different: VaporStep ships a tiny renamed subset
+of Noto Emoji containing only U+1F463 FOOTPRINTS and U+270B RAISED HAND so their
+appearance is deterministic on every supported platform.
 """
 
 from pathlib import Path
@@ -43,16 +47,6 @@ _METADATA_FONTS = (
     "Arial",
     "Helvetica",
 )
-_SYMBOL_FONTS = (
-    "Noto Emoji",
-    "Noto Sans Symbols 2",
-    "Apple Color Emoji",
-    "Apple Symbols",
-    "Segoe UI Emoji",
-    "Segoe UI Symbol",
-    "Noto Color Emoji",
-    "Symbola",
-)
 
 # SDL/Pygame font discovery can miss TTC-backed macOS faces. These are fallback
 # hints only; normal ``match_font`` discovery remains the first choice.
@@ -69,7 +63,6 @@ _FONT_PATH_HINTS = {
     ),
     "PingFang SC": ("/System/Library/Fonts/PingFang.ttc",),
     "PingFang TC": ("/System/Library/Fonts/PingFang.ttc",),
-    "Apple Color Emoji": ("/System/Library/Fonts/Apple Color Emoji.ttc",),
 }
 
 
@@ -88,15 +81,15 @@ def _font_path(name: str) -> str | None:
     return None
 
 
-def _bundled_noto_emoji_path() -> Path | None:
-    """Find the pinned Noto Emoji asset in source or a PyInstaller bundle."""
+def _bundled_symbol_font_path() -> Path | None:
+    """Find VaporStep's committed two-glyph font in source or a frozen bundle."""
     roots: list[Path] = []
     meipass = getattr(sys, "_MEIPASS", None)
     if meipass:
         roots.append(Path(meipass))
     roots.append(Path(__file__).resolve().parents[1])
     for root in roots:
-        candidate = root / "assets" / "fonts" / "NotoEmoji[wght].ttf"
+        candidate = root / "assets" / "fonts" / "VaporStepEmojiSymbols.ttf"
         if candidate.is_file():
             return candidate
     return None
@@ -220,69 +213,43 @@ class MetadataFont:
 
 
 class SymbolFont:
-    """Render familiar Unicode capability glyphs as tinted monochrome masks."""
+    """Render VaporStep's bundled hand/foot glyphs as tinted monochrome masks."""
 
     def __init__(self, size: int) -> None:
-        self._fonts: list[pygame.font.Font] = []
-        self._coverage = _GlyphCoverage()
-        seen: set[str] = set()
-
-        # Packaged releases and opted-in source checkouts use the same pinned
-        # monochrome font first, giving VaporStep identical symbols everywhere.
-        bundled = _bundled_noto_emoji_path()
-        if bundled is not None:
+        self._font: pygame.font.Font | None = None
+        path = _bundled_symbol_font_path()
+        if path is not None:
             try:
-                self._fonts.append(pygame.font.Font(str(bundled), size))
-                seen.add(str(bundled.resolve()))
+                self._font = pygame.font.Font(str(path), size)
             except (OSError, pygame.error):
-                pass
-
-        for name in _SYMBOL_FONTS:
-            path = _font_path(name)
-            if not path:
-                continue
-            try:
-                resolved = str(Path(path).resolve())
-            except (OSError, RuntimeError):
-                resolved = path
-            if resolved in seen:
-                continue
-            seen.add(resolved)
-            try:
-                self._fonts.append(pygame.font.Font(path, size))
-            except (OSError, pygame.error):
-                continue
+                self._font = None
 
     def render(self, glyph: str, color, max_size: tuple[int, int]) -> pygame.Surface | None:
-        # Noto Emoji is already monochrome, so render the base character rather
-        # than relying on platform-specific emoji/text variation-selector logic.
+        if self._font is None:
+            return None
         base = glyph.replace("\ufe0e", "").replace("\ufe0f", "")
-        for font in self._fonts:
-            if not all(self._coverage.supports_glyph(font, char) for char in base):
-                continue
-            try:
-                raw = font.render(base, True, (255, 255, 255))
-            except (UnicodeError, pygame.error):
-                continue
-            bounds = raw.get_bounding_rect(min_alpha=8)
-            if bounds.width <= 0 or bounds.height <= 0:
-                continue
-            raw = raw.subsurface(bounds).copy()
-            mask = pygame.mask.from_surface(raw, 8)
-            if mask.count() <= 0:
-                continue
-            mono = pygame.Surface(raw.get_size(), pygame.SRCALPHA)
-            mask.to_surface(
-                surface=mono,
-                setcolor=(*color, 255),
-                unsetcolor=(0, 0, 0, 0),
+        try:
+            raw = self._font.render(base, True, (255, 255, 255))
+        except (UnicodeError, pygame.error):
+            return None
+        bounds = raw.get_bounding_rect(min_alpha=8)
+        if bounds.width <= 0 or bounds.height <= 0:
+            return None
+        raw = raw.subsurface(bounds).copy()
+        mask = pygame.mask.from_surface(raw, 8)
+        if mask.count() <= 0:
+            return None
+        mono = pygame.Surface(raw.get_size(), pygame.SRCALPHA)
+        mask.to_surface(
+            surface=mono,
+            setcolor=(*color, 255),
+            unsetcolor=(0, 0, 0, 0),
+        )
+        limit_w, limit_h = max_size
+        scale = min(limit_w / mono.get_width(), limit_h / mono.get_height(), 1.0)
+        if scale < 1.0:
+            mono = pygame.transform.smoothscale(
+                mono,
+                (max(1, round(mono.get_width() * scale)), max(1, round(mono.get_height() * scale))),
             )
-            limit_w, limit_h = max_size
-            scale = min(limit_w / mono.get_width(), limit_h / mono.get_height(), 1.0)
-            if scale < 1.0:
-                mono = pygame.transform.smoothscale(
-                    mono,
-                    (max(1, round(mono.get_width() * scale)), max(1, round(mono.get_height() * scale))),
-                )
-            return mono
-        return None
+        return mono
