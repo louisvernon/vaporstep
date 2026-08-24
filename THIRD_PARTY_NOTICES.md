@@ -1,7 +1,8 @@
 # Third-party software and assets
 
 VaporStep's own source code is licensed under the MIT License. It depends on
-third-party software and one model asset that retain their own licenses.
+third-party software and a small set of build/runtime assets that retain their
+own licenses.
 
 The exact dependency versions used for a build are determined by
 `pyproject.toml` and the build environment. Frozen release bundles should ship
@@ -20,6 +21,7 @@ collects those files where they are provided by the packages.
 | simfile | SM/SSC parsing | MIT |
 | setuptools / pkg_resources | Compatibility dependency used by simfile | MIT and bundled notices |
 | imageio-ffmpeg | FFmpeg process discovery/wrapping for recording export | BSD-2-Clause; the bundled FFmpeg executable retains its own license |
+| Noto Emoji | Monochrome hand/foot capability glyphs in packaged builds | SIL Open Font License 1.1 |
 
 The opencv-python project documents additional licenses for native components
 included in its wheels, including FFmpeg under LGPL-2.1; non-headless Linux
@@ -35,11 +37,17 @@ the licenses of bundled dependencies.
 PyInstaller bundles a Python runtime. Binary releases should also preserve the
 Python license file from the interpreter used to create the build.
 
-## Model asset
+## Build assets
 
-The exact MediaPipe model artifact, versioned URL, expected size and SHA-256 are
-stored in `assets/models.json`. `MODEL_ASSETS.md` is generated from that
-manifest.
+The MediaPipe pose model is pinned by `assets/models.json` and verified before
+release builds.
+
+The monochrome Noto Emoji font used for capability symbols is fetched from the
+official Google Fonts repository by `scripts/fetch_noto_emoji.py`. The script
+pins an immutable upstream commit and verifies the downloaded font and OFL
+license by their Git blob hashes before they are included in a packaged build.
+The downloaded font binary is intentionally not committed to VaporStep's source
+tree.
 
 ## Song/chart content
 
