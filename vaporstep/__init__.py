@@ -12,10 +12,10 @@ from .simfile_encoding import install_simfile_encoding_detection
 
 install_simfile_encoding_detection()
 
-# Keep song-library-only polish out of the large gameplay renderer while still
-# applying it consistently to the console entry point and frozen builds.
-from .song_menu_overlay import install_song_menu_overlay
+# Keep song-library rendering separate from the large gameplay renderer while
+# still installing one authoritative draw pass for every entry point.
+from .song_menu_renderer import install_song_menu_renderer
 
-install_song_menu_overlay()
+install_song_menu_renderer()
 
 __all__ = ["__version__"]
