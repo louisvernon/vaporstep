@@ -61,10 +61,13 @@ def _blit_symbol_or_fallback(
 
 def _draw_capability_icons(renderer: Renderer, song, x: int, y: int, color) -> None:
     """Draw a compact feet / hands / native-eight capability column."""
+    # U+FE0E explicitly requests text presentation. SymbolFont then converts
+    # the resulting monochrome glyph to an alpha mask and tints it, preserving
+    # VaporStep's palette instead of platform emoji colors.
     if song.has_foot_targets:
-        _blit_symbol_or_fallback(renderer, "👣", (x, y), color, _draw_foot_fallback)
+        _blit_symbol_or_fallback(renderer, "👣︎", (x, y), color, _draw_foot_fallback)
     if song.has_hand_targets:
-        _blit_symbol_or_fallback(renderer, "✋", (x + 22, y), color, _draw_hand_fallback)
+        _blit_symbol_or_fallback(renderer, "✋︎", (x + 22, y), color, _draw_hand_fallback)
     if song.has_native_8_lane:
         # Keep the marker typographic and unboxed so it cannot read as a B.
         eight_font = renderer.small_font
