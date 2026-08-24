@@ -39,20 +39,13 @@ sim_datas = collect_data_files("simfile")
 datas = mp_datas + ffmpeg_datas + sim_datas + [
     (str(assets / "vaporstep_icon.png"), "assets"),
     (str(assets / "models.json"), "assets"),
+    (str(assets / "fonts" / "VaporStepEmojiSymbols.ttf"), "assets/fonts"),
+    (str(assets / "fonts" / "NotoEmoji-OFL.txt"), "third_party_licenses/VaporStep-Emoji-Symbols"),
     (str(root / "LICENSE"), "."),
     (str(root / "THIRD_PARTY_NOTICES.md"), "."),
     (str(root / "MODEL_ASSETS.md"), "."),
     (str(root / "FFMPEG_PROVENANCE.md"), "."),
 ]
-
-# Noto Emoji is fetched as a pinned build asset alongside the pose model rather
-# than committed to the repository. Pack the exact font and its OFL license.
-noto_emoji = assets / "fonts" / "NotoEmoji[wght].ttf"
-noto_emoji_license = assets / "fonts" / "OFL.txt"
-if noto_emoji.exists():
-    datas.append((str(noto_emoji), "assets/fonts"))
-if noto_emoji_license.exists():
-    datas.append((str(noto_emoji_license), "third_party_licenses/Noto-Emoji"))
 
 # Preserve license/notice files from the exact distributions installed in the
 # build environment. This keeps frozen releases aligned with dependency
