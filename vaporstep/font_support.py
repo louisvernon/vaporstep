@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-"""Font helpers for user-supplied song metadata and tiny capability glyphs.
+"""Font helpers for user-supplied song metadata and capability glyphs.
 
 VaporStep's bundled Pygame font remains the fixed UI/HUD font. Song metadata is
 user content and can require scripts that font does not cover, so it gets a
@@ -21,11 +21,14 @@ _HANGUL_FONTS = (
     "NanumGothic",
 )
 _JAPANESE_FONTS = (
+    "Hiragino Sans W3",
+    "Hiragino Kaku Gothic ProN W3",
     "Hiragino Sans",
     "Yu Gothic UI",
     "Yu Gothic",
     "Meiryo",
     "Noto Sans CJK JP",
+    "Noto Sans JP",
 )
 _CJK_FONTS = (
     "PingFang SC",
@@ -44,19 +47,28 @@ _GENERAL_FONTS = (
 )
 _SYMBOL_FONTS = (
     "Apple Color Emoji",
+    "Apple Symbols",
     "Segoe UI Emoji",
+    "Segoe UI Symbol",
     "Noto Color Emoji",
     "Noto Emoji",
     "Symbola",
-    "Segoe UI Symbol",
-    "Apple Symbols",
 )
 
-# SDL/Pygame font discovery can occasionally miss macOS TTC faces. These are
-# only fallback hints; normal ``match_font`` discovery remains the first choice.
+# SDL/Pygame font discovery can occasionally miss TTC-backed macOS faces. These
+# are fallback hints only; normal ``match_font`` discovery remains first choice.
 _FONT_PATH_HINTS = {
     "Apple SD Gothic Neo": ("/System/Library/Fonts/AppleSDGothicNeo.ttc",),
     "AppleGothic": ("/System/Library/Fonts/Supplemental/AppleGothic.ttf",),
+    "Hiragino Sans W3": (
+        "/System/Library/Fonts/ヒラギノ角ゴシック W3.ttc",
+        "/System/Library/Fonts/ヒラギノ角ゴ ProN W3.otf",
+    ),
+    "Hiragino Kaku Gothic ProN W3": (
+        "/System/Library/Fonts/ヒラギノ角ゴシック W3.ttc",
+        "/System/Library/Fonts/ヒラギノ角ゴ ProN W3.otf",
+    ),
+    "Hiragino Sans": ("/System/Library/Fonts/ヒラギノ角ゴシック W3.ttc",),
     "Apple Color Emoji": ("/System/Library/Fonts/Apple Color Emoji.ttc",),
 }
 
@@ -120,6 +132,15 @@ def _font_supports(font: pygame.font.Font, text: str) -> bool:
     return metrics is not None and all(metric is not None for metric in metrics)
 
 
+def _cropped_signature(surface: pygame.Surface) -> tuple[tuple[int, int], bytes] | None:
+    """Return a stable signature for rendered pixels, ignoring surrounding space."""
+    bounds = surface.get_bounding_rect(min_alpha=8)
+    if bounds.width <= 0 or bounds.height <= 0:
+        return None
+    cropped = surface.subsurface(bounds).copy()
+    return cropped.get_size(), pygame.image.tostring(cropped, "RGBA")
+
+
 class MetadataFont:
     """Render song metadata using a font chosen for the string's script."""
 
@@ -145,14 +166,14 @@ class MetadataFont:
     def _font_for(self, text: str) -> pygame.font.Font:
         names = _candidate_names_for_text(text)
         script_specific = _contains_hangul(text) or _contains_japanese(text) or _contains_cjk(text)
+        script_count = len(names) - len(_GENERAL_FONTS) if script_specific else 0
         for index, name in enumerate(names):
             font = self._load(name)
             if font is None:
                 continue
-            # Trust the first platform/script-specific faces: they are selected
-            # precisely because SDL_ttf glyph metrics are not reliable enough to
-            # distinguish a real CJK glyph from a tofu replacement on all builds.
-            if script_specific and index < len(names) - len(_GENERAL_FONTS):
+            # Trust known script-specific faces. SDL_ttf metrics are not reliable
+            # enough to distinguish a real CJK glyph from tofu on every build.
+            if index < script_count:
                 return font
             if _font_supports(font, text):
                 return font
@@ -175,11 +196,13 @@ class MetadataFont:
 
 
 class SymbolFont:
-    """Render Unicode icon glyphs as monochrome masks in VaporStep colors."""
+    """Render familiar Unicode capability glyphs as tinted monochrome masks."""
+
+    _MISSING_SENTINEL = "\U0010ffff"
 
     def __init__(self, size: int) -> None:
-        self._size = size
         self._fonts: list[pygame.font.Font] = []
+        self._missing_signatures: dict[int, tuple[tuple[int, int], bytes] | None] = {}
         seen: set[str] = set()
         for name in _SYMBOL_FONTS:
             path = _font_path(name)
@@ -191,11 +214,25 @@ class SymbolFont:
             except (OSError, pygame.error):
                 continue
 
+    def _is_missing_glyph(self, font: pygame.font.Font, rendered: pygame.Surface) -> bool:
+        """Detect SDL_ttf's .notdef/tofu glyph by comparing a noncharacter."""
+        key = id(font)
+        if key not in self._missing_signatures:
+            try:
+                missing = font.render(self._MISSING_SENTINEL, True, (255, 255, 255))
+                self._missing_signatures[key] = _cropped_signature(missing)
+            except (UnicodeError, pygame.error):
+                self._missing_signatures[key] = None
+        missing_signature = self._missing_signatures[key]
+        return missing_signature is not None and _cropped_signature(rendered) == missing_signature
+
     def render(self, glyph: str, color, max_size: tuple[int, int]) -> pygame.Surface | None:
         for font in self._fonts:
             try:
                 raw = font.render(glyph, True, (255, 255, 255))
             except (UnicodeError, pygame.error):
+                continue
+            if self._is_missing_glyph(font, raw):
                 continue
             bounds = raw.get_bounding_rect(min_alpha=8)
             if bounds.width <= 0 or bounds.height <= 0:
