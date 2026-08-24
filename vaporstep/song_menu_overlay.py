@@ -45,13 +45,15 @@ def _draw_symbol_or_letter(
     renderer.screen.blit(label, label.get_rect(center=center))
 
 
-def _draw_capability_icons(renderer: Renderer, song, x: int, y: int, color) -> None:
-    """Draw familiar Unicode capability icons with trivial letter fallbacks."""
-    if song.has_foot_targets:
+def _draw_capability_icons(renderer: Renderer, chart, x: int, y: int, color) -> None:
+    """Draw capabilities for the chart currently selected for this song."""
+    if chart is None:
+        return
+    if chart.foot_count > 0:
         _draw_symbol_or_letter(renderer, "👣︎", "F", (x, y), color)
-    if song.has_hand_targets:
+    if chart.hand_count > 0:
         _draw_symbol_or_letter(renderer, "✋︎", "H", (x + 22, y), color)
-    if song.has_native_8_lane:
+    if chart.native_8_lane:
         eight_font = renderer.small_font
         previous_italic = eight_font.get_italic()
         eight_font.set_italic(True)
@@ -60,6 +62,15 @@ def _draw_capability_icons(renderer: Renderer, song, x: int, y: int, color) -> N
         finally:
             eight_font.set_italic(previous_italic)
         renderer.screen.blit(glyph, glyph.get_rect(center=(x + 44, y)))
+
+
+def _chart_for_row(menu, song):
+    """Use the active chart for the selected song and the preferred chart elsewhere."""
+    if song is menu.song:
+        return menu.chart
+    if not song.charts:
+        return None
+    return song.charts[menu._preferred_chart_index(song)]
 
 
 def _draw_library_overlay(
@@ -133,7 +144,7 @@ def _draw_library_overlay(
             pygame.draw.rect(renderer.screen, BG, (clear_left, y - 2, clear_right - clear_left, 35))
 
             capability_color = CYAN if selected else _blend(DIM, BG, distance * 0.55)
-            _draw_capability_icons(renderer, song, icon_x, y + 13, capability_color)
+            _draw_capability_icons(renderer, _chart_for_row(menu, song), icon_x, y + 13, capability_color)
 
             if song_key(song) in favorite_keys:
                 cx, cy = favorite_x, y + 13
