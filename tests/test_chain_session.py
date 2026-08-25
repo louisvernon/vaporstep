@@ -19,7 +19,7 @@ class _FakeMixer:
 
 sys.modules.setdefault("pygame", SimpleNamespace(mixer=_FakeMixer()))
 
-from vaporstep.chains import assign_implicit_chains
+from vaporstep.chains import HOLD_OCCUPANCY_GRACE_SECONDS, assign_implicit_chains
 from vaporstep.domain import BodyPoint, BodyState, ChainMode, ChainState, GameNote, GameplayEventType, NoteKind
 from vaporstep.session import GameSession
 from vaporstep.song import ChartInfo, LoadedChart, SongInfo
@@ -130,21 +130,28 @@ def test_broken_generated_chain_preserves_combo_and_does_not_resume(monkeypatch)
     assert session.chains[0].state == ChainState.ACTIVE
     assert session.stats.combo == 1
 
-    # Generated holds use the same 300 ms dropout/cross-step grace as authored holds.
-    clock[0] = 1.40
-    session.update(_body(1.40, 2), True)
+    # Generated holds use the same dropout/cross-step grace as authored holds.
+    first_dropout = 1.40
+    clock[0] = first_dropout
+    session.update(_body(first_dropout, 2), True)
     assert session.chains[0].state == ChainState.ACTIVE
 
-    clock[0] = 1.47
-    session.update(_body(1.47, 2), True)
+    before_break = first_dropout + HOLD_OCCUPANCY_GRACE_SECONDS - 0.01
+    clock[0] = before_break
+    session.update(_body(before_break, 2), True)
+    assert session.chains[0].state == ChainState.ACTIVE
+
+    after_break = first_dropout + HOLD_OCCUPANCY_GRACE_SECONDS + 0.01
+    clock[0] = after_break
+    session.update(_body(after_break, 2), True)
     assert session.chains[0].state == ChainState.BROKEN
     assert session.stats.combo == 1
     assert session.stats.misses == 0
     assert session.stats.dropped_holds == 0
 
     # Returning to the lane does not reactivate the sustain.
-    clock[0] = 1.70
-    session.update(_body(1.70, 1), True)
+    clock[0] = after_break + 0.10
+    session.update(_body(after_break + 0.10, 1), True)
     assert session.chains[0].state == ChainState.BROKEN
 
     # The single failed tail judgement hurts score/performance but not combo or timed misses.
@@ -221,22 +228,29 @@ def test_dropping_explicit_hold_preserves_combo_and_does_not_resume(monkeypatch)
     assert session.chains[0].state == ChainState.ACTIVE
     assert session.stats.combo == 1
 
-    clock[0] = 1.40
-    session.update(_body(1.40, 2), True)
+    first_dropout = 1.40
+    clock[0] = first_dropout
+    session.update(_body(first_dropout, 2), True)
     assert session.chains[0].state == ChainState.ACTIVE
     assert session.stats.misses == 0
     events = session.drain_gameplay_events()
     assert all(event.event_type != GameplayEventType.SUSTAIN_BREAK for event in events)
 
-    clock[0] = 1.47
-    session.update(_body(1.47, 2), True)
+    before_break = first_dropout + HOLD_OCCUPANCY_GRACE_SECONDS - 0.01
+    clock[0] = before_break
+    session.update(_body(before_break, 2), True)
+    assert session.chains[0].state == ChainState.ACTIVE
+
+    after_break = first_dropout + HOLD_OCCUPANCY_GRACE_SECONDS + 0.01
+    clock[0] = after_break
+    session.update(_body(after_break, 2), True)
     assert session.chains[0].state == ChainState.BROKEN
     assert session.stats.misses == 0
     assert session.stats.dropped_holds == 0
     assert session.stats.combo == 1
 
-    clock[0] = 1.60
-    session.update(_body(1.60, 1), True)
+    clock[0] = after_break + 0.10
+    session.update(_body(after_break + 0.10, 1), True)
     assert session.chains[0].state == ChainState.BROKEN
 
     clock[0] = 2.01
