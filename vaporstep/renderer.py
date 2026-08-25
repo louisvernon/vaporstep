@@ -5,13 +5,12 @@ import math
 import pygame
 
 from . import renderer_tunnel_base as _tunnel
-from .domain import BodyState, NoteKind
+from .config import LOOKAHEAD_BEATS, LOOKAHEAD_SECONDS
+from .domain import BodyState, ChainMode, GameNote, HitQuality, NoteKind
+from .hand_control import hand_control_perimeter_along
 from .keyboard_input import label_for_lane
 
 
-# Keep the renderer module's established public palette/constants available to
-# callers while this file stays a thin visual specialization of the proven
-# tunnel renderer.
 BG = _tunnel.BG
 CYAN = _tunnel.CYAN
 MAGENTA = _tunnel.MAGENTA
@@ -26,13 +25,11 @@ ELECTRIC_YELLOW = _tunnel.ELECTRIC_YELLOW
 HIT_BRICK_POP_SECONDS = _tunnel.HIT_BRICK_POP_SECONDS
 _blend = _tunnel._blend
 
-
-# The seam beside the feet stays exactly where the previous tunnel put it. The
-# receptor then runs briefly outward on a flat shoulder before turning into the
-# broad upper arch, making the tunnel fill the screen without overlapping feet.
 _HAND_SHOULDER_EXTENSION = 0.12
 _HAND_SHOULDER_PATH_FRACTION = 0.075
 _HAND_TRACKER_OFFSET_PX = 10.0
+_HAND_PREENTRY_BEATS = 1.0
+_HAND_PREENTRY_SECONDS = 0.50
 
 
 class Renderer(_tunnel.Renderer):
@@ -54,10 +51,8 @@ class Renderer(_tunnel.Renderer):
             min(float(viewport.right - 10), seam_right[0] + extension),
             base_y,
         )
-        # Leave room for the optional tracker dot just outside the top receptor.
         outer_top = float(viewport.top) + max(26.0, viewport.height * 0.035)
-        outer = (seam_left, seam_right, shoulder_left, shoulder_right, outer_top)
-        return inner, outer
+        return inner, (seam_left, seam_right, shoulder_left, shoulder_right, outer_top)
 
     @staticmethod
     def _outer_tunnel_point(outer, along: float) -> tuple[float, float]:
@@ -78,8 +73,6 @@ class Renderer(_tunnel.Renderer):
                 shoulder_right[1] + (seam_right[1] - shoulder_right[1]) * u,
             )
 
-        # The middle of the receptor is a broad upper half-ellipse joining the
-        # two flat shoulders. This is intentionally exaggerated perspective.
         u = (t - shelf) / max(1.0 - 2.0 * shelf, 1e-6)
         arch_cx = (shoulder_left[0] + shoulder_right[0]) * 0.5
         arch_base_y = (shoulder_left[1] + shoulder_right[1]) * 0.5
@@ -91,6 +84,18 @@ class Renderer(_tunnel.Renderer):
             arch_base_y + arch_ry * math.sin(angle),
         )
 
+    @staticmethod
+    def _smooth_outer_tunnel_point(outer, along: float) -> tuple[float, float]:
+        """Smooth guide for moving note bars; ignores decorative flat shelves."""
+        _, _, shoulder_left, shoulder_right, outer_top = outer
+        t = max(0.0, min(1.0, along))
+        cx = (shoulder_left[0] + shoulder_right[0]) * 0.5
+        base_y = (shoulder_left[1] + shoulder_right[1]) * 0.5
+        rx = max(10.0, (shoulder_right[0] - shoulder_left[0]) * 0.5)
+        ry = max(20.0, base_y - outer_top)
+        angle = math.pi + math.pi * t
+        return cx + rx * math.cos(angle), base_y + ry * math.sin(angle)
+
     def _hand_point(self, along: float, progress: float) -> tuple[float, float]:
         inner, outer = self._hand_tunnel_geometry()
         p = max(0.0, min(1.0, progress)) ** 1.25
@@ -98,9 +103,95 @@ class Renderer(_tunnel.Renderer):
         ox, oy = self._outer_tunnel_point(outer, along)
         return ix + (ox - ix) * p, iy + (oy - iy) * p
 
+    def _smooth_hand_point(self, along: float, progress: float) -> tuple[float, float]:
+        inner, outer = self._hand_tunnel_geometry()
+        p = max(0.0, min(1.0, progress)) ** 1.25
+        ix, iy = self._ellipse_upper_point(inner, along)
+        ox, oy = self._smooth_outer_tunnel_point(outer, along)
+        return ix + (ox - ix) * p, iy + (oy - iy) * p
+
+    def _hand_note_arc_points(
+        self,
+        lane: int,
+        progress: float,
+        fraction: float,
+        *,
+        samples: int = 14,
+    ) -> list[tuple[int, int]]:
+        boundaries = _tunnel._HAND_BOUNDARIES
+        centers = _tunnel._HAND_CENTERS
+        start = boundaries[lane - 1]
+        end = boundaries[lane]
+        center_along = centers[lane - 1]
+        half = (end - start) * 0.5 * max(0.05, min(1.0, fraction))
+
+        actual_center = self._hand_target_point(lane, progress)
+        smooth_center = self._smooth_hand_point(center_along, progress)
+        shift_x = actual_center[0] - smooth_center[0]
+        shift_y = actual_center[1] - smooth_center[1]
+
+        points: list[tuple[int, int]] = []
+        for i in range(samples + 1):
+            along = center_along - half + 2.0 * half * i / samples
+            x, y = self._smooth_hand_point(along, progress)
+            points.append((int(x + shift_x), int(y + shift_y)))
+        return points
+
+    def _draw_hand_note_arc(
+        self,
+        lane: int,
+        progress: float,
+        color,
+        *,
+        highlight: bool = False,
+    ) -> None:
+        p = max(0.0, min(1.0, progress))
+        arc = self._hand_note_arc_points(lane, p, _tunnel._HAND_NOTE_ARC_FRACTION)
+        thickness = max(5, int(5 + 12 * p))
+        pygame.draw.lines(self.screen, BG, False, arc, thickness + 9)
+        pygame.draw.lines(self.screen, color, False, arc, thickness)
+        if highlight:
+            pygame.draw.lines(self.screen, WHITE, False, arc, max(1, thickness // 5))
+
+    def _draw_hand_hit_pop(self, lane: int, age: float, quality: HitQuality) -> None:
+        phase = max(0.0, min(1.0, age / HIT_BRICK_POP_SECONDS))
+        power = {HitQuality.HIT: 1.0, HitQuality.GREAT: 1.28, HitQuality.PERFECT: 1.60}[quality]
+        fade = (1.0 - phase) ** 0.72
+        hot = _blend(MAGENTA, WHITE, min(0.92, 0.40 + 0.24 * power))
+        color = _blend(BG, hot, fade)
+        fraction = min(
+            0.88,
+            _tunnel._HAND_NOTE_ARC_FRACTION
+            + 0.12 * math.sin(min(1.0, phase * 1.5) * math.pi),
+        )
+        arc = self._hand_note_arc_points(lane, 1.0, fraction)
+        thickness = max(3, int((14 + 4 * power) * (0.72 + 0.28 * fade)))
+        pygame.draw.lines(self.screen, BG, False, arc, thickness + 10)
+        pygame.draw.lines(self.screen, color, False, arc, thickness)
+        if fade > 0.15:
+            pygame.draw.lines(self.screen, _blend(color, WHITE, 0.68 * fade), False, arc, 2)
+
     def _hand_depth_band(self, p0: float, p1: float) -> list[tuple[int, int]]:
         outer = self._hand_arc_points(0.0, 1.0, p1, samples=64)
         inner = self._hand_arc_points(1.0, 0.0, p0, samples=64)
+        return [*outer, *inner]
+
+    def _hand_lane_light_band(
+        self,
+        lane: int,
+        p0: float,
+        p1: float,
+        fraction: float = 0.90,
+    ) -> list[tuple[int, int]]:
+        boundaries = _tunnel._HAND_BOUNDARIES
+        centers = _tunnel._HAND_CENTERS
+        start = boundaries[lane - 1]
+        end = boundaries[lane]
+        center = centers[lane - 1]
+        half = (end - start) * 0.5 * max(0.05, min(1.0, fraction))
+        a0, a1 = center - half, center + half
+        outer = self._hand_arc_points(a0, a1, p1, samples=18)
+        inner = self._hand_arc_points(a1, a0, p0, samples=18)
         return [*outer, *inner]
 
     def _draw_hand_playfield(
@@ -113,19 +204,13 @@ class Renderer(_tunnel.Renderer):
         occupied = body.hand_lanes if enabled else frozenset()
         disabled = _blend(DIM, BG, 0.58)
 
-        # A tiny amount of inner darkening makes the shell read as depth rather
-        # than a flat overlay, while preserving the camera/silhouette underneath.
         depth_surface = pygame.Surface(self.size, pygame.SRCALPHA)
         for band in range(8):
             p0 = band / 8.0
             p1 = (band + 1) / 8.0
             mid = (p0 + p1) * 0.5
-            alpha = int(3 + 15 * (1.0 - mid))
-            pygame.draw.polygon(
-                depth_surface,
-                (*BG, alpha),
-                self._hand_depth_band(p0, p1),
-            )
+            alpha = int(6 + 22 * (1.0 - mid))
+            pygame.draw.polygon(depth_surface, (*BG, alpha), self._hand_depth_band(p0, p1))
         self.screen.blit(depth_surface, (0, 0))
 
         fill_surface = pygame.Surface(self.size, pygame.SRCALPHA)
@@ -140,7 +225,6 @@ class Renderer(_tunnel.Renderer):
 
         rail_color = GRID if enabled else disabled
         boundaries = _tunnel._HAND_BOUNDARIES
-
         for boundary, along in enumerate(boundaries):
             p0 = self._hand_point(along, 0.0)
             p1 = self._hand_point(along, 1.0)
@@ -157,19 +241,11 @@ class Renderer(_tunnel.Renderer):
             pygame.draw.line(self.screen, color, p0, p1, width)
 
         inner_arc = self._hand_arc_points(0.0, 1.0, 0.0, samples=64)
-        pygame.draw.lines(
-            self.screen,
-            _blend(rail_color, WHITE, 0.10),
-            False,
-            inner_arc,
-            2,
-        )
+        pygame.draw.lines(self.screen, _blend(rail_color, WHITE, 0.10), False, inner_arc, 2)
 
-        # Experimental beat ripple: one depth ring receives a brief, restrained
-        # pink lift that moves from the inner opening toward the receptor over
-        # the short beat-pulse lifetime. It is deliberately easy to remove.
+        # Beat ripple now recedes from the receptor into the tunnel.
         pulse = max(0.0, min(1.0, beat_pulse))
-        pulse_position = 1.0 - math.sqrt(pulse) if pulse > 0.005 else -1.0
+        pulse_position = math.sqrt(pulse) if pulse > 0.005 else -1.0
         for step in range(1, 9):
             progress = step / 9.0
             ring_color = rail_color
@@ -177,7 +253,7 @@ class Renderer(_tunnel.Renderer):
             if enabled and pulse_position >= 0.0:
                 proximity = max(0.0, 1.0 - abs(progress - pulse_position) / 0.18)
                 if proximity > 0.0:
-                    amount = proximity * (0.18 + 0.30 * math.sqrt(pulse))
+                    amount = proximity * (0.14 + 0.26 * math.sqrt(pulse))
                     ring_color = _blend(rail_color, MAGENTA, amount)
                     width = 2 if amount > 0.18 else 1
             arc = self._hand_arc_points(0.0, 1.0, progress, samples=64)
@@ -193,10 +269,6 @@ class Renderer(_tunnel.Renderer):
                 receptor,
                 6 if active else 2,
             )
-
-            # Restore the keyboard mapping labels lost when the linear hand
-            # receptors were replaced. Keep them just inside the receptor so an
-            # arriving note naturally renders over the label rather than behind it.
             if enabled:
                 lx, ly = self._hand_target_point(lane, 0.955)
                 label = self.small_font.render(
@@ -208,29 +280,108 @@ class Renderer(_tunnel.Renderer):
 
         if not enabled:
             cx, cy = self._hand_point(0.5, 0.0)
-            off = self.small_font.render(
-                "NO HAND NOTES",
-                True,
-                _blend(DIM, BG, 0.30),
-            )
+            off = self.small_font.render("NO HAND NOTES", True, _blend(DIM, BG, 0.30))
             self.screen.blit(off, off.get_rect(center=(int(cx), int(cy - 20))))
+
+    def _note_light_state(
+        self,
+        note: GameNote,
+        song_time: float,
+        song_beat: float,
+    ) -> tuple[float, float, bool] | None:
+        if note.kind != NoteKind.HANDS or note.judged:
+            return None
+
+        if note.beat is not None:
+            distance = float(note.beat) - song_beat
+            if distance > LOOKAHEAD_BEATS:
+                extra = distance - LOOKAHEAD_BEATS
+                if extra > _HAND_PREENTRY_BEATS:
+                    return None
+                return 0.0, 0.20 * (1.0 - extra / _HAND_PREENTRY_BEATS), True
+        else:
+            distance = note.time - song_time
+            if distance > LOOKAHEAD_SECONDS:
+                extra = distance - LOOKAHEAD_SECONDS
+                if extra > _HAND_PREENTRY_SECONDS:
+                    return None
+                return 0.0, 0.20 * (1.0 - extra / _HAND_PREENTRY_SECONDS), True
+
+        progress = max(0.0, min(1.0, self._note_progress(note, song_time, song_beat)))
+        return progress, 0.16 + 0.38 * (progress ** 0.85), False
+
+    def _draw_hand_target_lighting(
+        self,
+        notes: list[GameNote],
+        song_time: float,
+        song_beat: float,
+    ) -> None:
+        light_surface = pygame.Surface(self.size, pygame.SRCALPHA)
+        any_light = False
+        for note in notes:
+            state = self._note_light_state(note, song_time, song_beat)
+            if state is None:
+                continue
+            progress, intensity, preentry = state
+            for lane in note.lanes:
+                if preentry:
+                    x, y = self._hand_target_point(lane, 0.0)
+                    for radius, scale in ((22, 0.18), (14, 0.30), (7, 0.48)):
+                        pygame.draw.circle(
+                            light_surface,
+                            (*MAGENTA, int(255 * intensity * scale)),
+                            (int(x), int(y)),
+                            radius,
+                        )
+                    pygame.draw.lines(
+                        light_surface,
+                        (*MAGENTA, int(255 * intensity * 0.75)),
+                        False,
+                        self._hand_lane_arc(lane, 0.0, 0.62),
+                        5,
+                    )
+                    any_light = True
+                    continue
+
+                spread = 0.045 + 0.045 * progress
+                p0 = max(0.0, progress - spread)
+                p1 = min(1.0, progress + spread)
+                pygame.draw.polygon(
+                    light_surface,
+                    (*MAGENTA, int(255 * intensity * 0.16)),
+                    self._hand_lane_light_band(lane, p0, p1),
+                )
+                pygame.draw.lines(
+                    light_surface,
+                    (*MAGENTA, int(255 * intensity * 0.42)),
+                    False,
+                    self._hand_lane_arc(lane, progress, 0.84),
+                    max(5, int(7 + 8 * progress)),
+                )
+                any_light = True
+
+        if any_light:
+            self.screen.blit(light_surface, (0, 0))
+
+    def _draw_notes(
+        self,
+        notes: list[GameNote],
+        song_time: float,
+        song_beat: float,
+        chain_mode: ChainMode = ChainMode.OFF,
+    ) -> None:
+        self._draw_hand_target_lighting(notes, song_time, song_beat)
+        super()._draw_notes(notes, song_time, song_beat, chain_mode)
 
     def _draw_hand_tracking_markers(self, body: BodyState, enabled: bool) -> None:
         if not enabled:
             return
         w, h = self.size
         for control in (body.left_hand_control, body.right_hand_control):
-            # Neutral deliberately has no marker. Segment highlighting remains
-            # the authoritative resolved-state feedback.
             if not control.visible or control.lane is None:
                 continue
 
-            vx = (control.x - 0.5) * 2.0
-            up = (0.5 - control.y) * 2.0
-            # Project the wrist's body-relative direction onto the upper tunnel
-            # rim. Downward components simply land toward the low/out ends.
-            angle = math.atan2(max(0.0, up), vx)
-            along = max(0.0, min(1.0, 1.0 - angle / math.pi))
+            along = hand_control_perimeter_along(control)
             outer = self._hand_point(along, 1.0)
             inner = self._hand_point(along, 0.94)
             dx, dy = outer[0] - inner[0], outer[1] - inner[1]
@@ -258,8 +409,6 @@ class Renderer(_tunnel.Renderer):
         foot_enabled: bool = True,
         show_lower_body_sources: bool = False,
     ) -> None:
-        # Preserve the existing foot markers and intentionally continue hiding
-        # raw camera-space wrist dots inside the playfield.
         super()._draw_body_markers(
             body,
             show_labels=show_labels,
