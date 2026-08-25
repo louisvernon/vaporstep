@@ -23,25 +23,25 @@ ELECTRIC_YELLOW = _base.ELECTRIC_YELLOW
 HIT_BRICK_POP_SECONDS = _base.HIT_BRICK_POP_SECONDS
 _blend = _base._blend
 
-_HAND_ANGLES = {
-    1: -165.0,  # left/out
-    2: -120.0,  # left/high
-    3: -60.0,   # right/high
-    4: -15.0,   # right/out
-}
-_HAND_HALF_ARC = 18.0
+# Four contiguous projected hand segments. The shared boundaries guarantee no
+# dead visual space between authored hand lanes 1..4.
+_HAND_BOUNDARY_ANGLES = (-168.0, -129.0, -90.0, -51.0, -12.0)
+_HAND_CENTER_ANGLES = tuple(
+    (_HAND_BOUNDARY_ANGLES[i] + _HAND_BOUNDARY_ANGLES[i + 1]) * 0.5
+    for i in range(4)
+)
 
 
 class Renderer(_base.Renderer):
-    """Base VaporStep renderer with a body-relative radial hand playfield."""
+    """VaporStep renderer with a body-relative projected hand fan."""
 
     def __init__(self, screen: pygame.Surface) -> None:
         super().__init__(screen)
         self._suppress_legacy_hands = False
 
-    # The inherited renderer still knows how to render the old four hand rails.
-    # During inherited foot-only passes, route those disabled hand coordinates
-    # safely off-screen so no ghost hand playfield or labels remain visible.
+    # The inherited renderer owns the mature foot implementation. During its
+    # foot-only passes, route the disabled legacy hand coordinates off-screen so
+    # the projected fan is the only visible hand playfield.
     def _field_bounds(self, kind: NoteKind, progress: float) -> tuple[float, float]:
         if self._suppress_legacy_hands and kind == NoteKind.HANDS:
             return (-2000.0, -1999.0)
@@ -60,33 +60,51 @@ class Renderer(_base.Renderer):
     def _hand_geometry(self) -> tuple[tuple[float, float], float, float]:
         viewport = self._camera_rect()
         center = (float(viewport.centerx), float(self._camera_y(_base.VANISH_Y)))
-        outer = min(viewport.width * 0.185, viewport.height * 0.235)
-        inner = outer * 0.39
-        return center, inner, outer
+        # Span almost the full camera-width projection and most of the upper
+        # half of the screen, while leaving the shared center open for feet.
+        radius_x = viewport.width * 0.49
+        radius_y = viewport.height * 0.46
+        return center, radius_x, radius_y
 
-    @staticmethod
-    def _polar(center, radius: float, angle_deg: float) -> tuple[float, float]:
-        a = math.radians(angle_deg)
-        return center[0] + math.cos(a) * radius, center[1] + math.sin(a) * radius
-
-    def _hand_sector_polygon(self, lane: int, inner: float, outer: float, *, samples: int = 8):
-        center, _, _ = self._hand_geometry()
-        angle = _HAND_ANGLES[lane]
-        points = [
-            self._polar(center, outer, angle - _HAND_HALF_ARC + (2 * _HAND_HALF_ARC * i / samples))
-            for i in range(samples + 1)
-        ]
-        points.extend(
-            self._polar(center, inner, angle + _HAND_HALF_ARC - (2 * _HAND_HALF_ARC * i / samples))
-            for i in range(samples + 1)
+    def _hand_point(self, angle_deg: float, progress: float) -> tuple[float, float]:
+        center, radius_x, radius_y = self._hand_geometry()
+        p = max(0.0, min(1.0, progress)) ** 1.25
+        angle = math.radians(angle_deg)
+        return (
+            center[0] + math.cos(angle) * radius_x * p,
+            center[1] + math.sin(angle) * radius_y * p,
         )
-        return [(int(x), int(y)) for x, y in points]
 
     def _hand_target_point(self, lane: int, progress: float) -> tuple[float, float]:
-        center, inner, outer = self._hand_geometry()
-        p = max(0.0, min(1.0, progress)) ** 1.15
-        radius = inner * 0.35 + (outer - inner * 0.35) * p
-        return self._polar(center, radius, _HAND_ANGLES[lane])
+        return self._hand_point(_HAND_CENTER_ANGLES[lane - 1], progress)
+
+    def _hand_arc_points(
+        self,
+        start_angle: float,
+        end_angle: float,
+        progress: float,
+        *,
+        samples: int = 12,
+    ) -> list[tuple[int, int]]:
+        return [
+            tuple(
+                int(v)
+                for v in self._hand_point(
+                    start_angle + (end_angle - start_angle) * i / samples,
+                    progress,
+                )
+            )
+            for i in range(samples + 1)
+        ]
+
+    def _hand_sector_polygon(self, lane: int) -> list[tuple[int, int]]:
+        center, _, _ = self._hand_geometry()
+        arc = self._hand_arc_points(
+            _HAND_BOUNDARY_ANGLES[lane - 1],
+            _HAND_BOUNDARY_ANGLES[lane],
+            1.0,
+        )
+        return [(int(center[0]), int(center[1])), *arc]
 
     def _draw_hand_playfield(
         self,
@@ -96,28 +114,55 @@ class Renderer(_base.Renderer):
         enabled: bool,
         strike_events: tuple[MotionEvent, ...] = (),
     ) -> None:
-        center, inner, outer = self._hand_geometry()
+        center, _, _ = self._hand_geometry()
         occupied = body.hand_lanes if enabled else frozenset()
-        neutral_color = _blend(GRID, BG, 0.22 if enabled else 0.62)
-        pygame.draw.circle(self.screen, neutral_color, (int(center[0]), int(center[1])), int(inner), 1)
+        disabled = _blend(DIM, BG, 0.58)
 
+        # Whole-segment occupancy is the primary hand-position feedback.
         for lane in range(1, 5):
             active = lane in occupied
-            polygon = self._hand_sector_polygon(lane, inner, outer)
-            fill = _blend(BG, MAGENTA, 0.32 if active else 0.07)
-            edge = MAGENTA if active else (_blend(DIM, BG, 0.12) if enabled else _blend(DIM, BG, 0.58))
+            polygon = self._hand_sector_polygon(lane)
             if enabled:
-                pygame.draw.polygon(self.screen, fill, polygon)
-            pygame.draw.lines(self.screen, edge, True, polygon, 3 if active else 1)
+                fill_strength = 0.25 if active else 0.035
+                pygame.draw.polygon(self.screen, (*MAGENTA, int(255 * fill_strength)), polygon)
+                if active:
+                    overlay = pygame.Surface(self.size, pygame.SRCALPHA)
+                    pygame.draw.polygon(overlay, (*MAGENTA, 52), polygon)
+                    self.screen.blit(overlay, (0, 0))
 
-            target = self._hand_target_point(lane, 1.0)
-            pygame.draw.circle(
-                self.screen,
-                WHITE if active else edge,
-                (int(target[0]), int(target[1])),
-                5 if active else 3,
-                0 if active else 1,
+        # Perspective rails: five shared boundaries from the same vanishing
+        # point, exactly like the foot field conceptually but projected radially.
+        rail_color = GRID if enabled else disabled
+        for boundary, angle in enumerate(_HAND_BOUNDARY_ANGLES):
+            end = self._hand_point(angle, 1.0)
+            color = MAGENTA if enabled and boundary in (0, 4) else rail_color
+            width = 2 if enabled and boundary in (0, 4) else 1
+            pygame.draw.line(self.screen, color, center, end, width)
+
+        # Concentric progress lines give the same distance/depth cues as the
+        # horizontal grid lines on the foot track.
+        for step in range(1, 8):
+            progress = step / 8.0
+            arc = self._hand_arc_points(
+                _HAND_BOUNDARY_ANGLES[0],
+                _HAND_BOUNDARY_ANGLES[-1],
+                progress,
+                samples=36,
             )
+            pygame.draw.lines(self.screen, rail_color, False, arc, 1)
+
+        # Outer receptor arc is segmented but contiguous; active lanes brighten
+        # their entire receptor boundary rather than requiring a tracking dot.
+        for lane in range(1, 5):
+            active = enabled and lane in occupied
+            receptor = self._hand_arc_points(
+                _HAND_BOUNDARY_ANGLES[lane - 1],
+                _HAND_BOUNDARY_ANGLES[lane],
+                1.0,
+                samples=14,
+            )
+            color = MAGENTA if active else (DIM if enabled else disabled)
+            pygame.draw.lines(self.screen, color, False, receptor, 5 if active else 2)
 
             matching = [
                 event
@@ -130,41 +175,21 @@ class Renderer(_base.Renderer):
                 latest = max(matching, key=lambda e: e.song_time)
                 age = song_time - latest.song_time
                 phase = 1.0 - min(1.0, age / MOTION_EVENT_VISUAL_SECONDS)
-                ring_r = int(8 + 18 * (1.0 - phase))
-                pygame.draw.circle(
+                flash = _blend(MAGENTA, WHITE, 0.78 * phase)
+                pygame.draw.lines(
                     self.screen,
-                    _blend(MAGENTA, WHITE, 0.55),
-                    (int(target[0]), int(target[1])),
-                    ring_r,
-                    max(1, int(3 * phase)),
+                    flash,
+                    False,
+                    receptor,
+                    max(2, int(3 + 5 * phase)),
                 )
 
-        for control, color in (
-            (body.left_hand_control, CYAN),
-            (body.right_hand_control, MAGENTA),
-        ):
-            if not control.visible:
-                continue
-            vx = (control.x - 0.5) * 2.0
-            vy = (control.y - 0.5) * 2.0
-            length = math.hypot(vx, vy)
-            if length > 1.0:
-                vx /= length
-                vy /= length
-                length = 1.0
-            if length < 0.16:
-                radius = inner * 0.42
-                angle = -90.0
-            else:
-                radius = inner * 0.72 + (outer - inner) * 0.78 * length
-                angle = math.degrees(math.atan2(vy, vx))
-            x, y = self._polar(center, radius, angle)
-            pygame.draw.circle(self.screen, BG, (int(x), int(y)), 7)
-            pygame.draw.circle(self.screen, color, (int(x), int(y)), 5, 2)
-
-        if not enabled:
+        if enabled:
+            label = self.small_font.render("HANDS", True, MAGENTA)
+            self.screen.blit(label, label.get_rect(center=(int(center[0]), int(center[1] - 24))))
+        else:
             off = self.small_font.render("NO HAND NOTES", True, _blend(DIM, BG, 0.30))
-            self.screen.blit(off, off.get_rect(center=(int(center[0]), int(center[1] - outer - 18))))
+            self.screen.blit(off, off.get_rect(center=(int(center[0]), int(center[1] - 24))))
 
     def _draw_playfields(
         self,
@@ -230,10 +255,11 @@ class Renderer(_base.Renderer):
                 breathe = 0.5 + 0.5 * math.cos(beat_phase * math.tau)
                 color = _blend(BG, MAGENTA, 0.78 + 0.22 * breathe)
 
+            # Notes stay compact and centered within the much larger segments.
             for lane in note.lanes:
                 x, y = self._hand_target_point(lane, progress)
-                radius = max(5, int(7 + 5 * max(0.0, min(1.0, progress))))
-                pygame.draw.circle(self.screen, BG, (int(x), int(y)), radius + 5)
+                radius = max(6, int(8 + 5 * max(0.0, min(1.0, progress))))
+                pygame.draw.circle(self.screen, BG, (int(x), int(y)), radius + 6)
                 pygame.draw.circle(self.screen, color, (int(x), int(y)), radius)
                 pygame.draw.circle(
                     self.screen,
@@ -284,8 +310,8 @@ class Renderer(_base.Renderer):
             for lane in definition.lanes:
                 p0 = self._hand_target_point(lane, lo)
                 p1 = self._hand_target_point(lane, hi)
-                pygame.draw.line(self.screen, _blend(BG, color, 0.45), p0, p1, 13)
-                pygame.draw.line(self.screen, color, p0, p1, 5)
+                pygame.draw.line(self.screen, _blend(BG, color, 0.45), p0, p1, 15)
+                pygame.draw.line(self.screen, color, p0, p1, 6)
 
     def _draw_receptors(
         self,
@@ -303,11 +329,13 @@ class Renderer(_base.Renderer):
             super()._draw_receptors(body, foot_notes, song_time, False, foot_enabled, foot_events)
         finally:
             self._suppress_legacy_hands = False
+        # Redraw only the fan edges/occupancy after notes so entry/strike flashes
+        # sit above the moving targets. No wrist-position dots are shown.
         self._draw_hand_playfield(body, song_time, 0.0, hand_enabled, strike_events)
 
     def _spawn_note_effects(self, notes: list[GameNote]) -> None:
-        # Keep the mature particle system for feet. Hand confirmation is handled
-        # directly by the radial receptor flashes while this prototype settles.
+        # Keep the mature particle system for feet while the hand presentation
+        # settles; the fan provides direct receptor feedback for hand timing.
         super()._spawn_note_effects([note for note in notes if note.kind == NoteKind.FOOT])
 
     def _draw_body_markers(
@@ -318,6 +346,8 @@ class Renderer(_base.Renderer):
         foot_enabled: bool = True,
         show_lower_body_sources: bool = False,
     ) -> None:
+        # Hand positioning feedback is intentionally tabled for now. Whole
+        # segment highlighting is the only hand-state cue during gameplay.
         super()._draw_body_markers(
             body,
             show_labels=show_labels,
