@@ -1,0 +1,542 @@
+name: Renderer refactor once 2
+
+on:
+  push:
+    branches: ["agent/flatten-renderer"]
+    paths: [".github/workflows/renderer_refactor_once2.yml"]
+
+permissions:
+  contents: write
+
+jobs:
+  refactor:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Apply renderer cleanup
+        shell: bash
+        run: |
+          python - <<'PY'
+          from __future__ import annotations
+
+          import ast
+          from pathlib import Path
+          import textwrap
+
+          def method_source(source: str) -> str:
+              return textwrap.indent(textwrap.dedent(source).strip("\n"), "    ") + "\n"
+
+          def replace_method(path: str, class_name: str, method_name: str, replacement: str) -> None:
+              p = Path(path)
+              text = p.read_text(encoding="utf-8")
+              tree = ast.parse(text)
+              cls = next(
+                  node for node in tree.body
+                  if isinstance(node, ast.ClassDef) and node.name == class_name
+              )
+              node = next(
+                  node for node in cls.body
+                  if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == method_name
+              )
+              lines = text.splitlines(keepends=True)
+              lines[node.lineno - 1:node.end_lineno] = [method_source(replacement)]
+              p.write_text("".join(lines), encoding="utf-8")
+
+          def remove_methods(path: str, class_name: str, names: set[str]) -> None:
+              p = Path(path)
+              text = p.read_text(encoding="utf-8")
+              tree = ast.parse(text)
+              cls = next(
+                  node for node in tree.body
+                  if isinstance(node, ast.ClassDef) and node.name == class_name
+              )
+              targets = [
+                  node for node in cls.body
+                  if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name in names
+              ]
+              found = {node.name for node in targets}
+              missing = names - found
+              assert not missing, f"Missing methods in {path}: {sorted(missing)}"
+              lines = text.splitlines(keepends=True)
+              for node in sorted(targets, key=lambda n: n.lineno, reverse=True):
+                  del lines[node.lineno - 1:node.end_lineno]
+              p.write_text("".join(lines), encoding="utf-8")
+
+          renderer = "vaporstep/renderer.py"
+
+          replace_method(renderer, "Renderer", "_hand_tunnel_geometry", r'''
+          def _scratch_surface(self, name: str, *, alpha: bool = False) -> pygame.Surface:
+              surface = getattr(self, name, None)
+              if surface is None or surface.get_size() != self.size:
+                  surface = pygame.Surface(
+                      self.size,
+                      pygame.SRCALPHA if alpha else 0,
+                  )
+                  setattr(self, name, surface)
+              surface.fill((0, 0, 0, 0) if alpha else (0, 0, 0))
+              return surface
+
+          def _hand_tunnel_geometry(self):
+              cached = getattr(self, "_hand_geometry_cache", None)
+              if cached is not None and cached[0] == self.size:
+                  return cached[1]
+
+              inner, old_outer = self._hand_arc_geometry()
+              viewport = self._camera_rect()
+
+              inner_cx, inner_base_y, inner_rx, inner_ry = inner
+              inner = (
+                  inner_cx,
+                  inner_base_y,
+                  inner_rx,
+                  inner_ry * _HAND_TUNNEL_VERTICAL_SCALE,
+              )
+
+              outer_cx, outer_base_y, old_rx, old_ry = old_outer
+              seam_left = (outer_cx - old_rx, outer_base_y)
+              seam_right = (outer_cx + old_rx, outer_base_y)
+              extension = viewport.width * _HAND_SHOULDER_EXTENSION
+              shoulder_left = (
+                  max(float(viewport.left + 10), seam_left[0] - extension),
+                  outer_base_y,
+              )
+              shoulder_right = (
+                  min(float(viewport.right - 10), seam_right[0] + extension),
+                  outer_base_y,
+              )
+              outer_rx = max(
+                  inner_rx + 20.0,
+                  (shoulder_right[0] - shoulder_left[0]) * 0.5,
+              )
+              outer = (
+                  (shoulder_left[0] + shoulder_right[0]) * 0.5,
+                  outer_base_y,
+                  outer_rx,
+                  old_ry * _HAND_TUNNEL_VERTICAL_SCALE,
+              )
+              result = (inner, outer, (seam_left, seam_right, shoulder_left, shoulder_right))
+              self._hand_geometry_cache = (self.size, result)
+              return result
+          ''')
+
+          replace_method(renderer, "Renderer", "_hand_arc_points", r'''
+          def _hand_arc_points(
+              self,
+              start: float,
+              end: float,
+              progress: float,
+              *,
+              samples: int = 12,
+          ) -> list[tuple[int, int]]:
+              inner, outer, _ = self._hand_tunnel_geometry()
+              p = max(0.0, min(1.0, progress)) ** 1.25
+              points: list[tuple[int, int]] = []
+              for i in range(samples + 1):
+                  along = start + (end - start) * i / samples
+                  ix, iy = self._ellipse_upper_point(inner, along)
+                  ox, oy = self._ellipse_upper_point(outer, along)
+                  points.append((
+                      int(ix + (ox - ix) * p),
+                      int(iy + (oy - iy) * p),
+                  ))
+              return points
+          ''')
+
+          replace_method(renderer, "Renderer", "_draw_particles", r'''
+          def _draw_particles(self, song_time: float) -> None:
+              w, h = self.size
+
+              burst_alive = []
+              for burst in self._impact_bursts:
+                  age = song_time - float(burst["born"])
+                  life = float(burst["life"])
+                  if age < 0.0 or age > life:
+                      continue
+                  phase = age / max(life, 1e-6)
+                  lane = int(burst["lane"])
+                  power = float(burst["power"])
+                  fade = (1.0 - phase) ** 1.4
+                  color = _blend(BG, burst["color"], fade)
+
+                  if burst["kind"] == NoteKind.FOOT:
+                      left, right = self._lane_bounds(NoteKind.FOOT, lane, 1.0)
+                      cx = int((left + right) * 0.5)
+                      cy = int(self._field_y(NoteKind.FOOT, 1.0))
+                      radius = int(max(4.0, right - left) * (0.10 + 0.30 * phase) * power)
+                      diamond = [
+                          (cx, cy - radius),
+                          (cx + radius, cy),
+                          (cx, cy + radius),
+                          (cx - radius, cy),
+                      ]
+                      pygame.draw.polygon(self.screen, _blend(BG, color, 0.24 * fade), diamond)
+                      pygame.draw.polygon(
+                          self.screen,
+                          _blend(BG, color, 0.70),
+                          diamond,
+                          max(1, int(5 * fade)),
+                      )
+                      arm = int(radius * 0.72)
+                      pygame.draw.line(
+                          self.screen, color, (cx - arm, cy), (cx + arm, cy),
+                          max(1, int(3 * fade)),
+                      )
+                      pygame.draw.line(
+                          self.screen, color, (cx, cy - arm), (cx, cy + arm),
+                          max(1, int(3 * fade)),
+                      )
+                  else:
+                      cx, cy = self._hand_target_point(lane, 1.0)
+                      radius = int((18 + 48 * phase) * power)
+                      pygame.draw.circle(
+                          self.screen,
+                          _blend(BG, color, 0.25 * fade),
+                          (int(cx), int(cy)),
+                          radius,
+                      )
+                      pygame.draw.circle(
+                          self.screen,
+                          color,
+                          (int(cx), int(cy)),
+                          radius,
+                          max(1, int(5 * fade)),
+                      )
+                  burst_alive.append(burst)
+              self._impact_bursts = burst_alive
+
+              particle_alive = []
+              for particle in self._particles:
+                  age = song_time - float(particle["born"])
+                  life = float(particle["life"])
+                  if age < 0.0 or age > life:
+                      continue
+                  phase = age / max(life, 1e-6)
+                  progress = max(0.03, 1.0 - age * float(particle["speed"]))
+                  lane = int(particle["lane"])
+                  fade = 1.0 - phase
+                  color = _blend(BG, particle["color"], fade)
+
+                  if particle["kind"] == NoteKind.FOOT:
+                      left, right = self._lane_bounds(NoteKind.FOOT, lane, progress)
+                      lane_width = max(1.0, right - left)
+                      center = (left + right) * 0.5
+                      offset = (
+                          float(particle["jitter"])
+                          + float(particle["drift"]) * phase
+                          + float(particle.get("lateral", 0.0)) * (phase ** 0.72) * 0.72
+                      )
+                      x = center + offset * lane_width
+                      y = self._field_y(NoteKind.FOOT, progress)
+                      length = max(
+                          2.0,
+                          lane_width * float(particle["length"]) * (0.35 + 0.65 * fade),
+                      )
+                      thickness = max(1, int(int(particle["size"]) * (0.65 + fade)))
+                      dx = length * 0.5
+                      dy = dx * float(particle["jitter"]) * 0.35
+                      pygame.draw.line(
+                          self.screen,
+                          _blend(BG, color, 0.42),
+                          (int(x - dx), int(y - dy)),
+                          (int(x + dx), int(y + dy)),
+                          thickness + 3,
+                      )
+                      pygame.draw.line(
+                          self.screen,
+                          color,
+                          (int(x - dx), int(y - dy)),
+                          (int(x + dx), int(y + dy)),
+                          thickness,
+                      )
+                  else:
+                      lane_span = _HAND_BOUNDARIES[lane] - _HAND_BOUNDARIES[lane - 1]
+                      along = _HAND_CENTERS[lane - 1] + (
+                          float(particle["jitter"])
+                          + float(particle.get("lateral", 0.0)) * phase * 0.45
+                      ) * lane_span
+                      x, y = self._hand_point(along, progress)
+                      before = self._hand_point(max(0.0, along - 0.006), progress)
+                      after = self._hand_point(min(1.0, along + 0.006), progress)
+                      tx, ty = after[0] - before[0], after[1] - before[1]
+                      magnitude = max(1.0, math.hypot(tx, ty))
+                      tx, ty = tx / magnitude, ty / magnitude
+                      length = float(particle["length"]) * 70.0 * (0.4 + 0.6 * fade)
+                      pygame.draw.line(
+                          self.screen,
+                          color,
+                          (int(x - tx * length), int(y - ty * length)),
+                          (int(x + tx * length), int(y + ty * length)),
+                          max(1, int(particle["size"])),
+                      )
+                  particle_alive.append(particle)
+              self._particles = particle_alive
+
+              outbound_alive = []
+              for particle in self._outbound_particles:
+                  age = song_time - float(particle["born"])
+                  life = float(particle["life"])
+                  if age < 0.0 or age > life:
+                      continue
+                  phase = age / max(life, 1e-6)
+                  lane = int(particle["lane"])
+                  fade = (1.0 - phase) ** 1.25
+                  color = _blend(BG, particle["color"], fade)
+                  length = float(particle["length"]) * (0.55 + 0.45 * fade)
+
+                  if particle["kind"] == NoteKind.FOOT:
+                      left, right = self._lane_bounds(NoteKind.FOOT, lane, 1.0)
+                      x = (left + right) * 0.5 + float(particle["vx"]) * age
+                      y = self._field_y(NoteKind.FOOT, 1.0) + float(particle["vy"]) * age
+                      pygame.draw.line(
+                          self.screen,
+                          color,
+                          (int(x), int(y - length * 0.5)),
+                          (int(x), int(y + length * 0.5)),
+                          max(1, int(particle["size"])),
+                      )
+                  else:
+                      start = self._hand_target_point(lane, 1.0)
+                      ux, uy = self._hand_lane_direction(lane)
+                      tangent_x, tangent_y = -uy, ux
+                      radial = float(particle["vy"]) * age
+                      lateral = float(particle["vx"]) * age * 0.45
+                      x = start[0] + ux * radial + tangent_x * lateral
+                      y = start[1] + uy * radial + tangent_y * lateral
+                      pygame.draw.line(
+                          self.screen,
+                          color,
+                          (int(x - ux * length * 0.5), int(y - uy * length * 0.5)),
+                          (int(x + ux * length * 0.5), int(y + uy * length * 0.5)),
+                          max(1, int(particle["size"])),
+                      )
+                  outbound_alive.append(particle)
+              self._outbound_particles = outbound_alive
+
+              miss_alive = []
+              for impact in self._miss_impacts:
+                  age = song_time - float(impact["born"])
+                  life = float(impact["life"])
+                  if age < 0.0 or age > life:
+                      continue
+                  phase = age / max(life, 1e-6)
+                  pulse = math.sin(math.pi * min(1.0, phase)) * (1.0 - 0.32 * phase)
+                  lane = int(impact["lane"])
+                  edge = _blend(BG, RED, 0.48 + 0.42 * pulse)
+
+                  if impact["kind"] == NoteKind.FOOT:
+                      left, right = self._lane_bounds(NoteKind.FOOT, lane, 1.0)
+                      pad = max(8.0, (right - left) * 0.15)
+                      hit_y = self._field_y(NoteKind.FOOT, 1.0)
+                      pygame.draw.polygon(
+                          self.screen,
+                          _blend(BG, RED, 0.18 + 0.42 * pulse),
+                          [
+                              (left, hit_y),
+                              (right, hit_y),
+                              (right + pad, h),
+                              (left - pad, h),
+                          ],
+                      )
+                      pygame.draw.line(
+                          self.screen,
+                          edge,
+                          (int(max(0, left - pad)), h - 3),
+                          (int(min(w, right + pad)), h - 3),
+                          max(2, int(5 * pulse)),
+                      )
+                  else:
+                      pygame.draw.lines(
+                          self.screen,
+                          edge,
+                          False,
+                          self._hand_lane_arc(lane, 1.0, 1.0),
+                          max(2, int(7 * pulse)),
+                      )
+                  miss_alive.append(impact)
+              self._miss_impacts = miss_alive
+          ''')
+
+          replace_method(renderer, "Renderer", "_draw_body_markers", r'''
+          def _draw_body_markers(
+              self,
+              body: BodyState,
+              show_labels: bool = False,
+              hand_enabled: bool = True,
+              foot_enabled: bool = True,
+              show_lower_body_sources: bool = False,
+          ) -> None:
+              if foot_enabled:
+                  left_control = (
+                      body.left_foot_control
+                      if body.left_foot_control.visible
+                      else body.left_knee
+                  )
+                  right_control = (
+                      body.right_foot_control
+                      if body.right_foot_control.visible
+                      else body.right_knee
+                  )
+
+                  if show_lower_body_sources:
+                      source_color = _blend(BG, CYAN, 0.42)
+                      for knee, ankle, control in (
+                          (body.left_knee, body.left_ankle, left_control),
+                          (body.right_knee, body.right_ankle, right_control),
+                      ):
+                          if knee.visible and ankle.visible:
+                              pygame.draw.line(
+                                  self.screen,
+                                  _blend(BG, CYAN, 0.25),
+                                  self._screen_point(knee),
+                                  self._screen_point(ankle),
+                                  1,
+                              )
+                          for source in (knee, ankle):
+                              if source.visible:
+                                  pos = self._screen_point(source)
+                                  pygame.draw.circle(self.screen, BG, pos, 5)
+                                  pygame.draw.circle(self.screen, source_color, pos, 4, 1)
+                          if control.visible:
+                              pygame.draw.circle(
+                                  self.screen,
+                                  WHITE,
+                                  self._screen_point(control),
+                                  11,
+                                  1,
+                              )
+
+                  for control in (left_control, right_control):
+                      if not control.visible:
+                          continue
+                      pos = self._screen_point(control)
+                      pygame.draw.circle(self.screen, BG, pos, 9)
+                      pygame.draw.circle(self.screen, CYAN, pos, 7, 2)
+                      if show_labels and control.lane is not None:
+                          label = self.small_font.render(str(control.lane), True, WHITE)
+                          self.screen.blit(label, label.get_rect(center=pos))
+
+              self._draw_hand_tracking_markers(body, hand_enabled)
+          ''')
+
+          p = Path(renderer)
+          text = p.read_text(encoding="utf-8")
+          replacements = [
+              (
+                  "\n        floor_surface = pygame.Surface(self.size, pygame.SRCALPHA)",
+                  '\n        floor_surface = self._scratch_surface("_alpha_scratch", alpha=True)',
+                  1,
+              ),
+              (
+                  "\n        depth_surface = pygame.Surface(self.size, pygame.SRCALPHA)",
+                  '\n        depth_surface = self._scratch_surface("_alpha_scratch", alpha=True)',
+                  1,
+              ),
+              (
+                  "\n        fill_surface = pygame.Surface(self.size, pygame.SRCALPHA)",
+                  '\n        fill_surface = self._scratch_surface("_alpha_scratch", alpha=True)',
+                  1,
+              ),
+              (
+                  "\n        fill = pygame.Surface(self.size, pygame.SRCALPHA)",
+                  '\n        fill = self._scratch_surface("_alpha_scratch", alpha=True)',
+                  1,
+              ),
+              (
+                  "\n        glow = pygame.Surface(self.size)\n        glow.fill((0, 0, 0))",
+                  '\n        glow = self._scratch_surface("_additive_scratch")',
+                  1,
+              ),
+              (
+                  "\n        glow_surface = pygame.Surface(self.size)\n        glow_surface.fill((0, 0, 0))",
+                  '\n        glow_surface = self._scratch_surface("_additive_scratch")',
+                  2,
+              ),
+          ]
+          for old, new, expected in replacements:
+              count = text.count(old)
+              assert count == expected, (old, count, expected)
+              text = text.replace(old, new)
+          p.write_text(text, encoding="utf-8")
+
+          remove_methods(
+              "vaporstep/renderer_base.py",
+              "Renderer",
+              {
+                  "_draw_playfields",
+                  "_draw_chains",
+                  "_draw_notes",
+                  "_spawn_note_effects",
+                  "_draw_particles",
+                  "_draw_receptors",
+                  "_draw_body_markers",
+              },
+          )
+
+          tests = Path("tests/test_renderer_smoke.py")
+          text = tests.read_text(encoding="utf-8")
+          needle = '    assert "super()._draw_particles" not in source\n'
+          assert needle in text
+          text = text.replace(
+              needle,
+              needle + '    assert "super()._draw_body_markers" not in source\n',
+          )
+          text += r'''
+
+          def test_hand_arc_reuses_cached_tunnel_geometry() -> None:
+              pygame.font.init()
+              screen = pygame.Surface((1280, 720))
+              renderer_module = importlib.import_module("vaporstep.renderer")
+              renderer = renderer_module.Renderer(screen)
+              renderer.__dict__.pop("_hand_geometry_cache", None)
+
+              original = renderer._hand_arc_geometry
+              calls = 0
+
+              def counted_geometry():
+                  nonlocal calls
+                  calls += 1
+                  return original()
+
+              renderer._hand_arc_geometry = counted_geometry
+              renderer._hand_arc_points(0.0, 1.0, 0.5, samples=64)
+              renderer._hand_arc_points(0.0, 1.0, 0.75, samples=64)
+
+              assert calls == 1
+          '''
+          tests.write_text(text, encoding="utf-8")
+
+          for path in (renderer, "vaporstep/renderer_base.py", str(tests)):
+              ast.parse(Path(path).read_text(encoding="utf-8"))
+          PY
+
+      - name: Show diff
+        run: git diff --stat && git diff --check
+
+      - name: Install dependencies
+        run: python -m pip install -e ".[build]"
+
+      - name: Run tests
+        run: python -m pytest -q
+
+      - name: Verify generated model documentation
+        shell: bash
+        run: |
+          python scripts/generate_model_docs.py
+          git diff --exit-code -- MODEL_ASSETS.md
+
+      - name: Commit cleanup
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add vaporstep/renderer.py vaporstep/renderer_base.py tests/test_renderer_smoke.py
+          git commit -m "Complete renderer ownership and simplify hot paths"
+          git push
