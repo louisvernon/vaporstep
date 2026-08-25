@@ -15,6 +15,7 @@ from vaporstep.domain import (
     RuntimeChain,
     SustainSource,
 )
+from vaporstep.font_support import MetadataFont
 
 
 def test_renderer_module_imports() -> None:
@@ -76,6 +77,29 @@ def test_renderer_constructs_and_draws_startup_smoke() -> None:
     renderer.draw_startup_splash("TEST")
 
     assert screen.get_size() == (1280, 720)
+
+
+def test_renderer_reuses_unicode_metadata_fonts_for_gameplay_song_titles(monkeypatch) -> None:
+    pygame.font.init()
+    screen = pygame.Surface((1280, 720))
+    renderer_module = importlib.import_module("vaporstep.renderer")
+    renderer = renderer_module.Renderer(screen)
+
+    small = renderer._song_metadata_font(21)
+    assert isinstance(small, MetadataFont)
+    assert renderer._song_metadata_font(21) is small
+
+    rendered_titles = []
+
+    def render_title(text, antialias, color, background=None):
+        rendered_titles.append(text)
+        return pygame.Surface((80, 20), pygame.SRCALPHA)
+
+    monkeypatch.setattr(small, "render", render_title)
+
+    renderer._draw_status("READY", "CAMERA", "星空記憶", "HARD  9", None)
+
+    assert rendered_titles == ["星空記憶"]
 
 
 def test_renderer_draws_gameplay_surfaces_smoke() -> None:

@@ -10,7 +10,7 @@ it, so each row element has one renderer and one source of layout truth.
 import pygame
 
 from .domain import ChainMode
-from .font_support import MetadataFont, SymbolFont
+from .font_support import SymbolFont
 from .records import song_key
 from .renderer import (
     BG,
@@ -27,18 +27,6 @@ from .renderer import (
 
 
 _installed = False
-
-
-def _metadata_font(renderer: Renderer, size: int) -> MetadataFont:
-    fonts = getattr(renderer, "_song_metadata_fonts", None)
-    if fonts is None:
-        fonts = {}
-        renderer._song_metadata_fonts = fonts
-    font = fonts.get(size)
-    if font is None:
-        font = MetadataFont(size)
-        fonts[size] = font
-    return font
 
 
 def _symbol_font(renderer: Renderer) -> SymbolFont:
@@ -90,6 +78,10 @@ def _chart_for_row(menu, song):
     if not song.charts:
         return None
     return song.charts[menu._preferred_chart_index(song)]
+
+
+def _chart_format_label(chart) -> str:
+    return "NATIVE 8-CHANNEL CHART" if chart.native_8_lane else ""
 
 
 def _draw_song_menu(
@@ -151,8 +143,8 @@ def _draw_song_menu(
         self.screen.blit(hint, hint.get_rect(center=(w // 2, h // 2 + 20)))
         return
 
-    title_font = _metadata_font(self, 28)
-    artist_font = _metadata_font(self, 21)
+    title_font = self._song_metadata_font(28)
+    artist_font = self._song_metadata_font(21)
     center_y = int(h * 0.34)
     row_h = 42
     nearest = int(round(menu.visual_position))
@@ -232,6 +224,10 @@ def _draw_song_menu(
 
         chart_title = self.font.render(f"{chart.difficulty.upper()}  {chart.meter}", True, CYAN)
         self.screen.blit(chart_title, (info_x, panel_top))
+        channel_text = _chart_format_label(chart)
+        if channel_text:
+            channel_label = self.small_font.render(channel_text, True, WHITE)
+            self.screen.blit(channel_label, (info_x + chart_title.get_width() + 18, panel_top + 5))
 
         bpm = self.small_font.render(f"BPM  {chart.bpm_label}", True, WHITE)
         targets = self.small_font.render(f"TARGETS  {chart.target_count:,}", True, WHITE)
