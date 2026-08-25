@@ -1517,32 +1517,279 @@ class Renderer(_base.Renderer):
         pygame.draw.line(self.screen, line_color, (foot_right, foot_y), (wall_right, foot_y), 1)
 
     def _spawn_note_effects(self, notes: list[GameNote]) -> None:
-        super()._spawn_note_effects(notes)
+        for note in notes:
+            ident = id(note)
+            if not note.judged or note.judged_at is None:
+                continue
+            if not note.hit:
+                if ident not in self._seen_misses:
+                    self._seen_misses.add(ident)
+                    for lane in note.lanes:
+                        self._miss_impacts.append(
+                            {
+                                "kind": note.kind,
+                                "lane": lane,
+                                "born": note.judged_at,
+                                "life": 0.34,
+                            }
+                        )
+                continue
+            if ident in self._seen_hits:
+                continue
+            self._seen_hits.add(ident)
+            quality = note.judgement or HitQuality.HIT
+            power = {
+                HitQuality.HIT: 1.0,
+                HitQuality.GREAT: 1.35,
+                HitQuality.PERFECT: 1.75,
+            }[quality]
+            base_color = MAGENTA if note.kind == NoteKind.HANDS else CYAN
+            shard_color = _blend(
+                base_color,
+                WHITE,
+                {
+                    HitQuality.HIT: 0.10,
+                    HitQuality.GREAT: 0.35,
+                    HitQuality.PERFECT: 0.60,
+                }[quality],
+            )
+            count = {
+                HitQuality.HIT: 11,
+                HitQuality.GREAT: 17,
+                HitQuality.PERFECT: 25,
+            }[quality]
+            for lane in note.lanes:
+                self._impact_bursts.append(
+                    {
+                        "kind": note.kind,
+                        "lane": lane,
+                        "born": note.judged_at,
+                        "life": {
+                            HitQuality.HIT: 0.18,
+                            HitQuality.GREAT: 0.23,
+                            HitQuality.PERFECT: 0.29,
+                        }[quality],
+                        "power": power,
+                        "color": shard_color,
+                    }
+                )
+                outward_count = {
+                    HitQuality.HIT: 4,
+                    HitQuality.GREAT: 6,
+                    HitQuality.PERFECT: 9,
+                }[quality]
+                for _ in range(outward_count):
+                    self._outbound_particles.append(
+                        {
+                            "kind": note.kind,
+                            "lane": lane,
+                            "born": note.judged_at,
+                            "life": self._rng.uniform(0.20, 0.34),
+                            "vx": self._rng.uniform(-48.0, 48.0) * power,
+                            "vy": self._rng.uniform(150.0, 280.0) * power,
+                            "length": self._rng.uniform(7.0, 18.0) * power,
+                            "size": self._rng.randint(1, 3),
+                            "color": shard_color,
+                        }
+                    )
+                for _ in range(count):
+                    self._particles.append(
+                        {
+                            "kind": note.kind,
+                            "lane": lane,
+                            "born": note.judged_at,
+                            "life": self._rng.uniform(0.38, 0.66)
+                            * (0.95 + 0.12 * power),
+                            "speed": self._rng.uniform(1.05, 2.15)
+                            * (0.90 + 0.12 * power),
+                            "jitter": self._rng.uniform(-0.12, 0.12),
+                            "lateral": self._rng.uniform(-0.95, 0.95),
+                            "drift": self._rng.uniform(-0.20, 0.20),
+                            "length": self._rng.uniform(0.10, 0.24) * power,
+                            "size": self._rng.randint(2, max(3, int(3 + power))),
+                            "color": shard_color,
+                        }
+                    )
 
     def _draw_particles(self, song_time: float) -> None:
-        all_bursts = self._impact_bursts
-        all_particles = self._particles
-        all_outbound = self._outbound_particles
-        all_misses = self._miss_impacts
-
-        hand_bursts = [x for x in all_bursts if x["kind"] == NoteKind.HANDS]
-        hand_particles = [x for x in all_particles if x["kind"] == NoteKind.HANDS]
-        hand_outbound = [x for x in all_outbound if x["kind"] == NoteKind.HANDS]
-        hand_misses = [x for x in all_misses if x["kind"] == NoteKind.HANDS]
-
-        self._impact_bursts = [x for x in all_bursts if x["kind"] != NoteKind.HANDS]
-        self._particles = [x for x in all_particles if x["kind"] != NoteKind.HANDS]
-        self._outbound_particles = [
-            x for x in all_outbound if x["kind"] != NoteKind.HANDS
+        foot_bursts = [
+            x for x in self._impact_bursts if x["kind"] == NoteKind.FOOT
         ]
-        self._miss_impacts = [x for x in all_misses if x["kind"] != NoteKind.HANDS]
-        super()._draw_particles(song_time)
-        foot_bursts = self._impact_bursts
-        foot_particles = self._particles
-        foot_outbound = self._outbound_particles
-        foot_misses = self._miss_impacts
+        hand_bursts = [
+            x for x in self._impact_bursts if x["kind"] == NoteKind.HANDS
+        ]
+        foot_particles = [
+            x for x in self._particles if x["kind"] == NoteKind.FOOT
+        ]
+        hand_particles = [
+            x for x in self._particles if x["kind"] == NoteKind.HANDS
+        ]
+        foot_outbound = [
+            x for x in self._outbound_particles if x["kind"] == NoteKind.FOOT
+        ]
+        hand_outbound = [
+            x for x in self._outbound_particles if x["kind"] == NoteKind.HANDS
+        ]
+        foot_misses = [
+            x for x in self._miss_impacts if x["kind"] == NoteKind.FOOT
+        ]
+        hand_misses = [
+            x for x in self._miss_impacts if x["kind"] == NoteKind.HANDS
+        ]
 
-        burst_alive = []
+        foot_burst_alive = []
+        for burst in foot_bursts:
+            age = song_time - float(burst["born"])
+            life = float(burst["life"])
+            if age < 0.0 or age > life:
+                continue
+            phase = age / max(life, 1e-6)
+            lane = int(burst["lane"])
+            left, right = self._lane_bounds(NoteKind.FOOT, lane, 1.0)
+            cx = int((left + right) * 0.5)
+            cy = int(self._field_y(NoteKind.FOOT, 1.0))
+            lane_w = max(4.0, right - left)
+            power = float(burst["power"])
+            fade = (1.0 - phase) ** 1.4
+            color = _blend(BG, burst["color"], fade)
+            radius = int(lane_w * (0.10 + 0.30 * phase) * power)
+            diamond = [
+                (cx, cy - radius),
+                (cx + radius, cy),
+                (cx, cy + radius),
+                (cx - radius, cy),
+            ]
+            pygame.draw.polygon(
+                self.screen,
+                _blend(BG, color, 0.24 * fade),
+                diamond,
+                0,
+            )
+            pygame.draw.polygon(
+                self.screen,
+                _blend(BG, color, 0.70),
+                diamond,
+                max(1, int(5 * fade)),
+            )
+            arm = int(radius * 0.72)
+            pygame.draw.line(
+                self.screen,
+                color,
+                (cx - arm, cy),
+                (cx + arm, cy),
+                max(1, int(3 * fade)),
+            )
+            pygame.draw.line(
+                self.screen,
+                color,
+                (cx, cy - arm),
+                (cx, cy + arm),
+                max(1, int(3 * fade)),
+            )
+            foot_burst_alive.append(burst)
+
+        foot_particle_alive = []
+        for p in foot_particles:
+            age = song_time - float(p["born"])
+            life = float(p["life"])
+            if age < 0.0 or age > life:
+                continue
+            progress = max(0.03, 1.0 - age * float(p["speed"]))
+            lane = int(p["lane"])
+            left, right = self._lane_bounds(NoteKind.FOOT, lane, progress)
+            lane_w = max(1.0, right - left)
+            center = (left + right) / 2.0
+            particle_phase = age / max(life, 1e-6)
+            drift = float(p["drift"]) * particle_phase
+            lateral = (
+                float(p.get("lateral", 0.0))
+                * (particle_phase ** 0.72)
+                * 0.72
+            )
+            x = center + (float(p["jitter"]) + drift + lateral) * lane_w
+            y = self._field_y(NoteKind.FOOT, progress)
+            fade = 1.0 - age / life
+            color = _blend(BG, p["color"], fade)
+            length = max(
+                2.0,
+                lane_w * float(p["length"]) * (0.35 + 0.65 * fade),
+            )
+            thickness = max(1, int(int(p["size"]) * (0.65 + fade)))
+            tilt = float(p["jitter"]) * 0.35
+            dx = length * 0.5
+            dy = dx * tilt
+            pygame.draw.line(
+                self.screen,
+                _blend(BG, color, 0.42),
+                (int(x - dx), int(y - dy)),
+                (int(x + dx), int(y + dy)),
+                thickness + 3,
+            )
+            pygame.draw.line(
+                self.screen,
+                color,
+                (int(x - dx), int(y - dy)),
+                (int(x + dx), int(y + dy)),
+                thickness,
+            )
+            foot_particle_alive.append(p)
+
+        foot_outward_alive = []
+        for p in foot_outbound:
+            age = song_time - float(p["born"])
+            life = float(p["life"])
+            if age < 0.0 or age > life:
+                continue
+            lane = int(p["lane"])
+            left, right = self._lane_bounds(NoteKind.FOOT, lane, 1.0)
+            cx = (left + right) * 0.5
+            hit_y = self._field_y(NoteKind.FOOT, 1.0)
+            phase = age / max(life, 1e-6)
+            x = cx + float(p["vx"]) * age
+            y = hit_y + float(p["vy"]) * age
+            fade = (1.0 - phase) ** 1.25
+            color = _blend(BG, p["color"], fade)
+            length = float(p["length"]) * (0.55 + 0.45 * fade)
+            pygame.draw.line(
+                self.screen,
+                color,
+                (int(x), int(y - length * 0.5)),
+                (int(x), int(y + length * 0.5)),
+                max(1, int(p["size"])),
+            )
+            foot_outward_alive.append(p)
+
+        foot_miss_alive = []
+        w, h = self.size
+        for impact in foot_misses:
+            age = song_time - float(impact["born"])
+            life = float(impact["life"])
+            if age < 0.0 or age > life:
+                continue
+            lane = int(impact["lane"])
+            phase = age / max(life, 1e-6)
+            pulse = math.sin(math.pi * min(1.0, phase)) * (1.0 - 0.32 * phase)
+            left, right = self._lane_bounds(NoteKind.FOOT, lane, 1.0)
+            pad = max(8.0, (right - left) * 0.15)
+            hit_y = self._field_y(NoteKind.FOOT, 1.0)
+            points = [
+                (left, hit_y),
+                (right, hit_y),
+                (right + pad, h),
+                (left - pad, h),
+            ]
+            glow = _blend(BG, RED, 0.18 + 0.42 * pulse)
+            pygame.draw.polygon(self.screen, glow, points, 0)
+            pygame.draw.line(
+                self.screen,
+                _blend(BG, RED, 0.48 + 0.42 * pulse),
+                (int(max(0, left - pad)), h - 3),
+                (int(min(w, right + pad)), h - 3),
+                max(2, int(5 * pulse)),
+            )
+            foot_miss_alive.append(impact)
+
+        hand_burst_alive = []
         for burst in hand_bursts:
             age = song_time - float(burst["born"])
             life = float(burst["life"])
@@ -1568,9 +1815,9 @@ class Renderer(_base.Renderer):
                 radius,
                 max(1, int(5 * fade)),
             )
-            burst_alive.append(burst)
+            hand_burst_alive.append(burst)
 
-        particle_alive = []
+        hand_particle_alive = []
         for p in hand_particles:
             age = song_time - float(p["born"])
             life = float(p["life"])
@@ -1601,9 +1848,9 @@ class Renderer(_base.Renderer):
                 (int(x + tx * length), int(y + ty * length)),
                 max(1, int(p["size"])),
             )
-            particle_alive.append(p)
+            hand_particle_alive.append(p)
 
-        outward_alive = []
+        hand_outward_alive = []
         for p in hand_outbound:
             age = song_time - float(p["born"])
             life = float(p["life"])
@@ -1628,9 +1875,9 @@ class Renderer(_base.Renderer):
                 (int(x + ux * length * 0.5), int(y + uy * length * 0.5)),
                 max(1, int(p["size"])),
             )
-            outward_alive.append(p)
+            hand_outward_alive.append(p)
 
-        miss_alive = []
+        hand_miss_alive = []
         for impact in hand_misses:
             age = song_time - float(impact["born"])
             life = float(impact["life"])
@@ -1647,12 +1894,12 @@ class Renderer(_base.Renderer):
                 arc,
                 max(2, int(7 * pulse)),
             )
-            miss_alive.append(impact)
+            hand_miss_alive.append(impact)
 
-        self._impact_bursts = [*foot_bursts, *burst_alive]
-        self._particles = [*foot_particles, *particle_alive]
-        self._outbound_particles = [*foot_outbound, *outward_alive]
-        self._miss_impacts = [*foot_misses, *miss_alive]
+        self._impact_bursts = [*foot_burst_alive, *hand_burst_alive]
+        self._particles = [*foot_particle_alive, *hand_particle_alive]
+        self._outbound_particles = [*foot_outward_alive, *hand_outward_alive]
+        self._miss_impacts = [*foot_miss_alive, *hand_miss_alive]
 
     def _draw_hand_tracking_markers(self, body: BodyState, enabled: bool) -> None:
         if not enabled:
