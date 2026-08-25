@@ -125,23 +125,24 @@ def test_broken_generated_chain_preserves_combo_and_does_not_resume(monkeypatch)
 
     clock[0] = 0.90
     session.update(_body(0.90, 1), True)
-    clock[0] = 1.16
-    session.update(_body(1.16, 1), True)
+    last_occupancy = 1.16
+    clock[0] = last_occupancy
+    session.update(_body(last_occupancy, 1), True)
     assert session.chains[0].state == ChainState.ACTIVE
     assert session.stats.combo == 1
 
-    # Generated holds use the same dropout/cross-step grace as authored holds.
+    # Grace starts at the last valid occupancy, not at the first bad frame.
     first_dropout = 1.40
     clock[0] = first_dropout
     session.update(_body(first_dropout, 2), True)
     assert session.chains[0].state == ChainState.ACTIVE
 
-    before_break = first_dropout + HOLD_OCCUPANCY_GRACE_SECONDS - 0.01
+    before_break = last_occupancy + HOLD_OCCUPANCY_GRACE_SECONDS - 0.01
     clock[0] = before_break
     session.update(_body(before_break, 2), True)
     assert session.chains[0].state == ChainState.ACTIVE
 
-    after_break = first_dropout + HOLD_OCCUPANCY_GRACE_SECONDS + 0.01
+    after_break = last_occupancy + HOLD_OCCUPANCY_GRACE_SECONDS + 0.01
     clock[0] = after_break
     session.update(_body(after_break, 2), True)
     assert session.chains[0].state == ChainState.BROKEN
@@ -223,8 +224,9 @@ def test_dropping_explicit_hold_preserves_combo_and_does_not_resume(monkeypatch)
 
     clock[0] = 0.90
     session.update(_body(0.90, 1), True)
-    clock[0] = 1.16
-    session.update(_body(1.16, 1), True)
+    last_occupancy = 1.16
+    clock[0] = last_occupancy
+    session.update(_body(last_occupancy, 1), True)
     assert session.chains[0].state == ChainState.ACTIVE
     assert session.stats.combo == 1
 
@@ -236,12 +238,12 @@ def test_dropping_explicit_hold_preserves_combo_and_does_not_resume(monkeypatch)
     events = session.drain_gameplay_events()
     assert all(event.event_type != GameplayEventType.SUSTAIN_BREAK for event in events)
 
-    before_break = first_dropout + HOLD_OCCUPANCY_GRACE_SECONDS - 0.01
+    before_break = last_occupancy + HOLD_OCCUPANCY_GRACE_SECONDS - 0.01
     clock[0] = before_break
     session.update(_body(before_break, 2), True)
     assert session.chains[0].state == ChainState.ACTIVE
 
-    after_break = first_dropout + HOLD_OCCUPANCY_GRACE_SECONDS + 0.01
+    after_break = last_occupancy + HOLD_OCCUPANCY_GRACE_SECONDS + 0.01
     clock[0] = after_break
     session.update(_body(after_break, 2), True)
     assert session.chains[0].state == ChainState.BROKEN
