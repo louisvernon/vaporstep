@@ -1,5 +1,5 @@
 from vaporstep.domain import BodyPoint
-from vaporstep.hand_control import HandPoseResolver
+from vaporstep.hand_control import HandPoseResolver, hand_control_perimeter_along
 
 
 def point(x: float, y: float) -> BodyPoint:
@@ -15,7 +15,7 @@ def test_neutral_wrist_does_not_occupy_a_lane():
     resolver = HandPoseResolver()
     sample = resolver.resolve(point(0.50, 0.48), left_shoulder, right_shoulder)
     assert sample.lane is None
-    assert sample.visual.visible
+    assert sample.control.visible
 
 
 def test_any_wrist_can_select_either_outer_segment():
@@ -77,3 +77,27 @@ def test_high_side_hysteresis_prevents_centerline_flicker():
     # Slightly right of center remains lane 2 until crossing the side hysteresis.
     assert resolver.resolve(point(0.51, 0.30), left_shoulder, right_shoulder).lane == 2
     assert resolver.resolve(point(0.53, 0.30), left_shoulder, right_shoulder).lane == 3
+
+
+def test_canonical_perimeter_mapping_tracks_the_same_gesture_space():
+    left_shoulder, right_shoulder = shoulders()
+    resolver = HandPoseResolver()
+
+    left_out = resolver.resolve(point(0.34, 0.46), left_shoulder, right_shoulder)
+    assert left_out.lane == 1
+    assert 0.0 <= hand_control_perimeter_along(left_out.control) < 0.25
+
+    resolver.reset()
+    left_high = resolver.resolve(point(0.44, 0.30), left_shoulder, right_shoulder)
+    assert left_high.lane == 2
+    assert 0.25 < hand_control_perimeter_along(left_high.control) < 0.50
+
+    resolver.reset()
+    right_high = resolver.resolve(point(0.56, 0.30), left_shoulder, right_shoulder)
+    assert right_high.lane == 3
+    assert 0.50 < hand_control_perimeter_along(right_high.control) < 0.75
+
+    resolver.reset()
+    right_out = resolver.resolve(point(0.66, 0.46), left_shoulder, right_shoulder)
+    assert right_out.lane == 4
+    assert 0.75 < hand_control_perimeter_along(right_out.control) <= 1.0
