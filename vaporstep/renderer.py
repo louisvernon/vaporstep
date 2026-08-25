@@ -704,6 +704,44 @@ class Renderer(_base.Renderer):
         edge = self._scaled_additive_color(color, intensity * 0.18)
         pygame.draw.lines(surface, edge, False, projected, 2)
 
+    def _aperture_target_points(
+        self,
+        kind: NoteKind,
+        lane: int,
+    ) -> tuple[list[tuple[int, int]], int]:
+        """Return a pre-entry cue that sits inside the tunnel opening."""
+        inner, _, _ = self._hand_tunnel_geometry()
+        cx, base_y, rx, ry = inner
+
+        if kind == NoteKind.HANDS:
+            start = _HAND_BOUNDARIES[lane - 1]
+            end = _HAND_BOUNDARIES[lane]
+            center = _HAND_CENTERS[lane - 1]
+            half = (end - start) * 0.5 * _HAND_NOTE_ARC_FRACTION
+            inset = 0.16
+            points = []
+            samples = 18
+            for i in range(samples + 1):
+                along = center - half + (2.0 * half) * i / samples
+                x, y = self._ellipse_upper_point(inner, along)
+                points.append((
+                    int(cx + (x - cx) * (1.0 - inset)),
+                    int(base_y + (y - base_y) * (1.0 - inset)),
+                ))
+            return points, 5
+
+        left = cx - rx * 0.84
+        right = cx + rx * 0.84
+        lane_width = (right - left) / 4.0
+        lane_left = left + (lane - 1) * lane_width
+        lane_right = lane_left + lane_width
+        pad = max(2.0, lane_width * 0.08)
+        y = base_y - max(5.0, ry * 0.12)
+        return (
+            [(int(lane_left + pad), int(y)), (int(lane_right - pad), int(y))],
+            5,
+        )
+
     def _draw_source_glow(
         self,
         surface: pygame.Surface,
@@ -714,25 +752,15 @@ class Renderer(_base.Renderer):
         *,
         preentry: bool = False,
     ) -> None:
-        if preentry and kind == NoteKind.FOOT:
-            points, core_width = self._target_points(kind, lane, 0.08)
-            self._draw_preentry_glow(
-                surface,
-                points,
-                CYAN,
-                intensity * 1.15,
-                core_width,
-            )
-            return
-
         theme = MAGENTA if kind == NoteKind.HANDS else CYAN
         if preentry:
-            points, core_width = self._target_points(kind, lane, 0.0)
+            points, core_width = self._aperture_target_points(kind, lane)
+            boost = 1.15 if kind == NoteKind.FOOT else 0.92
             self._draw_preentry_glow(
                 surface,
                 points,
                 theme,
-                intensity * 0.92,
+                intensity * boost,
                 core_width,
             )
             return
