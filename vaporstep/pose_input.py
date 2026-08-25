@@ -15,8 +15,6 @@ from .config import (
     CAMERA_WIDTH,
     FOOT_PLAYFIELD_LEFT,
     FOOT_PLAYFIELD_RIGHT,
-    HAND_PLAYFIELD_LEFT,
-    HAND_PLAYFIELD_RIGHT,
     LANDMARK_VISIBILITY_THRESHOLD,
     LOWER_BODY_ANKLE_BLEND,
     LOWER_BODY_ANKLE_CONFIDENCE_HIGH,
@@ -27,12 +25,12 @@ from .config import (
     OUTER_LANE_ASSIST,
     OUTER_LANE_EDGE_EXTENSION,
     LANE_PERSPECTIVE_STRENGTH,
-    HAND_HIT_Y,
     FOOT_HIT_Y,
     VANISH_HALF_WIDTH,
     VANISH_Y,
 )
 from .domain import BodyPoint, BodyState
+from .hand_control import HandPoseResolver
 from .lanes import (
     HystereticLaneResolver,
     lower_leg_control_position,
@@ -41,6 +39,8 @@ from .lanes import (
 )
 
 
+LEFT_SHOULDER = 11
+RIGHT_SHOULDER = 12
 LEFT_WRIST = 15
 RIGHT_WRIST = 16
 LEFT_KNEE = 25
@@ -148,14 +148,14 @@ class PoseCameraInput:
             "left": _LowerLegFilter(),
             "right": _LowerLegFilter(),
         }
+        self._hand_resolvers = {
+            "left": HandPoseResolver("left"),
+            "right": HandPoseResolver("right"),
+        }
 
+        # Feet remain an absolute floor-placement problem. Hands deliberately do
+        # not use these perspective lane resolvers anymore.
         self._resolvers = {
-            "lw": HystereticLaneResolver(
-                HAND_PLAYFIELD_LEFT, HAND_PLAYFIELD_RIGHT, LANE_COUNT, LANE_HYSTERESIS, OUTER_LANE_ASSIST, OUTER_LANE_EDGE_EXTENSION
-            ),
-            "rw": HystereticLaneResolver(
-                HAND_PLAYFIELD_LEFT, HAND_PLAYFIELD_RIGHT, LANE_COUNT, LANE_HYSTERESIS, OUTER_LANE_ASSIST, OUTER_LANE_EDGE_EXTENSION
-            ),
             "lk": HystereticLaneResolver(
                 FOOT_PLAYFIELD_LEFT, FOOT_PLAYFIELD_RIGHT, LANE_COUNT, LANE_HYSTERESIS, OUTER_LANE_ASSIST, OUTER_LANE_EDGE_EXTENSION
             ),
@@ -171,8 +171,6 @@ class PoseCameraInput:
         if self._thread and self._thread.is_alive():
             return
 
-        # MediaPipe and the native vision stack are pinned in pyproject.toml so
-        # local and packaged builds exercise the same graph implementation.
         options = mp.tasks.vision.PoseLandmarkerOptions(
             base_options=mp.tasks.BaseOptions(model_asset_path=self.model_path),
             running_mode=mp.tasks.vision.RunningMode.LIVE_STREAM,
@@ -207,9 +205,6 @@ class PoseCameraInput:
         return _open_camera_capture(self.camera_index)
 
     def _capture_loop(self) -> None:
-        # Opening a camera can legitimately fail on first launch while macOS is
-        # waiting for the user to answer its camera-permission dialog. Keep the
-        # capture thread alive and retry the same selected device.
         t0 = time.monotonic()
         last_timestamp_ms = -1
         failed_reads = 0
@@ -247,7 +242,7 @@ class PoseCameraInput:
                     self._snapshot = PoseSnapshot(
                         body=BodyState(),
                         camera_ok=True,
-                        message="Looking for wrists and lower legs…",
+                        message="Looking for wrists, shoulders and lower legs…",
                     )
 
             ok, bgr = self._capture.read()
@@ -283,8 +278,6 @@ class PoseCameraInput:
 
     @staticmethod
     def _visible(lm) -> bool:
-        # Preserve the existing pose-acceptance rule for wrists/knees. Ankle
-        # blending uses the continuous confidence value separately below.
         visibility = float(lm.visibility or 0.0)
         presence = float(lm.presence or 0.0)
         return visibility >= LANDMARK_VISIBILITY_THRESHOLD and presence >= 0.35
@@ -293,7 +286,6 @@ class PoseCameraInput:
         """Return a displayed camera-space point without resolving a lane."""
         if visible is None:
             visible = self._visible(lm)
-        # Detection is on the unmirrored image; invert x for the mirrored view.
         x = zoom_normalized_x(1.0 - float(lm.x), self.horizontal_zoom)
         return BodyPoint(x=x, y=float(lm.y), visible=bool(visible))
 
@@ -304,7 +296,6 @@ class PoseCameraInput:
         *,
         hit_y: float,
     ) -> BodyPoint:
-        """Resolve a camera-space point through the perspective lane map."""
         if not point.visible:
             resolver.current_lane = None
             return point
@@ -326,15 +317,6 @@ class PoseCameraInput:
             source_weight=point.source_weight,
         )
 
-    def _point(
-        self,
-        lm,
-        resolver: HystereticLaneResolver,
-        *,
-        hit_y: float,
-    ) -> BodyPoint:
-        return self._resolve_point(self._camera_point(lm), resolver, hit_y=hit_y)
-
     def _lower_body_points(
         self,
         knee_lm,
@@ -343,12 +325,6 @@ class PoseCameraInput:
         *,
         leg: str,
     ) -> tuple[BodyPoint, BodyPoint, BodyPoint]:
-        """Return raw knee/ankle sources and a responsive shin lane-control point.
-
-        Lane occupancy follows the virtual point. Stomp velocity continues to
-        use the actual knee coordinates, but the knee carries the control point's
-        resolved lane so timing events line up with lower-body occupancy.
-        """
         knee = self._camera_point(knee_lm)
         ankle_confidence = self._confidence(ankle_lm)
         ankle = self._camera_point(ankle_lm, visible=ankle_confidence > 0.10)
@@ -403,13 +379,15 @@ class PoseCameraInput:
         if not result.pose_landmarks:
             for resolver in self._resolvers.values():
                 resolver.current_lane = None
+            for resolver in self._hand_resolvers.values():
+                resolver.reset()
             for tracker in self._lower_leg_filters.values():
                 tracker.reset()
             snapshot = PoseSnapshot(
                 body=BodyState(timestamp=now),
                 mask=None,
                 camera_ok=True,
-                message="Move into view so your wrists and lower legs are visible",
+                message="Move into view so your wrists, shoulders and lower legs are visible",
                 pose_fps=self._pose_fps_ema,
             )
             with self._lock:
@@ -417,8 +395,28 @@ class PoseCameraInput:
             return
 
         lm = result.pose_landmarks[0]
-        lw = self._point(lm[LEFT_WRIST], self._resolvers["lw"], hit_y=HAND_HIT_Y)
-        rw = self._point(lm[RIGHT_WRIST], self._resolvers["rw"], hit_y=HAND_HIT_Y)
+        left_shoulder = self._camera_point(lm[LEFT_SHOULDER])
+        right_shoulder = self._camera_point(lm[RIGHT_SHOULDER])
+        raw_lw = self._camera_point(lm[LEFT_WRIST])
+        raw_rw = self._camera_point(lm[RIGHT_WRIST])
+        left_hand = self._hand_resolvers["left"].resolve(raw_lw, left_shoulder, right_shoulder)
+        right_hand = self._hand_resolvers["right"].resolve(raw_rw, left_shoulder, right_shoulder)
+
+        # Keep raw camera coordinates for motion velocity while attaching the
+        # resolved body-relative lane used by timing events.
+        lw = BodyPoint(
+            x=raw_lw.x,
+            y=raw_lw.y,
+            lane=left_hand.lane,
+            visible=raw_lw.visible,
+        )
+        rw = BodyPoint(
+            x=raw_rw.x,
+            y=raw_rw.y,
+            lane=right_hand.lane,
+            visible=raw_rw.visible,
+        )
+
         lk, la, lfc = self._lower_body_points(
             lm[LEFT_KNEE], lm[LEFT_ANKLE], self._resolvers["lk"], leg="left"
         )
@@ -429,6 +427,8 @@ class PoseCameraInput:
         body = BodyState(
             left_wrist=lw,
             right_wrist=rw,
+            left_hand_control=left_hand.visual,
+            right_hand_control=right_hand.visual,
             left_knee=lk,
             right_knee=rk,
             left_ankle=la,
@@ -444,12 +444,14 @@ class PoseCameraInput:
             raw = result.segmentation_masks[0].numpy_view()
             mask = np.flip(raw.copy(), axis=1)
 
-        keypoints = (lw, rw, lfc, rfc)
-        if not all(p.visible for p in keypoints):
-            message = "Keep both wrists and lower legs visible"
-        elif any(p.lane is None for p in keypoints):
-            message = "Move into the hand / foot play areas"
+        visible_keypoints = (raw_lw, raw_rw, left_shoulder, right_shoulder, lfc, rfc)
+        if not all(p.visible for p in visible_keypoints):
+            message = "Keep wrists, shoulders and lower legs visible"
+        elif any(p.lane is None for p in (lfc, rfc)):
+            message = "Move your feet into the floor play area"
         else:
+            # Neutral is the intended resting hand state; hand lanes are not
+            # required to be active before gameplay can begin.
             message = "READY"
 
         with self._lock:
