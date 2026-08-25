@@ -9,18 +9,18 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from vaporstep.model_asset import load_pose_model_spec, verify_model
-from fetch_noto_emoji import main as fetch_noto_emoji
 
 
-root = ROOT
-spec = load_pose_model_spec()
-out = root / "assets" / spec.filename
-out.parent.mkdir(parents=True, exist_ok=True)
+def main() -> None:
+    spec = load_pose_model_spec()
+    out = ROOT / "assets" / spec.filename
+    out.parent.mkdir(parents=True, exist_ok=True)
 
-ok, reason = verify_model(out, spec)
-if ok:
-    print(f"{spec.name} v{spec.version} already present and verified: {out}")
-else:
+    ok, reason = verify_model(out, spec)
+    if ok:
+        print(f"{spec.name} v{spec.version} already present and verified: {out}")
+        return
+
     if out.exists():
         print(f"Existing model is not the pinned artifact ({reason}); replacing it.")
         out.unlink()
@@ -41,6 +41,6 @@ else:
     print(f"Verified SHA-256: {spec.sha256}")
     print(f"Installed: {out}")
 
-# Release workflows already run this script before PyInstaller, so fetch the
-# deterministic UI symbol font here as a second pinned build asset.
-fetch_noto_emoji()
+
+if __name__ == "__main__":
+    main()
