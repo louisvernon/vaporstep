@@ -22,12 +22,14 @@ def test_camera_prompt_names_required_limbs_and_keyboard_alternative():
 
 
 def test_ready_camera_does_not_show_redundant_keyboard_alternative():
-    visible = BodyPoint(lane=1, visible=True)
+    left_hand = BodyPoint(lane=2, visible=True)
+    right_hand = BodyPoint(lane=3, visible=True)
+    foot = BodyPoint(lane=1, visible=True)
     body = BodyState(
-        left_wrist=visible,
-        right_wrist=visible,
-        left_knee=visible,
-        right_knee=visible,
+        left_wrist=left_hand,
+        right_wrist=right_hand,
+        left_knee=foot,
+        right_knee=foot,
     )
 
     assert camera_ready_prompt(readiness_for_session(body, _mixed_session())) == "READY"

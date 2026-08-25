@@ -18,6 +18,8 @@ class BodyPoint:
 class BodyState:
     left_wrist: BodyPoint = field(default_factory=BodyPoint)
     right_wrist: BodyPoint = field(default_factory=BodyPoint)
+    left_hand_control: BodyPoint = field(default_factory=BodyPoint)
+    right_hand_control: BodyPoint = field(default_factory=BodyPoint)
     left_knee: BodyPoint = field(default_factory=BodyPoint)
     right_knee: BodyPoint = field(default_factory=BodyPoint)
     left_ankle: BodyPoint = field(default_factory=BodyPoint)
@@ -31,9 +33,16 @@ class BodyState:
 
     @property
     def hand_lanes(self) -> frozenset[int]:
+        controls = (self.left_hand_control, self.right_hand_control)
+        if any(p.visible for p in controls):
+            points = controls
+        else:
+            # Keyboard/synthetic states from older code can still supply wrist
+            # lanes directly. Webcam tracking now uses body-relative controls.
+            points = (self.left_wrist, self.right_wrist)
         tracked = frozenset(
             p.lane
-            for p in (self.left_wrist, self.right_wrist)
+            for p in points
             if p.visible and p.lane is not None
         )
         return tracked | self.supplemental_hand_lanes
@@ -80,7 +89,6 @@ class ChainMode(str, Enum):
         return "ON" if self == ChainMode.BLOCKS else "OFF"
 
     def shifted(self, delta: int = 1) -> "ChainMode":
-        # Kept as a tiny two-state helper for callers that already use shifted().
         return ChainMode.OFF if self == ChainMode.BLOCKS else ChainMode.BLOCKS
 
 
@@ -93,8 +101,6 @@ class GameplayEventType(str, Enum):
 
 @dataclass(frozen=True)
 class GameplayEvent:
-    """Small immutable event used by live SFX and recording reconstruction."""
-
     time: float
     event_type: GameplayEventType
     kind: NoteKind
@@ -162,7 +168,6 @@ class GameNote:
 
 
 def occupancy_is_fresh(last_occupancy_at: float | None, now: float, grace_seconds: float) -> bool:
-    """Whether a lane was occupied recently enough to count at the receptor."""
     return (
         last_occupancy_at is not None
         and 0.0 <= now - last_occupancy_at <= grace_seconds

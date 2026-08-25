@@ -8,8 +8,7 @@ from .domain import GameNote, ImplicitChain, NoteKind, SustainSource
 
 MAX_CHAIN_GAP_BEATS = 2.0
 MIN_CHAIN_NOTES = 3
-CHAIN_OCCUPANCY_GRACE_SECONDS = 0.20
-HOLD_OCCUPANCY_GRACE_SECONDS = 0.30
+HOLD_OCCUPANCY_GRACE_SECONDS = 0.50
 
 
 @dataclass(frozen=True)
@@ -30,8 +29,6 @@ def _overlaps(a_start: float, a_end: float, b_start: float, b_end: float) -> boo
 def _candidate_runs(notes: list[GameNote]) -> list[_Candidate]:
     groups: dict[tuple[NoteKind, tuple[int, ...]], list[int]] = {}
     for index, note in enumerate(notes):
-        # Explicit source-chart holds/rolls are their own sustained segments and
-        # are never folded into VaporStep's implicit repeated-step chains.
         if note.end_time is not None or note.beat is None:
             continue
         groups.setdefault((note.kind, note.lanes), []).append(index)
@@ -71,8 +68,6 @@ def _candidate_runs(notes: list[GameNote]) -> list[_Candidate]:
             previous_beat = beat
         flush()
 
-    # Earlier musical phrases win ties; within the same start, prefer the
-    # stronger/longer repeated pattern. This keeps conflict resolution stable.
     result.sort(key=lambda c: (c.start_time, -len(c.note_indices), c.kind.value, c.lanes))
     return result
 
@@ -82,13 +77,6 @@ def _candidate_is_playable(
     accepted: list[_Candidate],
     notes: list[GameNote],
 ) -> bool:
-    """Reject implicit chains that would reserve more than two limbs.
-
-    Both accepted implicit chains and explicit source-chart holds are treated as
-    continuous reservations. Discrete notes are point-in-time requirements.
-    We evaluate every time at which that reservation set can change so a
-    generated chain cannot create a three-hand/three-foot impossibility.
-    """
     kind = candidate.kind
 
     event_times: set[float] = {candidate.start_time, candidate.end_time}
@@ -117,10 +105,8 @@ def _candidate_is_playable(
         for note in notes:
             if note.kind != kind:
                 continue
-            # Explicit hold/roll reserves lanes continuously from head to tail.
             if note.end_time is not None and note.time - 1e-9 <= t <= note.end_time + 1e-9:
                 occupied.update(note.lanes)
-            # Any source note at this timestamp is also a discrete requirement.
             elif abs(note.time - t) <= 1e-9:
                 occupied.update(note.lanes)
 
@@ -131,13 +117,6 @@ def _candidate_is_playable(
 
 
 def assign_implicit_chains(notes: Iterable[GameNote]) -> tuple[ImplicitChain, ...]:
-    """Annotate notes with safe, implicit repeated-step chains.
-
-    Chains require at least three identical non-hold targets and permit gaps of
-    up to two beats. Candidate chains are accepted only when their continuous
-    lane reservations cannot make the original chart require more than two
-    hands or feet at once. Explicit holds participate in that reservation check.
-    """
     note_list = list(notes)
     for note in note_list:
         note.chain_id = None
@@ -181,12 +160,6 @@ def assign_implicit_chains(notes: Iterable[GameNote]) -> tuple[ImplicitChain, ..
 def assign_explicit_holds(
     notes: Iterable[GameNote], *, first_id: int = 0
 ) -> tuple[ImplicitChain, ...]:
-    """Turn parsed source-chart holds/rolls into sustained runtime segments.
-
-    Each hold keeps its ordinary timed head note, then adds one virtual
-    completion judgement at the tail. The same continuous-occupancy runtime and
-    renderer used by implicit chains can therefore handle both mechanics.
-    """
     note_list = list(notes)
     holds: list[ImplicitChain] = []
     next_id = int(first_id)
@@ -216,11 +189,6 @@ def assign_explicit_holds(
 
 
 def assign_sustains(notes: Iterable[GameNote]) -> tuple[tuple[ImplicitChain, ...], tuple[ImplicitChain, ...]]:
-    """Assign implicit chains and explicit holds with one unique ID space.
-
-    Returns ``(implicit_chains, all_sustains)`` so UI statistics can continue to
-    report only generated chains while gameplay/rendering receives both kinds.
-    """
     note_list = list(notes)
     implicit = assign_implicit_chains(note_list)
     explicit = assign_explicit_holds(note_list, first_id=len(implicit))

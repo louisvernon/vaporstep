@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+import time
 
 import pygame
 
@@ -17,6 +18,7 @@ HAND_KEYS = (pygame.K_a, pygame.K_s, pygame.K_d, pygame.K_f)
 FOOT_KEYS = (pygame.K_j, pygame.K_k, pygame.K_l, pygame.K_SEMICOLON)
 HAND_KEY_LABELS = ("A", "S", "D", "F")
 FOOT_KEY_LABELS = ("J", "K", "L", ";")
+KEY_REPRESS_GUARD_SECONDS = 0.05
 
 _KEY_LANES = {
     **{key: (NoteKind.HANDS, lane) for lane, key in enumerate(HAND_KEYS, start=1)},
@@ -34,7 +36,6 @@ def label_for_lane(kind: NoteKind, lane: int) -> str:
 
 
 def add_keyboard_lanes(camera_body: BodyState, keyboard_body: BodyState) -> BodyState:
-    """Add held keyboard lanes without replacing webcam tracking data."""
     return replace(
         camera_body,
         supplemental_hand_lanes=(
@@ -60,22 +61,27 @@ class KeyboardBodyInput:
     def __init__(self) -> None:
         self._pressed: set[int] = set()
         self._latched: set[int] = set()
+        self._last_press_at: dict[int, float] = {}
 
     def reset(self) -> None:
         self._pressed.clear()
         self._latched.clear()
+        self._last_press_at.clear()
 
     def press(self, key: int, *, repeat: bool = False) -> tuple[NoteKind, int] | None:
         mapping = lane_for_key(key)
         if mapping is None:
             return None
-        first_press = int(key) not in self._pressed and not repeat
-        self._pressed.add(int(key))
+        key = int(key)
+        now = time.monotonic()
+        first_press = key not in self._pressed and not repeat
+        self._pressed.add(key)
         if first_press:
-            # Keep very short taps occupied for one game update even if their
-            # KEYUP event arrives in the same rendered frame.
-            self._latched.add(int(key))
-            return mapping
+            self._latched.add(key)
+            previous = self._last_press_at.get(key, -999.0)
+            self._last_press_at[key] = now
+            if now - previous >= KEY_REPRESS_GUARD_SECONDS:
+                return mapping
         return None
 
     def release(self, key: int) -> None:
@@ -111,8 +117,5 @@ class KeyboardBodyInput:
                 feet[1], 0.69, FOOT_PLAYFIELD_LEFT, FOOT_PLAYFIELD_RIGHT
             ),
             pose_visible=bool(any(x is not None for x in feet + hands)),
-            # Keyboard presses enter MotionTracker explicitly. A zero body
-            # timestamp prevents held keys from generating camera-style lane
-            # transition events as well.
             timestamp=0.0,
         )
