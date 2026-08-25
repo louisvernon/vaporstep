@@ -241,3 +241,21 @@ def test_hand_arc_reuses_cached_tunnel_geometry() -> None:
     renderer._hand_arc_points(0.0, 1.0, 0.75, samples=64)
 
     assert calls == 1
+
+
+def test_preentry_cues_are_inside_tunnel_aperture() -> None:
+    pygame.font.init()
+    screen = pygame.Surface((1280, 720))
+    renderer_module = importlib.import_module("vaporstep.renderer")
+    renderer = renderer_module.Renderer(screen)
+    inner, _, _ = renderer._hand_tunnel_geometry()
+    cx, base_y, rx, ry = inner
+
+    for kind in (NoteKind.HANDS, NoteKind.FOOT):
+        for lane in range(1, 5):
+            points, _ = renderer._aperture_target_points(kind, lane)
+            assert points
+            for x, y in points:
+                normalized = ((x - cx) / rx) ** 2 + ((y - base_y) / ry) ** 2
+                assert normalized < 0.95
+                assert y <= base_y
