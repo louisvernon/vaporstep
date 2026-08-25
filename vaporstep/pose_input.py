@@ -48,6 +48,12 @@ RIGHT_KNEE = 26
 LEFT_ANKLE = 27
 RIGHT_ANKLE = 28
 
+# Wrist landmarks are more prone than shoulders/knees to plausible-looking
+# low-confidence jumps. Require a stronger signal to acquire a hand, then allow
+# a small confidence dip before dropping it so the gate itself does not flicker.
+HAND_CONFIDENCE_ENTER = 0.62
+HAND_CONFIDENCE_EXIT = 0.48
+
 
 def _strict_timestamp_ms(elapsed_seconds: float, previous_ms: int) -> int:
     candidate = max(0, int(float(elapsed_seconds) * 1000.0))
@@ -142,6 +148,10 @@ class PoseCameraInput:
         self._hand_resolvers = {
             "left": HandPoseResolver(),
             "right": HandPoseResolver(),
+        }
+        self._hand_visible = {
+            "left": False,
+            "right": False,
         }
         self._resolvers = {
             "lk": HystereticLaneResolver(
@@ -266,6 +276,13 @@ class PoseCameraInput:
         presence = float(lm.presence or 0.0)
         return visibility >= LANDMARK_VISIBILITY_THRESHOLD and presence >= 0.35
 
+    def _hand_is_visible(self, side: str, lm) -> bool:
+        confidence = self._confidence(lm)
+        threshold = HAND_CONFIDENCE_EXIT if self._hand_visible[side] else HAND_CONFIDENCE_ENTER
+        visible = confidence >= threshold
+        self._hand_visible[side] = visible
+        return visible
+
     def _camera_point(self, lm, *, visible: bool | None = None) -> BodyPoint:
         if visible is None:
             visible = self._visible(lm)
@@ -364,6 +381,8 @@ class PoseCameraInput:
                 resolver.current_lane = None
             for resolver in self._hand_resolvers.values():
                 resolver.reset()
+            for side in self._hand_visible:
+                self._hand_visible[side] = False
             for tracker in self._lower_leg_filters.values():
                 tracker.reset()
             snapshot = PoseSnapshot(
@@ -380,8 +399,14 @@ class PoseCameraInput:
         lm = result.pose_landmarks[0]
         left_shoulder = self._camera_point(lm[LEFT_SHOULDER])
         right_shoulder = self._camera_point(lm[RIGHT_SHOULDER])
-        raw_lw = self._camera_point(lm[LEFT_WRIST])
-        raw_rw = self._camera_point(lm[RIGHT_WRIST])
+        raw_lw = self._camera_point(
+            lm[LEFT_WRIST],
+            visible=self._hand_is_visible("left", lm[LEFT_WRIST]),
+        )
+        raw_rw = self._camera_point(
+            lm[RIGHT_WRIST],
+            visible=self._hand_is_visible("right", lm[RIGHT_WRIST]),
+        )
         left_hand = self._hand_resolvers["left"].resolve(raw_lw, left_shoulder, right_shoulder)
         right_hand = self._hand_resolvers["right"].resolve(raw_rw, left_shoulder, right_shoulder)
 
