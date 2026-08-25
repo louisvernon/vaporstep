@@ -112,23 +112,25 @@ class Renderer(_base.Renderer):
         song_time: float,
         beat_pulse: float,
         enabled: bool,
-        strike_events: tuple[MotionEvent, ...] = (),
     ) -> None:
         center, _, _ = self._hand_geometry()
         occupied = body.hand_lanes if enabled else frozenset()
         disabled = _blend(DIM, BG, 0.58)
 
-        # Whole-segment occupancy is the primary hand-position feedback.
+        # Whole-segment occupancy is the primary hand-position feedback. Use an
+        # alpha surface so inactive lanes stay subtle and active lanes glow
+        # without obscuring the camera/silhouette underneath.
+        fill_surface = pygame.Surface(self.size, pygame.SRCALPHA)
         for lane in range(1, 5):
             active = lane in occupied
-            polygon = self._hand_sector_polygon(lane)
             if enabled:
-                fill_strength = 0.25 if active else 0.035
-                pygame.draw.polygon(self.screen, (*MAGENTA, int(255 * fill_strength)), polygon)
-                if active:
-                    overlay = pygame.Surface(self.size, pygame.SRCALPHA)
-                    pygame.draw.polygon(overlay, (*MAGENTA, 52), polygon)
-                    self.screen.blit(overlay, (0, 0))
+                alpha = 60 if active else 9
+                pygame.draw.polygon(
+                    fill_surface,
+                    (*MAGENTA, alpha),
+                    self._hand_sector_polygon(lane),
+                )
+        self.screen.blit(fill_surface, (0, 0))
 
         # Perspective rails: five shared boundaries from the same vanishing
         # point, exactly like the foot field conceptually but projected radially.
@@ -164,6 +166,33 @@ class Renderer(_base.Renderer):
             color = MAGENTA if active else (DIM if enabled else disabled)
             pygame.draw.lines(self.screen, color, False, receptor, 5 if active else 2)
 
+        if enabled:
+            label = self.small_font.render("HANDS", True, MAGENTA)
+            self.screen.blit(label, label.get_rect(center=(int(center[0]), int(center[1] - 24))))
+        else:
+            off = self.small_font.render("NO HAND NOTES", True, _blend(DIM, BG, 0.30))
+            self.screen.blit(off, off.get_rect(center=(int(center[0]), int(center[1] - 24))))
+
+    def _draw_hand_receptor_feedback(
+        self,
+        body: BodyState,
+        song_time: float,
+        enabled: bool,
+        strike_events: tuple[MotionEvent, ...],
+    ) -> None:
+        if not enabled:
+            return
+        occupied = body.hand_lanes
+        for lane in range(1, 5):
+            receptor = self._hand_arc_points(
+                _HAND_BOUNDARY_ANGLES[lane - 1],
+                _HAND_BOUNDARY_ANGLES[lane],
+                1.0,
+                samples=14,
+            )
+            if lane in occupied:
+                pygame.draw.lines(self.screen, MAGENTA, False, receptor, 5)
+
             matching = [
                 event
                 for event in strike_events
@@ -171,25 +200,19 @@ class Renderer(_base.Renderer):
                 and event.lane == lane
                 and 0.0 <= song_time - event.song_time <= MOTION_EVENT_VISUAL_SECONDS
             ]
-            if matching:
-                latest = max(matching, key=lambda e: e.song_time)
-                age = song_time - latest.song_time
-                phase = 1.0 - min(1.0, age / MOTION_EVENT_VISUAL_SECONDS)
-                flash = _blend(MAGENTA, WHITE, 0.78 * phase)
-                pygame.draw.lines(
-                    self.screen,
-                    flash,
-                    False,
-                    receptor,
-                    max(2, int(3 + 5 * phase)),
-                )
-
-        if enabled:
-            label = self.small_font.render("HANDS", True, MAGENTA)
-            self.screen.blit(label, label.get_rect(center=(int(center[0]), int(center[1] - 24))))
-        else:
-            off = self.small_font.render("NO HAND NOTES", True, _blend(DIM, BG, 0.30))
-            self.screen.blit(off, off.get_rect(center=(int(center[0]), int(center[1] - 24))))
+            if not matching:
+                continue
+            latest = max(matching, key=lambda e: e.song_time)
+            age = song_time - latest.song_time
+            phase = 1.0 - min(1.0, age / MOTION_EVENT_VISUAL_SECONDS)
+            flash = _blend(MAGENTA, WHITE, 0.78 * phase)
+            pygame.draw.lines(
+                self.screen,
+                flash,
+                False,
+                receptor,
+                max(2, int(3 + 5 * phase)),
+            )
 
     def _draw_playfields(
         self,
@@ -329,9 +352,9 @@ class Renderer(_base.Renderer):
             super()._draw_receptors(body, foot_notes, song_time, False, foot_enabled, foot_events)
         finally:
             self._suppress_legacy_hands = False
-        # Redraw only the fan edges/occupancy after notes so entry/strike flashes
-        # sit above the moving targets. No wrist-position dots are shown.
-        self._draw_hand_playfield(body, song_time, 0.0, hand_enabled, strike_events)
+        # Only receptor feedback is drawn over notes; the fan/grid itself stays
+        # behind the moving targets.
+        self._draw_hand_receptor_feedback(body, song_time, hand_enabled, strike_events)
 
     def _spawn_note_effects(self, notes: list[GameNote]) -> None:
         # Keep the mature particle system for feet while the hand presentation
