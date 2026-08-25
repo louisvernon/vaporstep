@@ -235,10 +235,9 @@ class Renderer(_previous.Renderer):
         preentry: bool = False,
     ) -> None:
         if preentry and kind == NoteKind.FOOT:
-            # At literal progress zero the four foot lanes are packed into the
-            # tiny vanishing region, so the cue is almost invisible. Place only
-            # the light (not the note) just inside the floor mouth. It remains a
-            # pre-entry warning while becoming spatially legible per lane.
+            # The foot lanes are tightly packed at the literal vanishing point;
+            # draw only the anticipation light a little inside the floor mouth
+            # so each lane cue is visible while the actual note remains absent.
             points, core_width = self._target_points(kind, lane, 0.08)
             self._draw_preentry_glow(
                 surface,
@@ -281,6 +280,51 @@ class Renderer(_previous.Renderer):
         pygame.draw.polygon(surface, light, polygon)
         edge = self._scaled_additive_color(color, intensity * 0.18)
         pygame.draw.lines(surface, edge, False, projected, 2)
+
+    def _draw_chains(
+        self,
+        chains,
+        notes,
+        song_time: float,
+        song_beat: float,
+        chain_mode,
+    ) -> None:
+        # Preserve the original muted sustain-body styling, then redraw only
+        # the leading edge of a live hand hold at ordinary note brightness.
+        super()._draw_chains(chains, notes, song_time, song_beat, chain_mode)
+
+        for chain in chains:
+            definition = chain.definition
+            if definition.kind != NoteKind.HANDS:
+                continue
+            if chain.state not in (_previous.ChainState.PENDING, _previous.ChainState.ACTIVE):
+                continue
+            is_hold = definition.source == _previous.SustainSource.EXPLICIT_HOLD
+            if not is_hold and chain_mode == _previous.ChainMode.OFF:
+                continue
+            if not _previous.timed_is_within_lookahead(
+                definition.start_time,
+                definition.start_beat,
+                song_time,
+                song_beat,
+            ):
+                continue
+
+            head = _previous.timed_progress(
+                definition.start_time,
+                definition.start_beat,
+                song_time,
+                song_beat,
+            )
+            if head < 0.0 or head > 1.0:
+                continue
+            for lane in definition.lanes:
+                self._draw_hand_note_arc(
+                    lane,
+                    head,
+                    _previous.MAGENTA,
+                    highlight=chain.state == _previous.ChainState.ACTIVE,
+                )
 
     def _draw_receptors(
         self,
