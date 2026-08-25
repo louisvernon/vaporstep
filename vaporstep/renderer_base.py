@@ -23,6 +23,7 @@ from .config import (
     VANISH_Y,
 )
 from .domain import BodyPoint, BodyState, ChainMode, ChainState, GameNote, HitQuality, NoteKind, RuntimeChain, SustainSource
+from .font_support import MetadataFont
 from .keyboard_input import label_for_lane
 from .menu import SongMenu
 from .motion import MOTION_EVENT_VISUAL_SECONDS, MotionEvent
@@ -72,7 +73,16 @@ class Renderer:
         self._rng = random.Random(0xC0FFEE)
         self._lane_fill_surface: pygame.Surface | None = None
         self._banner_cache: dict[str, pygame.Surface | None] = {}
+        self._song_metadata_fonts: dict[int, MetadataFont] = {}
         self.player_horizontal_zoom = 1.10
+
+    def _song_metadata_font(self, size: int) -> MetadataFont:
+        """Return a cached coverage-based font for user-supplied song text."""
+        font = self._song_metadata_fonts.get(size)
+        if font is None:
+            font = MetadataFont(size)
+            self._song_metadata_fonts[size] = font
+        return font
 
     @property
     def size(self) -> tuple[int, int]:
@@ -635,7 +645,7 @@ class Renderer:
         self._draw_background(t, decorative_pulse, False)
         w, h = self.size
 
-        title = self.font.render(song_title, True, WHITE)
+        title = self._song_metadata_font(28).render(song_title, True, WHITE)
         self.screen.blit(title, title.get_rect(midtop=(w // 2, 28)))
         chart = self.small_font.render(chart_label, True, DIM)
         self.screen.blit(chart, chart.get_rect(midtop=(w // 2, 60)))
@@ -1030,7 +1040,7 @@ class Renderer:
             lines.append((value, line_color, font))
         lines.extend(
             (
-                (song_title, WHITE, self.small_font),
+                (song_title, WHITE, self._song_metadata_font(21)),
                 (chart_label, DIM, self.small_font),
             )
         )
