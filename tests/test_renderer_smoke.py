@@ -36,7 +36,7 @@ def test_song_menu_module_imports_with_renderer() -> None:
     assert song_menu_renderer.install_song_menu_renderer is not None
 
 
-def test_renderer_prototype_layers_are_gone() -> None:
+def test_renderer_prototype_layers_and_compatibility_hacks_are_gone() -> None:
     module = importlib.import_module("vaporstep.renderer")
     base_module = importlib.import_module("vaporstep.renderer_base")
     source_path = Path(module.__file__)
@@ -46,6 +46,9 @@ def test_renderer_prototype_layers_are_gone() -> None:
     for removed in ("renderer_previous", "renderer_tunnel_base"):
         assert removed not in source
         assert not source_path.with_name(f"{removed}.py").exists()
+
+    assert "_suppress_legacy_hands" not in source
+    assert "_ReceptorLabelFilter" not in source
 
 
 def test_renderer_constructs_and_draws_startup_smoke() -> None:
