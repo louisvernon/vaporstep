@@ -9,6 +9,7 @@ import pygame
 from vaporstep.domain import (
     ChainMode,
     GameNote,
+    HitQuality,
     ImplicitChain,
     NoteKind,
     RuntimeChain,
@@ -61,6 +62,8 @@ def test_renderer_prototype_layers_and_compatibility_hacks_are_gone() -> None:
     assert "_ReceptorLabelFilter" not in source
     assert "super()._draw_notes" not in source
     assert "super()._draw_chains" not in source
+    assert "super()._spawn_note_effects" not in source
+    assert "super()._draw_particles" not in source
 
 
 def test_renderer_constructs_and_draws_startup_smoke() -> None:
@@ -155,5 +158,63 @@ def test_renderer_draws_explicit_foot_notes_and_chains_smoke() -> None:
         song_beat=0.5,
         chain_mode=ChainMode.OFF,
     )
+
+    assert screen.get_size() == (1280, 720)
+
+
+def test_renderer_generates_and_draws_mixed_effects_smoke() -> None:
+    pygame.font.init()
+    screen = pygame.Surface((1280, 720))
+    renderer_module = importlib.import_module("vaporstep.renderer")
+    renderer = renderer_module.Renderer(screen)
+
+    notes = [
+        GameNote(
+            time=1.0,
+            lanes=(1,),
+            kind=NoteKind.FOOT,
+            judged=True,
+            hit=True,
+            judged_at=1.0,
+            judgement=HitQuality.PERFECT,
+        ),
+        GameNote(
+            time=1.0,
+            lanes=(2,),
+            kind=NoteKind.HANDS,
+            judged=True,
+            hit=True,
+            judged_at=1.0,
+            judgement=HitQuality.GREAT,
+        ),
+        GameNote(
+            time=1.0,
+            lanes=(3,),
+            kind=NoteKind.FOOT,
+            judged=True,
+            hit=False,
+            judged_at=1.0,
+        ),
+        GameNote(
+            time=1.0,
+            lanes=(4,),
+            kind=NoteKind.HANDS,
+            judged=True,
+            hit=False,
+            judged_at=1.0,
+        ),
+    ]
+
+    renderer._spawn_note_effects(notes)
+    assert {x["kind"] for x in renderer._impact_bursts} == {
+        NoteKind.FOOT,
+        NoteKind.HANDS,
+    }
+    assert {x["kind"] for x in renderer._miss_impacts} == {
+        NoteKind.FOOT,
+        NoteKind.HANDS,
+    }
+
+    renderer._draw_particles(song_time=1.05)
 
     assert screen.get_size() == (1280, 720)
