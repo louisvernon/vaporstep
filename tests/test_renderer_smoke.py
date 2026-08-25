@@ -64,6 +64,7 @@ def test_renderer_prototype_layers_and_compatibility_hacks_are_gone() -> None:
     assert "super()._draw_chains" not in source
     assert "super()._spawn_note_effects" not in source
     assert "super()._draw_particles" not in source
+    assert "super()._draw_body_markers" not in source
 
 
 def test_renderer_constructs_and_draws_startup_smoke() -> None:
@@ -218,3 +219,25 @@ def test_renderer_generates_and_draws_mixed_effects_smoke() -> None:
     renderer._draw_particles(song_time=1.05)
 
     assert screen.get_size() == (1280, 720)
+
+
+def test_hand_arc_reuses_cached_tunnel_geometry() -> None:
+    pygame.font.init()
+    screen = pygame.Surface((1280, 720))
+    renderer_module = importlib.import_module("vaporstep.renderer")
+    renderer = renderer_module.Renderer(screen)
+    renderer.__dict__.pop("_hand_geometry_cache", None)
+
+    original = renderer._hand_arc_geometry
+    calls = 0
+
+    def counted_geometry():
+        nonlocal calls
+        calls += 1
+        return original()
+
+    renderer._hand_arc_geometry = counted_geometry
+    renderer._hand_arc_points(0.0, 1.0, 0.5, samples=64)
+    renderer._hand_arc_points(0.0, 1.0, 0.75, samples=64)
+
+    assert calls == 1

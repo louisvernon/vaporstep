@@ -134,7 +134,22 @@ class Renderer(_base.Renderer):
         angle = math.pi + math.pi * t
         return cx + rx * math.cos(angle), base_y + ry * math.sin(angle)
 
+    def _scratch_surface(self, name: str, *, alpha: bool = False) -> pygame.Surface:
+        surface = getattr(self, name, None)
+        if surface is None or surface.get_size() != self.size:
+            surface = pygame.Surface(
+                self.size,
+                pygame.SRCALPHA if alpha else 0,
+            )
+            setattr(self, name, surface)
+        surface.fill((0, 0, 0, 0) if alpha else (0, 0, 0))
+        return surface
+
     def _hand_tunnel_geometry(self):
+        cached = getattr(self, "_hand_geometry_cache", None)
+        if cached is not None and cached[0] == self.size:
+            return cached[1]
+
         inner, old_outer = self._hand_arc_geometry()
         viewport = self._camera_rect()
 
@@ -158,15 +173,19 @@ class Renderer(_base.Renderer):
             min(float(viewport.right - 10), seam_right[0] + extension),
             outer_base_y,
         )
-        outer_rx = max(inner_rx + 20.0, (shoulder_right[0] - shoulder_left[0]) * 0.5)
+        outer_rx = max(
+            inner_rx + 20.0,
+            (shoulder_right[0] - shoulder_left[0]) * 0.5,
+        )
         outer = (
             (shoulder_left[0] + shoulder_right[0]) * 0.5,
             outer_base_y,
             outer_rx,
             old_ry * _HAND_TUNNEL_VERTICAL_SCALE,
         )
-        shelves = (seam_left, seam_right, shoulder_left, shoulder_right)
-        return inner, outer, shelves
+        result = (inner, outer, (seam_left, seam_right, shoulder_left, shoulder_right))
+        self._hand_geometry_cache = (self.size, result)
+        return result
 
     def _hand_point(self, along: float, progress: float) -> tuple[float, float]:
         inner, outer, _ = self._hand_tunnel_geometry()
@@ -186,16 +205,18 @@ class Renderer(_base.Renderer):
         *,
         samples: int = 12,
     ) -> list[tuple[int, int]]:
-        return [
-            tuple(
-                int(v)
-                for v in self._hand_point(
-                    start + (end - start) * i / samples,
-                    progress,
-                )
-            )
-            for i in range(samples + 1)
-        ]
+        inner, outer, _ = self._hand_tunnel_geometry()
+        p = max(0.0, min(1.0, progress)) ** 1.25
+        points: list[tuple[int, int]] = []
+        for i in range(samples + 1):
+            along = start + (end - start) * i / samples
+            ix, iy = self._ellipse_upper_point(inner, along)
+            ox, oy = self._ellipse_upper_point(outer, along)
+            points.append((
+                int(ix + (ox - ix) * p),
+                int(iy + (oy - iy) * p),
+            ))
+        return points
 
     def _hand_lane_arc(
         self,
@@ -302,7 +323,7 @@ class Renderer(_base.Renderer):
         return [*outer, *foot]
 
     def _draw_floor_gutter_structure(self, rail_color) -> None:
-        floor_surface = pygame.Surface(self.size, pygame.SRCALPHA)
+        floor_surface = self._scratch_surface("_alpha_scratch", alpha=True)
         for side in ("left", "right"):
             pygame.draw.polygon(
                 floor_surface,
@@ -337,7 +358,7 @@ class Renderer(_base.Renderer):
         occupied = body.hand_lanes if enabled else frozenset()
         disabled = _blend(DIM, BG, 0.58)
 
-        depth_surface = pygame.Surface(self.size, pygame.SRCALPHA)
+        depth_surface = self._scratch_surface("_alpha_scratch", alpha=True)
         for band in range(8):
             p0 = band / 8.0
             p1 = (band + 1) / 8.0
@@ -346,7 +367,7 @@ class Renderer(_base.Renderer):
             pygame.draw.polygon(depth_surface, (*BG, alpha), self._hand_depth_band(p0, p1))
         self.screen.blit(depth_surface, (0, 0))
 
-        fill_surface = pygame.Surface(self.size, pygame.SRCALPHA)
+        fill_surface = self._scratch_surface("_alpha_scratch", alpha=True)
         for lane in range(1, 5):
             if enabled:
                 pygame.draw.polygon(
@@ -513,9 +534,8 @@ class Renderer(_base.Renderer):
         if max(left_strength, right_strength) <= 0.0:
             return
 
-        fill = pygame.Surface(self.size, pygame.SRCALPHA)
-        glow = pygame.Surface(self.size)
-        glow.fill((0, 0, 0))
+        fill = self._scratch_surface("_alpha_scratch", alpha=True)
+        glow = self._scratch_surface("_additive_scratch")
         for side, strength in (("left", left_strength), ("right", right_strength)):
             if strength <= 0.0:
                 continue
@@ -733,8 +753,7 @@ class Renderer(_base.Renderer):
         song_beat: float,
         chain_mode: ChainMode,
     ) -> None:
-        glow_surface = pygame.Surface(self.size)
-        glow_surface.fill((0, 0, 0))
+        glow_surface = self._scratch_surface("_additive_scratch")
         any_glow = False
 
         for note in notes:
@@ -768,8 +787,7 @@ class Renderer(_base.Renderer):
         song_beat: float,
         chain_mode: ChainMode,
     ) -> None:
-        glow_surface = pygame.Surface(self.size)
-        glow_surface.fill((0, 0, 0))
+        glow_surface = self._scratch_surface("_additive_scratch")
         any_glow = False
 
         for chain in chains:
@@ -1612,273 +1630,176 @@ class Renderer(_base.Renderer):
                     )
 
     def _draw_particles(self, song_time: float) -> None:
-        foot_bursts = [
-            x for x in self._impact_bursts if x["kind"] == NoteKind.FOOT
-        ]
-        hand_bursts = [
-            x for x in self._impact_bursts if x["kind"] == NoteKind.HANDS
-        ]
-        foot_particles = [
-            x for x in self._particles if x["kind"] == NoteKind.FOOT
-        ]
-        hand_particles = [
-            x for x in self._particles if x["kind"] == NoteKind.HANDS
-        ]
-        foot_outbound = [
-            x for x in self._outbound_particles if x["kind"] == NoteKind.FOOT
-        ]
-        hand_outbound = [
-            x for x in self._outbound_particles if x["kind"] == NoteKind.HANDS
-        ]
-        foot_misses = [
-            x for x in self._miss_impacts if x["kind"] == NoteKind.FOOT
-        ]
-        hand_misses = [
-            x for x in self._miss_impacts if x["kind"] == NoteKind.HANDS
-        ]
-
-        foot_burst_alive = []
-        for burst in foot_bursts:
-            age = song_time - float(burst["born"])
-            life = float(burst["life"])
-            if age < 0.0 or age > life:
-                continue
-            phase = age / max(life, 1e-6)
-            lane = int(burst["lane"])
-            left, right = self._lane_bounds(NoteKind.FOOT, lane, 1.0)
-            cx = int((left + right) * 0.5)
-            cy = int(self._field_y(NoteKind.FOOT, 1.0))
-            lane_w = max(4.0, right - left)
-            power = float(burst["power"])
-            fade = (1.0 - phase) ** 1.4
-            color = _blend(BG, burst["color"], fade)
-            radius = int(lane_w * (0.10 + 0.30 * phase) * power)
-            diamond = [
-                (cx, cy - radius),
-                (cx + radius, cy),
-                (cx, cy + radius),
-                (cx - radius, cy),
-            ]
-            pygame.draw.polygon(
-                self.screen,
-                _blend(BG, color, 0.24 * fade),
-                diamond,
-                0,
-            )
-            pygame.draw.polygon(
-                self.screen,
-                _blend(BG, color, 0.70),
-                diamond,
-                max(1, int(5 * fade)),
-            )
-            arm = int(radius * 0.72)
-            pygame.draw.line(
-                self.screen,
-                color,
-                (cx - arm, cy),
-                (cx + arm, cy),
-                max(1, int(3 * fade)),
-            )
-            pygame.draw.line(
-                self.screen,
-                color,
-                (cx, cy - arm),
-                (cx, cy + arm),
-                max(1, int(3 * fade)),
-            )
-            foot_burst_alive.append(burst)
-
-        foot_particle_alive = []
-        for p in foot_particles:
-            age = song_time - float(p["born"])
-            life = float(p["life"])
-            if age < 0.0 or age > life:
-                continue
-            progress = max(0.03, 1.0 - age * float(p["speed"]))
-            lane = int(p["lane"])
-            left, right = self._lane_bounds(NoteKind.FOOT, lane, progress)
-            lane_w = max(1.0, right - left)
-            center = (left + right) / 2.0
-            particle_phase = age / max(life, 1e-6)
-            drift = float(p["drift"]) * particle_phase
-            lateral = (
-                float(p.get("lateral", 0.0))
-                * (particle_phase ** 0.72)
-                * 0.72
-            )
-            x = center + (float(p["jitter"]) + drift + lateral) * lane_w
-            y = self._field_y(NoteKind.FOOT, progress)
-            fade = 1.0 - age / life
-            color = _blend(BG, p["color"], fade)
-            length = max(
-                2.0,
-                lane_w * float(p["length"]) * (0.35 + 0.65 * fade),
-            )
-            thickness = max(1, int(int(p["size"]) * (0.65 + fade)))
-            tilt = float(p["jitter"]) * 0.35
-            dx = length * 0.5
-            dy = dx * tilt
-            pygame.draw.line(
-                self.screen,
-                _blend(BG, color, 0.42),
-                (int(x - dx), int(y - dy)),
-                (int(x + dx), int(y + dy)),
-                thickness + 3,
-            )
-            pygame.draw.line(
-                self.screen,
-                color,
-                (int(x - dx), int(y - dy)),
-                (int(x + dx), int(y + dy)),
-                thickness,
-            )
-            foot_particle_alive.append(p)
-
-        foot_outward_alive = []
-        for p in foot_outbound:
-            age = song_time - float(p["born"])
-            life = float(p["life"])
-            if age < 0.0 or age > life:
-                continue
-            lane = int(p["lane"])
-            left, right = self._lane_bounds(NoteKind.FOOT, lane, 1.0)
-            cx = (left + right) * 0.5
-            hit_y = self._field_y(NoteKind.FOOT, 1.0)
-            phase = age / max(life, 1e-6)
-            x = cx + float(p["vx"]) * age
-            y = hit_y + float(p["vy"]) * age
-            fade = (1.0 - phase) ** 1.25
-            color = _blend(BG, p["color"], fade)
-            length = float(p["length"]) * (0.55 + 0.45 * fade)
-            pygame.draw.line(
-                self.screen,
-                color,
-                (int(x), int(y - length * 0.5)),
-                (int(x), int(y + length * 0.5)),
-                max(1, int(p["size"])),
-            )
-            foot_outward_alive.append(p)
-
-        foot_miss_alive = []
         w, h = self.size
-        for impact in foot_misses:
-            age = song_time - float(impact["born"])
-            life = float(impact["life"])
-            if age < 0.0 or age > life:
-                continue
-            lane = int(impact["lane"])
-            phase = age / max(life, 1e-6)
-            pulse = math.sin(math.pi * min(1.0, phase)) * (1.0 - 0.32 * phase)
-            left, right = self._lane_bounds(NoteKind.FOOT, lane, 1.0)
-            pad = max(8.0, (right - left) * 0.15)
-            hit_y = self._field_y(NoteKind.FOOT, 1.0)
-            points = [
-                (left, hit_y),
-                (right, hit_y),
-                (right + pad, h),
-                (left - pad, h),
-            ]
-            glow = _blend(BG, RED, 0.18 + 0.42 * pulse)
-            pygame.draw.polygon(self.screen, glow, points, 0)
-            pygame.draw.line(
-                self.screen,
-                _blend(BG, RED, 0.48 + 0.42 * pulse),
-                (int(max(0, left - pad)), h - 3),
-                (int(min(w, right + pad)), h - 3),
-                max(2, int(5 * pulse)),
-            )
-            foot_miss_alive.append(impact)
 
-        hand_burst_alive = []
-        for burst in hand_bursts:
+        burst_alive = []
+        for burst in self._impact_bursts:
             age = song_time - float(burst["born"])
             life = float(burst["life"])
             if age < 0.0 or age > life:
                 continue
             phase = age / max(life, 1e-6)
             lane = int(burst["lane"])
-            cx, cy = self._hand_target_point(lane, 1.0)
             power = float(burst["power"])
             fade = (1.0 - phase) ** 1.4
             color = _blend(BG, burst["color"], fade)
-            radius = int((18 + 48 * phase) * power)
-            pygame.draw.circle(
-                self.screen,
-                _blend(BG, color, 0.25 * fade),
-                (int(cx), int(cy)),
-                radius,
-            )
-            pygame.draw.circle(
-                self.screen,
-                color,
-                (int(cx), int(cy)),
-                radius,
-                max(1, int(5 * fade)),
-            )
-            hand_burst_alive.append(burst)
 
-        hand_particle_alive = []
-        for p in hand_particles:
-            age = song_time - float(p["born"])
-            life = float(p["life"])
+            if burst["kind"] == NoteKind.FOOT:
+                left, right = self._lane_bounds(NoteKind.FOOT, lane, 1.0)
+                cx = int((left + right) * 0.5)
+                cy = int(self._field_y(NoteKind.FOOT, 1.0))
+                radius = int(max(4.0, right - left) * (0.10 + 0.30 * phase) * power)
+                diamond = [
+                    (cx, cy - radius),
+                    (cx + radius, cy),
+                    (cx, cy + radius),
+                    (cx - radius, cy),
+                ]
+                pygame.draw.polygon(self.screen, _blend(BG, color, 0.24 * fade), diamond)
+                pygame.draw.polygon(
+                    self.screen,
+                    _blend(BG, color, 0.70),
+                    diamond,
+                    max(1, int(5 * fade)),
+                )
+                arm = int(radius * 0.72)
+                pygame.draw.line(
+                    self.screen, color, (cx - arm, cy), (cx + arm, cy),
+                    max(1, int(3 * fade)),
+                )
+                pygame.draw.line(
+                    self.screen, color, (cx, cy - arm), (cx, cy + arm),
+                    max(1, int(3 * fade)),
+                )
+            else:
+                cx, cy = self._hand_target_point(lane, 1.0)
+                radius = int((18 + 48 * phase) * power)
+                pygame.draw.circle(
+                    self.screen,
+                    _blend(BG, color, 0.25 * fade),
+                    (int(cx), int(cy)),
+                    radius,
+                )
+                pygame.draw.circle(
+                    self.screen,
+                    color,
+                    (int(cx), int(cy)),
+                    radius,
+                    max(1, int(5 * fade)),
+                )
+            burst_alive.append(burst)
+        self._impact_bursts = burst_alive
+
+        particle_alive = []
+        for particle in self._particles:
+            age = song_time - float(particle["born"])
+            life = float(particle["life"])
             if age < 0.0 or age > life:
                 continue
-            lane = int(p["lane"])
             phase = age / max(life, 1e-6)
-            progress = max(0.03, 1.0 - age * float(p["speed"]))
-            lane_span = _HAND_BOUNDARIES[lane] - _HAND_BOUNDARIES[lane - 1]
-            along = _HAND_CENTERS[lane - 1] + (
-                float(p["jitter"])
-                + float(p.get("lateral", 0.0)) * phase * 0.45
-            ) * lane_span
-            x, y = self._hand_point(along, progress)
+            progress = max(0.03, 1.0 - age * float(particle["speed"]))
+            lane = int(particle["lane"])
             fade = 1.0 - phase
-            color = _blend(BG, p["color"], fade)
+            color = _blend(BG, particle["color"], fade)
 
-            before = self._hand_point(max(0.0, along - 0.006), progress)
-            after = self._hand_point(min(1.0, along + 0.006), progress)
-            tx, ty = after[0] - before[0], after[1] - before[1]
-            mag = max(1.0, math.hypot(tx, ty))
-            tx, ty = tx / mag, ty / mag
-            length = float(p["length"]) * 70.0 * (0.4 + 0.6 * fade)
-            pygame.draw.line(
-                self.screen,
-                color,
-                (int(x - tx * length), int(y - ty * length)),
-                (int(x + tx * length), int(y + ty * length)),
-                max(1, int(p["size"])),
-            )
-            hand_particle_alive.append(p)
+            if particle["kind"] == NoteKind.FOOT:
+                left, right = self._lane_bounds(NoteKind.FOOT, lane, progress)
+                lane_width = max(1.0, right - left)
+                center = (left + right) * 0.5
+                offset = (
+                    float(particle["jitter"])
+                    + float(particle["drift"]) * phase
+                    + float(particle.get("lateral", 0.0)) * (phase ** 0.72) * 0.72
+                )
+                x = center + offset * lane_width
+                y = self._field_y(NoteKind.FOOT, progress)
+                length = max(
+                    2.0,
+                    lane_width * float(particle["length"]) * (0.35 + 0.65 * fade),
+                )
+                thickness = max(1, int(int(particle["size"]) * (0.65 + fade)))
+                dx = length * 0.5
+                dy = dx * float(particle["jitter"]) * 0.35
+                pygame.draw.line(
+                    self.screen,
+                    _blend(BG, color, 0.42),
+                    (int(x - dx), int(y - dy)),
+                    (int(x + dx), int(y + dy)),
+                    thickness + 3,
+                )
+                pygame.draw.line(
+                    self.screen,
+                    color,
+                    (int(x - dx), int(y - dy)),
+                    (int(x + dx), int(y + dy)),
+                    thickness,
+                )
+            else:
+                lane_span = _HAND_BOUNDARIES[lane] - _HAND_BOUNDARIES[lane - 1]
+                along = _HAND_CENTERS[lane - 1] + (
+                    float(particle["jitter"])
+                    + float(particle.get("lateral", 0.0)) * phase * 0.45
+                ) * lane_span
+                x, y = self._hand_point(along, progress)
+                before = self._hand_point(max(0.0, along - 0.006), progress)
+                after = self._hand_point(min(1.0, along + 0.006), progress)
+                tx, ty = after[0] - before[0], after[1] - before[1]
+                magnitude = max(1.0, math.hypot(tx, ty))
+                tx, ty = tx / magnitude, ty / magnitude
+                length = float(particle["length"]) * 70.0 * (0.4 + 0.6 * fade)
+                pygame.draw.line(
+                    self.screen,
+                    color,
+                    (int(x - tx * length), int(y - ty * length)),
+                    (int(x + tx * length), int(y + ty * length)),
+                    max(1, int(particle["size"])),
+                )
+            particle_alive.append(particle)
+        self._particles = particle_alive
 
-        hand_outward_alive = []
-        for p in hand_outbound:
-            age = song_time - float(p["born"])
-            life = float(p["life"])
+        outbound_alive = []
+        for particle in self._outbound_particles:
+            age = song_time - float(particle["born"])
+            life = float(particle["life"])
             if age < 0.0 or age > life:
                 continue
-            lane = int(p["lane"])
             phase = age / max(life, 1e-6)
-            start = self._hand_target_point(lane, 1.0)
-            ux, uy = self._hand_lane_direction(lane)
-            tangent_x, tangent_y = -uy, ux
-            radial = float(p["vy"]) * age
-            lateral = float(p["vx"]) * age * 0.45
-            x = start[0] + ux * radial + tangent_x * lateral
-            y = start[1] + uy * radial + tangent_y * lateral
+            lane = int(particle["lane"])
             fade = (1.0 - phase) ** 1.25
-            color = _blend(BG, p["color"], fade)
-            length = float(p["length"]) * (0.55 + 0.45 * fade)
-            pygame.draw.line(
-                self.screen,
-                color,
-                (int(x - ux * length * 0.5), int(y - uy * length * 0.5)),
-                (int(x + ux * length * 0.5), int(y + uy * length * 0.5)),
-                max(1, int(p["size"])),
-            )
-            hand_outward_alive.append(p)
+            color = _blend(BG, particle["color"], fade)
+            length = float(particle["length"]) * (0.55 + 0.45 * fade)
 
-        hand_miss_alive = []
-        for impact in hand_misses:
+            if particle["kind"] == NoteKind.FOOT:
+                left, right = self._lane_bounds(NoteKind.FOOT, lane, 1.0)
+                x = (left + right) * 0.5 + float(particle["vx"]) * age
+                y = self._field_y(NoteKind.FOOT, 1.0) + float(particle["vy"]) * age
+                pygame.draw.line(
+                    self.screen,
+                    color,
+                    (int(x), int(y - length * 0.5)),
+                    (int(x), int(y + length * 0.5)),
+                    max(1, int(particle["size"])),
+                )
+            else:
+                start = self._hand_target_point(lane, 1.0)
+                ux, uy = self._hand_lane_direction(lane)
+                tangent_x, tangent_y = -uy, ux
+                radial = float(particle["vy"]) * age
+                lateral = float(particle["vx"]) * age * 0.45
+                x = start[0] + ux * radial + tangent_x * lateral
+                y = start[1] + uy * radial + tangent_y * lateral
+                pygame.draw.line(
+                    self.screen,
+                    color,
+                    (int(x - ux * length * 0.5), int(y - uy * length * 0.5)),
+                    (int(x + ux * length * 0.5), int(y + uy * length * 0.5)),
+                    max(1, int(particle["size"])),
+                )
+            outbound_alive.append(particle)
+        self._outbound_particles = outbound_alive
+
+        miss_alive = []
+        for impact in self._miss_impacts:
             age = song_time - float(impact["born"])
             life = float(impact["life"])
             if age < 0.0 or age > life:
@@ -1886,20 +1807,39 @@ class Renderer(_base.Renderer):
             phase = age / max(life, 1e-6)
             pulse = math.sin(math.pi * min(1.0, phase)) * (1.0 - 0.32 * phase)
             lane = int(impact["lane"])
-            arc = self._hand_lane_arc(lane, 1.0, 1.0)
-            pygame.draw.lines(
-                self.screen,
-                _blend(BG, RED, 0.48 + 0.42 * pulse),
-                False,
-                arc,
-                max(2, int(7 * pulse)),
-            )
-            hand_miss_alive.append(impact)
+            edge = _blend(BG, RED, 0.48 + 0.42 * pulse)
 
-        self._impact_bursts = [*foot_burst_alive, *hand_burst_alive]
-        self._particles = [*foot_particle_alive, *hand_particle_alive]
-        self._outbound_particles = [*foot_outward_alive, *hand_outward_alive]
-        self._miss_impacts = [*foot_miss_alive, *hand_miss_alive]
+            if impact["kind"] == NoteKind.FOOT:
+                left, right = self._lane_bounds(NoteKind.FOOT, lane, 1.0)
+                pad = max(8.0, (right - left) * 0.15)
+                hit_y = self._field_y(NoteKind.FOOT, 1.0)
+                pygame.draw.polygon(
+                    self.screen,
+                    _blend(BG, RED, 0.18 + 0.42 * pulse),
+                    [
+                        (left, hit_y),
+                        (right, hit_y),
+                        (right + pad, h),
+                        (left - pad, h),
+                    ],
+                )
+                pygame.draw.line(
+                    self.screen,
+                    edge,
+                    (int(max(0, left - pad)), h - 3),
+                    (int(min(w, right + pad)), h - 3),
+                    max(2, int(5 * pulse)),
+                )
+            else:
+                pygame.draw.lines(
+                    self.screen,
+                    edge,
+                    False,
+                    self._hand_lane_arc(lane, 1.0, 1.0),
+                    max(2, int(7 * pulse)),
+                )
+            miss_alive.append(impact)
+        self._miss_impacts = miss_alive
 
     def _draw_hand_tracking_markers(self, body: BodyState, enabled: bool) -> None:
         if not enabled:
@@ -1937,11 +1877,54 @@ class Renderer(_base.Renderer):
         foot_enabled: bool = True,
         show_lower_body_sources: bool = False,
     ) -> None:
-        super()._draw_body_markers(
-            body,
-            show_labels=show_labels,
-            hand_enabled=False,
-            foot_enabled=foot_enabled,
-            show_lower_body_sources=show_lower_body_sources,
-        )
+        if foot_enabled:
+            left_control = (
+                body.left_foot_control
+                if body.left_foot_control.visible
+                else body.left_knee
+            )
+            right_control = (
+                body.right_foot_control
+                if body.right_foot_control.visible
+                else body.right_knee
+            )
+
+            if show_lower_body_sources:
+                source_color = _blend(BG, CYAN, 0.42)
+                for knee, ankle, control in (
+                    (body.left_knee, body.left_ankle, left_control),
+                    (body.right_knee, body.right_ankle, right_control),
+                ):
+                    if knee.visible and ankle.visible:
+                        pygame.draw.line(
+                            self.screen,
+                            _blend(BG, CYAN, 0.25),
+                            self._screen_point(knee),
+                            self._screen_point(ankle),
+                            1,
+                        )
+                    for source in (knee, ankle):
+                        if source.visible:
+                            pos = self._screen_point(source)
+                            pygame.draw.circle(self.screen, BG, pos, 5)
+                            pygame.draw.circle(self.screen, source_color, pos, 4, 1)
+                    if control.visible:
+                        pygame.draw.circle(
+                            self.screen,
+                            WHITE,
+                            self._screen_point(control),
+                            11,
+                            1,
+                        )
+
+            for control in (left_control, right_control):
+                if not control.visible:
+                    continue
+                pos = self._screen_point(control)
+                pygame.draw.circle(self.screen, BG, pos, 9)
+                pygame.draw.circle(self.screen, CYAN, pos, 7, 2)
+                if show_labels and control.lane is not None:
+                    label = self.small_font.render(str(control.lane), True, WHITE)
+                    self.screen.blit(label, label.get_rect(center=pos))
+
         self._draw_hand_tracking_markers(body, hand_enabled)
