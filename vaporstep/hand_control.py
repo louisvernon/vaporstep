@@ -9,8 +9,12 @@ from .domain import BodyPoint
 # 1 left/out, 2 left/high, 3 right/high, 4 right/out.
 # Thresholds are expressed in shoulder-width units so body translation and
 # player/camera distance largely divide out.
-HIGH_ENTER = 0.62
-HIGH_EXIT = 0.44
+#
+# HIGH is intentionally easy: raising a wrist is the gesture. Horizontal
+# position is irrelevant once the hand is raised, so a naturally diagonal or
+# forward reach still resolves HIGH rather than competing with OUT.
+HIGH_ENTER = 0.42
+HIGH_EXIT = 0.26
 OUT_ENTER = 0.72
 OUT_EXIT = 0.50
 VISUAL_RANGE = 1.45
@@ -67,29 +71,21 @@ class HandPoseResolver:
         high_amount = max(0.0, up)
         out_amount = max(0.0, outward)
 
-        lane = self.current_lane
-        if lane == self.high_lane:
-            if high_amount < HIGH_EXIT:
-                lane = None
-        elif lane == self.out_lane:
-            if out_amount < OUT_EXIT:
-                lane = None
-
-        if lane is None:
-            high_ready = high_amount >= HIGH_ENTER
-            out_ready = out_amount >= OUT_ENTER
-            if high_ready or out_ready:
-                # If both are plausible, choose the more decisively crossed
-                # threshold. This makes a diagonal reach stable instead of
-                # flickering between HIGH and OUT.
-                high_score = high_amount / HIGH_ENTER
-                out_score = out_amount / OUT_ENTER
-                lane = self.high_lane if high_score >= out_score else self.out_lane
+        # Raising the hand always wins over lateral position. Use a lower exit
+        # threshold once HIGH is active so ordinary pose jitter does not flicker
+        # the segment while the arm is still visibly raised.
+        high_threshold = HIGH_EXIT if self.current_lane == self.high_lane else HIGH_ENTER
+        if high_amount >= high_threshold:
+            lane = self.high_lane
+        else:
+            out_threshold = OUT_EXIT if self.current_lane == self.out_lane else OUT_ENTER
+            lane = self.out_lane if out_amount >= out_threshold else None
 
         self.current_lane = lane
 
-        # Continuous visual feedback uses the same body-relative coordinates but
-        # does not drive gameplay. 0.5/0.5 is neutral; upward is screen-up.
+        # Retain normalized controller-space coordinates for diagnostics and
+        # possible future UI work, but gameplay presentation currently relies on
+        # resolved segment highlighting rather than wrist-position dots.
         visual_x = max(0.0, min(1.0, 0.5 + dx / (2.0 * VISUAL_RANGE)))
         visual_y = max(0.0, min(1.0, 0.5 - up / (2.0 * VISUAL_RANGE)))
         visual = BodyPoint(x=visual_x, y=visual_y, lane=lane, visible=True)
