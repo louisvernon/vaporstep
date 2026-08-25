@@ -26,16 +26,16 @@ HIT_BRICK_POP_SECONDS = _tunnel.HIT_BRICK_POP_SECONDS
 _blend = _tunnel._blend
 
 _HAND_SHOULDER_EXTENSION = 0.12
-_HAND_SHOULDER_PATH_FRACTION = 0.075
 _HAND_TRACKER_OFFSET_PX = 10.0
-_HAND_PREENTRY_BEATS = 1.0
-_HAND_PREENTRY_SECONDS = 0.50
+_TARGET_PREENTRY_BEATS = 1.0
+_TARGET_PREENTRY_SECONDS = 0.50
 
 
 class Renderer(_tunnel.Renderer):
-    """Tunnel renderer with a wider shouldered shell and lightweight feedback."""
+    """Body-relative hand tunnel with one canonical smooth gameplay surface."""
 
     def _hand_tunnel_geometry(self):
+        """Return smooth gameplay arcs plus decorative side-shelf anchors."""
         inner, old_outer = super()._hand_arc_geometry()
         viewport = self._camera_rect()
         cx, base_y, rx, _ = old_outer
@@ -52,62 +52,21 @@ class Renderer(_tunnel.Renderer):
             base_y,
         )
         outer_top = float(viewport.top) + max(26.0, viewport.height * 0.035)
-        return inner, (seam_left, seam_right, shoulder_left, shoulder_right, outer_top)
 
-    @staticmethod
-    def _outer_tunnel_point(outer, along: float) -> tuple[float, float]:
-        seam_left, seam_right, shoulder_left, shoulder_right, outer_top = outer
-        t = max(0.0, min(1.0, along))
-        shelf = _HAND_SHOULDER_PATH_FRACTION
-
-        if t <= shelf:
-            u = t / max(shelf, 1e-6)
-            return (
-                seam_left[0] + (shoulder_left[0] - seam_left[0]) * u,
-                seam_left[1] + (shoulder_left[1] - seam_left[1]) * u,
-            )
-        if t >= 1.0 - shelf:
-            u = (t - (1.0 - shelf)) / max(shelf, 1e-6)
-            return (
-                shoulder_right[0] + (seam_right[0] - shoulder_right[0]) * u,
-                shoulder_right[1] + (seam_right[1] - shoulder_right[1]) * u,
-            )
-
-        u = (t - shelf) / max(1.0 - 2.0 * shelf, 1e-6)
-        arch_cx = (shoulder_left[0] + shoulder_right[0]) * 0.5
-        arch_base_y = (shoulder_left[1] + shoulder_right[1]) * 0.5
-        arch_rx = max(10.0, (shoulder_right[0] - shoulder_left[0]) * 0.5)
-        arch_ry = max(20.0, arch_base_y - outer_top)
-        angle = math.pi + math.pi * u
-        return (
-            arch_cx + arch_rx * math.cos(angle),
-            arch_base_y + arch_ry * math.sin(angle),
-        )
-
-    @staticmethod
-    def _smooth_outer_tunnel_point(outer, along: float) -> tuple[float, float]:
-        """Smooth guide for moving note bars; ignores decorative flat shelves."""
-        _, _, shoulder_left, shoulder_right, outer_top = outer
-        t = max(0.0, min(1.0, along))
-        cx = (shoulder_left[0] + shoulder_right[0]) * 0.5
-        base_y = (shoulder_left[1] + shoulder_right[1]) * 0.5
-        rx = max(10.0, (shoulder_right[0] - shoulder_left[0]) * 0.5)
-        ry = max(20.0, base_y - outer_top)
-        angle = math.pi + math.pi * t
-        return cx + rx * math.cos(angle), base_y + ry * math.sin(angle)
+        outer_cx = (shoulder_left[0] + shoulder_right[0]) * 0.5
+        outer_base_y = (shoulder_left[1] + shoulder_right[1]) * 0.5
+        outer_rx = max(10.0, (shoulder_right[0] - shoulder_left[0]) * 0.5)
+        outer_ry = max(20.0, outer_base_y - outer_top)
+        outer = (outer_cx, outer_base_y, outer_rx, outer_ry)
+        shelves = (seam_left, seam_right, shoulder_left, shoulder_right)
+        return inner, outer, shelves
 
     def _hand_point(self, along: float, progress: float) -> tuple[float, float]:
-        inner, outer = self._hand_tunnel_geometry()
+        """The one surface used by rails, notes, holds, effects and markers."""
+        inner, outer, _ = self._hand_tunnel_geometry()
         p = max(0.0, min(1.0, progress)) ** 1.25
         ix, iy = self._ellipse_upper_point(inner, along)
-        ox, oy = self._outer_tunnel_point(outer, along)
-        return ix + (ox - ix) * p, iy + (oy - iy) * p
-
-    def _smooth_hand_point(self, along: float, progress: float) -> tuple[float, float]:
-        inner, outer = self._hand_tunnel_geometry()
-        p = max(0.0, min(1.0, progress)) ** 1.25
-        ix, iy = self._ellipse_upper_point(inner, along)
-        ox, oy = self._smooth_outer_tunnel_point(outer, along)
+        ox, oy = self._ellipse_upper_point(outer, along)
         return ix + (ox - ix) * p, iy + (oy - iy) * p
 
     def _hand_note_arc_points(
@@ -118,24 +77,19 @@ class Renderer(_tunnel.Renderer):
         *,
         samples: int = 14,
     ) -> list[tuple[int, int]]:
+        """A target is an exact cross-section of the tunnel surface."""
         boundaries = _tunnel._HAND_BOUNDARIES
         centers = _tunnel._HAND_CENTERS
         start = boundaries[lane - 1]
         end = boundaries[lane]
-        center_along = centers[lane - 1]
+        center = centers[lane - 1]
         half = (end - start) * 0.5 * max(0.05, min(1.0, fraction))
-
-        actual_center = self._hand_target_point(lane, progress)
-        smooth_center = self._smooth_hand_point(center_along, progress)
-        shift_x = actual_center[0] - smooth_center[0]
-        shift_y = actual_center[1] - smooth_center[1]
-
-        points: list[tuple[int, int]] = []
-        for i in range(samples + 1):
-            along = center_along - half + 2.0 * half * i / samples
-            x, y = self._smooth_hand_point(along, progress)
-            points.append((int(x + shift_x), int(y + shift_y)))
-        return points
+        return self._hand_arc_points(
+            center - half,
+            center + half,
+            progress,
+            samples=samples,
+        )
 
     def _draw_hand_note_arc(
         self,
@@ -176,23 +130,19 @@ class Renderer(_tunnel.Renderer):
         inner = self._hand_arc_points(1.0, 0.0, p0, samples=64)
         return [*outer, *inner]
 
-    def _hand_lane_light_band(
-        self,
-        lane: int,
-        p0: float,
-        p1: float,
-        fraction: float = 0.90,
-    ) -> list[tuple[int, int]]:
-        boundaries = _tunnel._HAND_BOUNDARIES
-        centers = _tunnel._HAND_CENTERS
-        start = boundaries[lane - 1]
-        end = boundaries[lane]
-        center = centers[lane - 1]
-        half = (end - start) * 0.5 * max(0.05, min(1.0, fraction))
-        a0, a1 = center - half, center + half
-        outer = self._hand_arc_points(a0, a1, p1, samples=18)
-        inner = self._hand_arc_points(a1, a0, p0, samples=18)
-        return [*outer, *inner]
+    def _draw_hand_side_shelves(self, rail_color) -> None:
+        """Keep the requested flat shoulders visual-only, outside lane geometry."""
+        _, _, shelves = self._hand_tunnel_geometry()
+        seam_left, seam_right, shoulder_left, shoulder_right = shelves
+
+        # A restrained under-glow makes the shelves read as attached structure
+        # without turning them back into part of the note-bearing surface.
+        shelf_surface = pygame.Surface(self.size, pygame.SRCALPHA)
+        pygame.draw.line(shelf_surface, (*MAGENTA, 24), seam_left, shoulder_left, 10)
+        pygame.draw.line(shelf_surface, (*MAGENTA, 24), shoulder_right, seam_right, 10)
+        self.screen.blit(shelf_surface, (0, 0))
+        pygame.draw.line(self.screen, rail_color, seam_left, shoulder_left, 2)
+        pygame.draw.line(self.screen, rail_color, shoulder_right, seam_right, 2)
 
     def _draw_hand_playfield(
         self,
@@ -243,7 +193,7 @@ class Renderer(_tunnel.Renderer):
         inner_arc = self._hand_arc_points(0.0, 1.0, 0.0, samples=64)
         pygame.draw.lines(self.screen, _blend(rail_color, WHITE, 0.10), False, inner_arc, 2)
 
-        # Beat ripple now recedes from the receptor into the tunnel.
+        # Experimental BPM ripple recedes from the player into the tunnel.
         pulse = max(0.0, min(1.0, beat_pulse))
         pulse_position = math.sqrt(pulse) if pulse > 0.005 else -1.0
         for step in range(1, 9):
@@ -278,90 +228,120 @@ class Renderer(_tunnel.Renderer):
                 )
                 self.screen.blit(label, label.get_rect(center=(int(lx), int(ly))))
 
+        self._draw_hand_side_shelves(MAGENTA if enabled else disabled)
+
         if not enabled:
             cx, cy = self._hand_point(0.5, 0.0)
             off = self.small_font.render("NO HAND NOTES", True, _blend(DIM, BG, 0.30))
             self.screen.blit(off, off.get_rect(center=(int(cx), int(cy - 20))))
 
-    def _note_light_state(
+    def _target_glow_state(
         self,
         note: GameNote,
         song_time: float,
         song_beat: float,
     ) -> tuple[float, float, bool] | None:
-        if note.kind != NoteKind.HANDS or note.judged:
+        if note.judged:
             return None
 
         if note.beat is not None:
             distance = float(note.beat) - song_beat
             if distance > LOOKAHEAD_BEATS:
                 extra = distance - LOOKAHEAD_BEATS
-                if extra > _HAND_PREENTRY_BEATS:
+                if extra > _TARGET_PREENTRY_BEATS:
                     return None
-                return 0.0, 0.20 * (1.0 - extra / _HAND_PREENTRY_BEATS), True
+                strength = 1.0 - extra / _TARGET_PREENTRY_BEATS
+                return 0.0, 0.18 * strength, True
         else:
             distance = note.time - song_time
             if distance > LOOKAHEAD_SECONDS:
                 extra = distance - LOOKAHEAD_SECONDS
-                if extra > _HAND_PREENTRY_SECONDS:
+                if extra > _TARGET_PREENTRY_SECONDS:
                     return None
-                return 0.0, 0.20 * (1.0 - extra / _HAND_PREENTRY_SECONDS), True
+                strength = 1.0 - extra / _TARGET_PREENTRY_SECONDS
+                return 0.0, 0.18 * strength, True
 
         progress = max(0.0, min(1.0, self._note_progress(note, song_time, song_beat)))
-        return progress, 0.16 + 0.38 * (progress ** 0.85), False
+        return progress, 0.18 + 0.38 * (progress ** 0.85), False
 
-    def _draw_hand_target_lighting(
+    def _foot_note_points(self, lane: int, progress: float) -> list[tuple[int, int]]:
+        left, right = self._lane_bounds(NoteKind.FOOT, lane, progress)
+        y = self._field_y(NoteKind.FOOT, progress)
+        pad = max(2.0, (right - left) * 0.08)
+        return [(int(left + pad), int(y)), (int(right - pad), int(y))]
+
+    @staticmethod
+    def _draw_glow_stroke(
+        surface: pygame.Surface,
+        points: list[tuple[int, int]],
+        color,
+        intensity: float,
+        core_width: int,
+    ) -> None:
+        """Broad source glow only: no reflected/polygon band on the surface."""
+        if len(points) < 2 or intensity <= 0.0:
+            return
+        for extra, scale in ((34, 0.07), (22, 0.11), (12, 0.18)):
+            alpha = max(0, min(255, int(255 * intensity * scale)))
+            pygame.draw.lines(
+                surface,
+                (*color, alpha),
+                False,
+                points,
+                max(1, core_width + extra),
+            )
+
+    def _draw_target_glows(
         self,
         notes: list[GameNote],
         song_time: float,
         song_beat: float,
+        chain_mode: ChainMode,
     ) -> None:
-        light_surface = pygame.Surface(self.size, pygame.SRCALPHA)
-        any_light = False
+        glow_surface = pygame.Surface(self.size, pygame.SRCALPHA)
+        any_glow = False
+
         for note in notes:
-            state = self._note_light_state(note, song_time, song_beat)
+            # Match the normal note renderer: don't advertise source notes that
+            # are currently represented by a hold/chain block instead.
+            if note.end_time is not None and note.chain_id is not None:
+                continue
+            if note.chain_id is not None and chain_mode == ChainMode.BLOCKS:
+                continue
+
+            state = self._target_glow_state(note, song_time, song_beat)
             if state is None:
                 continue
             progress, intensity, preentry = state
+            theme = MAGENTA if note.kind == NoteKind.HANDS else CYAN
+
             for lane in note.lanes:
-                if preentry:
-                    x, y = self._hand_target_point(lane, 0.0)
-                    for radius, scale in ((22, 0.18), (14, 0.30), (7, 0.48)):
-                        pygame.draw.circle(
-                            light_surface,
-                            (*MAGENTA, int(255 * intensity * scale)),
-                            (int(x), int(y)),
-                            radius,
-                        )
-                    pygame.draw.lines(
-                        light_surface,
-                        (*MAGENTA, int(255 * intensity * 0.75)),
-                        False,
-                        self._hand_lane_arc(lane, 0.0, 0.62),
-                        5,
+                if note.kind == NoteKind.HANDS:
+                    points = self._hand_note_arc_points(
+                        lane,
+                        0.0 if preentry else progress,
+                        _tunnel._HAND_NOTE_ARC_FRACTION,
+                        samples=18,
                     )
-                    any_light = True
-                    continue
+                    core_width = max(5, int(5 + 12 * (0.0 if preentry else progress)))
+                else:
+                    points = self._foot_note_points(lane, 0.0 if preentry else progress)
+                    core_width = max(4, int(4 + 12 * (0.0 if preentry else progress)))
 
-                spread = 0.045 + 0.045 * progress
-                p0 = max(0.0, progress - spread)
-                p1 = min(1.0, progress + spread)
-                pygame.draw.polygon(
-                    light_surface,
-                    (*MAGENTA, int(255 * intensity * 0.16)),
-                    self._hand_lane_light_band(lane, p0, p1),
+                # The pre-entry hint is intentionally softer, but is exactly the
+                # same target shape at progress zero rather than a separate icon.
+                local_intensity = intensity * (0.82 if preentry else 1.0)
+                self._draw_glow_stroke(
+                    glow_surface,
+                    points,
+                    theme,
+                    local_intensity,
+                    core_width,
                 )
-                pygame.draw.lines(
-                    light_surface,
-                    (*MAGENTA, int(255 * intensity * 0.42)),
-                    False,
-                    self._hand_lane_arc(lane, progress, 0.84),
-                    max(5, int(7 + 8 * progress)),
-                )
-                any_light = True
+                any_glow = True
 
-        if any_light:
-            self.screen.blit(light_surface, (0, 0))
+        if any_glow:
+            self.screen.blit(glow_surface, (0, 0))
 
     def _draw_notes(
         self,
@@ -370,7 +350,7 @@ class Renderer(_tunnel.Renderer):
         song_beat: float,
         chain_mode: ChainMode = ChainMode.OFF,
     ) -> None:
-        self._draw_hand_target_lighting(notes, song_time, song_beat)
+        self._draw_target_glows(notes, song_time, song_beat, chain_mode)
         super()._draw_notes(notes, song_time, song_beat, chain_mode)
 
     def _draw_hand_tracking_markers(self, body: BodyState, enabled: bool) -> None:
