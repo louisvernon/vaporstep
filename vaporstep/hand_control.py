@@ -12,9 +12,10 @@ from .domain import BodyPoint
 #
 # HIGH is intentionally easy: raising a wrist is the gesture. Horizontal
 # position is irrelevant once the hand is raised, so a naturally diagonal or
-# forward reach still resolves HIGH rather than competing with OUT.
-HIGH_ENTER = 0.42
-HIGH_EXIT = 0.26
+# forward reach still resolves HIGH rather than competing with OUT. A wrist only
+# needs to be about one quarter of a shoulder-width above the shoulder line.
+HIGH_ENTER = 0.24
+HIGH_EXIT = 0.12
 OUT_ENTER = 0.72
 OUT_EXIT = 0.50
 VISUAL_RANGE = 1.45
