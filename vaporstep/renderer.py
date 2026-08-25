@@ -5,10 +5,21 @@ import math
 import pygame
 
 from . import renderer_tunnel_base as _tunnel
-from .config import LOOKAHEAD_BEATS, LOOKAHEAD_SECONDS
+from .config import (
+    FOOT_HIT_Y,
+    FOOT_PLAYFIELD_LEFT,
+    FOOT_PLAYFIELD_RIGHT,
+    LANE_PERSPECTIVE_STRENGTH,
+    LOOKAHEAD_BEATS,
+    LOOKAHEAD_SECONDS,
+    OUTER_LANE_EDGE_EXTENSION,
+    VANISH_HALF_WIDTH,
+    VANISH_Y,
+)
 from .domain import BodyState, ChainMode, GameNote, HitQuality, NoteKind
 from .hand_control import hand_control_perimeter_along
 from .keyboard_input import label_for_lane
+from .lanes import perspective_adjusted_x
 
 
 BG = _tunnel.BG
@@ -131,16 +142,9 @@ class Renderer(_tunnel.Renderer):
         return [*outer, *inner]
 
     def _draw_hand_side_shelves(self, rail_color) -> None:
-        """Keep the requested flat shoulders visual-only, outside lane geometry."""
+        """Draw neutral structural shelves outside the note-bearing surface."""
         _, _, shelves = self._hand_tunnel_geometry()
         seam_left, seam_right, shoulder_left, shoulder_right = shelves
-
-        # A restrained under-glow makes the shelves read as attached structure
-        # without turning them back into part of the note-bearing surface.
-        shelf_surface = pygame.Surface(self.size, pygame.SRCALPHA)
-        pygame.draw.line(shelf_surface, (*MAGENTA, 24), seam_left, shoulder_left, 10)
-        pygame.draw.line(shelf_surface, (*MAGENTA, 24), shoulder_right, seam_right, 10)
-        self.screen.blit(shelf_surface, (0, 0))
         pygame.draw.line(self.screen, rail_color, seam_left, shoulder_left, 2)
         pygame.draw.line(self.screen, rail_color, shoulder_right, seam_right, 2)
 
@@ -228,12 +232,115 @@ class Renderer(_tunnel.Renderer):
                 )
                 self.screen.blit(label, label.get_rect(center=(int(lx), int(ly))))
 
-        self._draw_hand_side_shelves(MAGENTA if enabled else disabled)
+        # These floor shelves are deliberately not a continuation of the pink
+        # hand receptor. Color here is reserved for foot out-of-bounds feedback.
+        self._draw_hand_side_shelves(rail_color)
 
         if not enabled:
             cx, cy = self._hand_point(0.5, 0.0)
             off = self.small_font.render("NO HAND NOTES", True, _blend(DIM, BG, 0.30))
             self.screen.blit(off, off.get_rect(center=(int(cx), int(cy - 20))))
+
+    def _foot_outside_strengths(self, body: BodyState) -> tuple[float, float]:
+        """Return left/right warning strength using the real foot resolver geometry."""
+        lane_width = (FOOT_PLAYFIELD_RIGHT - FOOT_PLAYFIELD_LEFT) / 4.0
+        extension = lane_width * OUTER_LANE_EDGE_EXTENSION
+        left_limit = FOOT_PLAYFIELD_LEFT - extension
+        right_limit = FOOT_PLAYFIELD_RIGHT + extension
+        ramp = max(lane_width * 0.55, 1e-6)
+        left_strength = 0.0
+        right_strength = 0.0
+
+        for control in (body.left_foot_control, body.right_foot_control):
+            if not control.visible:
+                continue
+            adjusted = perspective_adjusted_x(
+                control.x,
+                control.y,
+                playfield_left=FOOT_PLAYFIELD_LEFT,
+                playfield_right=FOOT_PLAYFIELD_RIGHT,
+                hit_y=FOOT_HIT_Y,
+                vanish_y=VANISH_Y,
+                vanish_half_width=VANISH_HALF_WIDTH,
+                strength=LANE_PERSPECTIVE_STRENGTH,
+            )
+            if adjusted < left_limit:
+                left_strength = max(
+                    left_strength,
+                    min(1.0, (left_limit - adjusted) / ramp),
+                )
+            elif adjusted > right_limit:
+                right_strength = max(
+                    right_strength,
+                    min(1.0, (adjusted - right_limit) / ramp),
+                )
+        return left_strength, right_strength
+
+    @staticmethod
+    def _scaled_additive_color(color, amount: float) -> tuple[int, int, int]:
+        amount = max(0.0, min(1.0, amount))
+        return tuple(max(0, min(255, int(channel * amount))) for channel in color)
+
+    def _draw_foot_boundary_warning(self, body: BodyState) -> None:
+        left_strength, right_strength = self._foot_outside_strengths(body)
+        if max(left_strength, right_strength) <= 0.0:
+            return
+
+        _, _, shelves = self._hand_tunnel_geometry()
+        seam_left, seam_right, shoulder_left, shoulder_right = shelves
+        warning_surface = pygame.Surface(self.size)
+        warning_surface.fill((0, 0, 0))
+
+        # Light the flat floor shelf itself rather than the playable foot lanes.
+        # Successive strips make the warning read as a soft red floor glow.
+        for start, end, strength in (
+            (shoulder_left, seam_left, left_strength),
+            (seam_right, shoulder_right, right_strength),
+        ):
+            if strength <= 0.0:
+                continue
+            x0, x1 = sorted((float(start[0]), float(end[0])))
+            base_y = float(start[1])
+            for depth, scale in ((42.0, 0.12), (28.0, 0.20), (14.0, 0.34)):
+                color = self._scaled_additive_color(RED, strength * scale)
+                pygame.draw.polygon(
+                    warning_surface,
+                    color,
+                    [
+                        (int(x0), int(base_y)),
+                        (int(x1), int(base_y)),
+                        (int(x1), int(base_y - depth)),
+                        (int(x0), int(base_y - depth)),
+                    ],
+                )
+            edge_color = self._scaled_additive_color(RED, 0.55 * strength)
+            pygame.draw.line(warning_surface, edge_color, start, end, 3)
+
+        self.screen.blit(warning_surface, (0, 0), special_flags=pygame.BLEND_RGB_ADD)
+
+    def _draw_playfields(
+        self,
+        body: BodyState,
+        song_time: float,
+        beat_pulse: float,
+        downbeat: bool,
+        hand_enabled: bool,
+        foot_enabled: bool,
+        overdrive: bool = False,
+        animate_buzz: bool = True,
+    ) -> None:
+        super()._draw_playfields(
+            body,
+            song_time,
+            beat_pulse,
+            downbeat,
+            hand_enabled,
+            foot_enabled,
+            overdrive,
+            animate_buzz,
+        )
+        if foot_enabled:
+            self._draw_foot_boundary_warning(body)
 
     def _target_glow_state(
         self,
@@ -270,22 +377,23 @@ class Renderer(_tunnel.Renderer):
         pad = max(2.0, (right - left) * 0.08)
         return [(int(left + pad), int(y)), (int(right - pad), int(y))]
 
-    @staticmethod
+    @classmethod
     def _draw_glow_stroke(
+        cls,
         surface: pygame.Surface,
         points: list[tuple[int, int]],
         color,
         intensity: float,
         core_width: int,
     ) -> None:
-        """Broad source glow only: no reflected/polygon band on the surface."""
+        """Broad additive source glow with no reflected surface band."""
         if len(points) < 2 or intensity <= 0.0:
             return
-        for extra, scale in ((34, 0.07), (22, 0.11), (12, 0.18)):
-            alpha = max(0, min(255, int(255 * intensity * scale)))
+        for extra, scale in ((42, 0.10), (28, 0.16), (16, 0.26), (8, 0.38)):
+            glow_color = cls._scaled_additive_color(color, intensity * scale)
             pygame.draw.lines(
                 surface,
-                (*color, alpha),
+                glow_color,
                 False,
                 points,
                 max(1, core_width + extra),
@@ -298,7 +406,10 @@ class Renderer(_tunnel.Renderer):
         song_beat: float,
         chain_mode: ChainMode,
     ) -> None:
-        glow_surface = pygame.Surface(self.size, pygame.SRCALPHA)
+        # Additive light behaves like illumination over the dark tunnel/camera,
+        # unlike the previous very-low-alpha overlay which was effectively lost.
+        glow_surface = pygame.Surface(self.size)
+        glow_surface.fill((0, 0, 0))
         any_glow = False
 
         for note in notes:
@@ -328,8 +439,8 @@ class Renderer(_tunnel.Renderer):
                     points = self._foot_note_points(lane, 0.0 if preentry else progress)
                     core_width = max(4, int(4 + 12 * (0.0 if preentry else progress)))
 
-                # The pre-entry hint is intentionally softer, but is exactly the
-                # same target shape at progress zero rather than a separate icon.
+                # The pre-entry hint is intentionally softer, but uses exactly
+                # the same source shape as the target when it first appears.
                 local_intensity = intensity * (0.82 if preentry else 1.0)
                 self._draw_glow_stroke(
                     glow_surface,
@@ -341,7 +452,7 @@ class Renderer(_tunnel.Renderer):
                 any_glow = True
 
         if any_glow:
-            self.screen.blit(glow_surface, (0, 0))
+            self.screen.blit(glow_surface, (0, 0), special_flags=pygame.BLEND_RGB_ADD)
 
     def _draw_notes(
         self,
