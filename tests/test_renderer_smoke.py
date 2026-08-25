@@ -36,11 +36,16 @@ def test_song_menu_module_imports_with_renderer() -> None:
     assert song_menu_renderer.install_song_menu_renderer is not None
 
 
-def test_renderer_previous_layer_is_gone() -> None:
+def test_renderer_prototype_layers_are_gone() -> None:
     module = importlib.import_module("vaporstep.renderer")
-    source = Path(module.__file__).read_text(encoding="utf-8")
-    assert "renderer_previous" not in source
-    assert not Path(module.__file__).with_name("renderer_previous.py").exists()
+    base_module = importlib.import_module("vaporstep.renderer_base")
+    source_path = Path(module.__file__)
+    source = source_path.read_text(encoding="utf-8")
+
+    assert module.Renderer.__bases__ == (base_module.Renderer,)
+    for removed in ("renderer_previous", "renderer_tunnel_base"):
+        assert removed not in source
+        assert not source_path.with_name(f"{removed}.py").exists()
 
 
 def test_renderer_constructs_and_draws_startup_smoke() -> None:
