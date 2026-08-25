@@ -803,6 +803,61 @@ class Renderer(_base.Renderer):
         if any_glow:
             self.screen.blit(glow_surface, (0, 0), special_flags=pygame.BLEND_RGB_ADD)
 
+    def _draw_foot_notes(
+        self,
+        notes: list[GameNote],
+        song_time: float,
+        song_beat: float,
+        chain_mode: ChainMode,
+    ) -> None:
+        for note in notes:
+            if note.kind != NoteKind.FOOT:
+                continue
+            if note.end_time is not None and note.chain_id is not None:
+                continue
+            if note.chain_id is not None and chain_mode == ChainMode.BLOCKS:
+                continue
+            dt = note.time - song_time
+            if not note_is_within_lookahead(note, song_time, song_beat):
+                continue
+            if note.judged and note.judged_at is not None:
+                age = song_time - note.judged_at
+                if age > _base.HIT_FLASH_SECONDS:
+                    continue
+                if note.hit and age > HIT_BRICK_POP_SECONDS:
+                    continue
+            elif dt < -_base.HIT_WINDOW_SECONDS:
+                continue
+
+            if note.judged and note.hit:
+                quality = note.judgement or HitQuality.HIT
+                color = WHITE if quality != HitQuality.PERFECT else _blend(AMBER, WHITE, 0.55)
+            elif note.judged:
+                color = RED
+            else:
+                color = CYAN
+
+            progress = self._note_progress(note, song_time, song_beat)
+            if not note.judged:
+                beat_phase = song_beat - math.floor(song_beat)
+                breathe = 0.5 + 0.5 * math.cos(beat_phase * math.tau)
+                near_receptor = max(0.0, min(1.0, progress))
+                trough = 0.72 + 0.14 * near_receptor
+                intensity = trough + (1.0 - trough) * breathe
+                color = _blend(BG, color, intensity)
+                color = _blend(color, WHITE, 0.05 * breathe)
+
+            for lane in note.lanes:
+                if note.judged and note.hit and note.judged_at is not None:
+                    self._draw_hit_pop_bar(
+                        NoteKind.FOOT,
+                        lane,
+                        max(0.0, song_time - note.judged_at),
+                        note.judgement or HitQuality.HIT,
+                    )
+                else:
+                    self._draw_note_bar(NoteKind.FOOT, lane, progress, color, False)
+
     def _draw_notes(
         self,
         notes: list[GameNote],
@@ -811,9 +866,7 @@ class Renderer(_base.Renderer):
         chain_mode: ChainMode = ChainMode.OFF,
     ) -> None:
         self._draw_target_glows(notes, song_time, song_beat, chain_mode)
-
-        foot_notes = [note for note in notes if note.kind == NoteKind.FOOT]
-        super()._draw_notes(foot_notes, song_time, song_beat, chain_mode)
+        self._draw_foot_notes(notes, song_time, song_beat, chain_mode)
 
         for note in notes:
             if note.kind != NoteKind.HANDS:
@@ -857,6 +910,146 @@ class Renderer(_base.Renderer):
             for lane in note.lanes:
                 self._draw_hand_note_arc(lane, progress, color)
 
+    def _draw_foot_chains(
+        self,
+        chains: tuple[RuntimeChain, ...],
+        notes: list[GameNote],
+        song_time: float,
+        song_beat: float,
+        chain_mode: ChainMode,
+    ) -> None:
+        if not chains or not notes:
+            return
+        for chain in chains:
+            definition = chain.definition
+            if definition.kind != NoteKind.FOOT:
+                continue
+            is_hold = definition.source == SustainSource.EXPLICIT_HOLD
+            if not is_hold and chain_mode == ChainMode.OFF:
+                continue
+            if not timed_is_within_lookahead(
+                definition.start_time,
+                definition.start_beat,
+                song_time,
+                song_beat,
+            ):
+                continue
+            if chain.state == ChainState.COMPLETE and song_time > definition.end_time + 0.10:
+                continue
+            if song_time > definition.end_time + _base.HIT_FLASH_SECONDS:
+                continue
+
+            head_progress = timed_progress(
+                definition.start_time,
+                definition.start_beat,
+                song_time,
+                song_beat,
+            )
+            tail_progress = timed_progress(
+                definition.end_time,
+                definition.end_beat,
+                song_time,
+                song_beat,
+            )
+            lo = min(head_progress, tail_progress)
+            hi = max(head_progress, tail_progress)
+            if hi <= 0.0:
+                continue
+
+            if chain.state == ChainState.BROKEN:
+                fill = _blend(BG, DIM, 0.56)
+                edge = _blend(DIM, WHITE, 0.10)
+            elif chain.state == ChainState.ACTIVE:
+                fill = _blend(BG, CYAN, 0.52)
+                edge = _blend(CYAN, WHITE, 0.30)
+            else:
+                fill = _blend(BG, CYAN, 0.27)
+                edge = _blend(BG, CYAN, 0.66)
+
+            for lane in definition.lanes:
+                left0, right0 = self._lane_bounds(NoteKind.FOOT, lane, lo)
+                left1, right1 = self._lane_bounds(NoteKind.FOOT, lane, hi)
+                y0 = self._field_y(NoteKind.FOOT, lo)
+                y1 = self._field_y(NoteKind.FOOT, hi)
+                pad0 = max(2.0, (right0 - left0) * 0.10)
+                pad1 = max(2.0, (right1 - left1) * 0.10)
+                polygon = [
+                    (int(left0 + pad0), int(y0)),
+                    (int(right0 - pad0), int(y0)),
+                    (int(right1 - pad1), int(y1)),
+                    (int(left1 + pad1), int(y1)),
+                ]
+                pygame.draw.polygon(self.screen, fill, polygon)
+                pygame.draw.lines(
+                    self.screen,
+                    edge,
+                    True,
+                    polygon,
+                    2 if chain.state == ChainState.ACTIVE else 1,
+                )
+
+                center0 = (left0 + right0) * 0.5
+                center1 = (left1 + right1) * 0.5
+                center_color = WHITE if chain.state == ChainState.ACTIVE else edge
+                pygame.draw.line(
+                    self.screen,
+                    center_color,
+                    (int(center0), int(y0)),
+                    (int(center1), int(y1)),
+                    2 if chain.state == ChainState.ACTIVE else 1,
+                )
+
+                head_p = max(0.0, min(1.0, head_progress))
+                head_left, head_right = self._lane_bounds(NoteKind.FOOT, lane, head_p)
+                head_y = self._field_y(NoteKind.FOOT, head_p)
+                head_pad = max(2.0, (head_right - head_left) * 0.08)
+                head_thickness = max(5, int(4 + 12 * head_p))
+                if chain.state == ChainState.BROKEN:
+                    head_color = _blend(BG, DIM, 0.72)
+                else:
+                    head_color = CYAN
+                pygame.draw.line(
+                    self.screen,
+                    BG,
+                    (head_left + head_pad, head_y),
+                    (head_right - head_pad, head_y),
+                    head_thickness + 8,
+                )
+                pygame.draw.line(
+                    self.screen,
+                    head_color,
+                    (head_left + head_pad, head_y),
+                    (head_right - head_pad, head_y),
+                    head_thickness,
+                )
+                if chain.state != ChainState.BROKEN:
+                    pygame.draw.line(
+                        self.screen,
+                        WHITE,
+                        (head_left + head_pad, head_y - max(1, head_thickness // 4)),
+                        (head_right - head_pad, head_y - max(1, head_thickness // 4)),
+                        1,
+                    )
+
+                if chain.state == ChainState.ACTIVE:
+                    left, right = self._lane_bounds(NoteKind.FOOT, lane, 1.0)
+                    y = self._field_y(NoteKind.FOOT, 1.0)
+                    cap_pad = max(2.0, (right - left) * 0.08)
+                    pygame.draw.line(
+                        self.screen,
+                        CYAN,
+                        (left + cap_pad, y),
+                        (right - cap_pad, y),
+                        9,
+                    )
+                    pygame.draw.line(
+                        self.screen,
+                        WHITE,
+                        (left + cap_pad, y),
+                        (right - cap_pad, y),
+                        2,
+                    )
+
     def _draw_chains(
         self,
         chains: tuple[RuntimeChain, ...],
@@ -866,18 +1059,7 @@ class Renderer(_base.Renderer):
         chain_mode: ChainMode,
     ) -> None:
         self._draw_chain_head_glows(chains, song_time, song_beat, chain_mode)
-
-        foot_chains = tuple(
-            chain for chain in chains if chain.definition.kind == NoteKind.FOOT
-        )
-        foot_notes = [note for note in notes if note.kind == NoteKind.FOOT]
-        super()._draw_chains(
-            foot_chains,
-            foot_notes,
-            song_time,
-            song_beat,
-            chain_mode,
-        )
+        self._draw_foot_chains(chains, notes, song_time, song_beat, chain_mode)
 
         if notes:
             for chain in chains:
