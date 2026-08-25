@@ -6,6 +6,15 @@ from types import SimpleNamespace
 
 import pygame
 
+from vaporstep.domain import (
+    ChainMode,
+    GameNote,
+    ImplicitChain,
+    NoteKind,
+    RuntimeChain,
+    SustainSource,
+)
+
 
 def test_renderer_module_imports() -> None:
     module = importlib.import_module("vaporstep.renderer")
@@ -50,6 +59,8 @@ def test_renderer_prototype_layers_and_compatibility_hacks_are_gone() -> None:
 
     assert "_suppress_legacy_hands" not in source
     assert "_ReceptorLabelFilter" not in source
+    assert "super()._draw_notes" not in source
+    assert "super()._draw_chains" not in source
 
 
 def test_renderer_constructs_and_draws_startup_smoke() -> None:
@@ -91,6 +102,58 @@ def test_renderer_draws_gameplay_surfaces_smoke() -> None:
         hand_enabled=True,
         foot_enabled=True,
         strike_events=(),
+    )
+
+    assert screen.get_size() == (1280, 720)
+
+
+def test_renderer_draws_explicit_foot_notes_and_chains_smoke() -> None:
+    pygame.font.init()
+    screen = pygame.Surface((1280, 720))
+    renderer_module = importlib.import_module("vaporstep.renderer")
+    renderer = renderer_module.Renderer(screen)
+
+    note = GameNote(
+        time=1.0,
+        beat=1.0,
+        lanes=(2,),
+        kind=NoteKind.FOOT,
+    )
+    hold_note = GameNote(
+        time=1.0,
+        beat=1.0,
+        end_time=2.0,
+        end_beat=2.0,
+        lanes=(3,),
+        kind=NoteKind.FOOT,
+        chain_id=7,
+    )
+    chain = RuntimeChain(
+        definition=ImplicitChain(
+            id=7,
+            kind=NoteKind.FOOT,
+            lanes=(3,),
+            note_indices=(1,),
+            start_time=1.0,
+            end_time=2.0,
+            start_beat=1.0,
+            end_beat=2.0,
+            source=SustainSource.EXPLICIT_HOLD,
+        )
+    )
+
+    renderer._draw_notes(
+        [note, hold_note],
+        song_time=0.5,
+        song_beat=0.5,
+        chain_mode=ChainMode.OFF,
+    )
+    renderer._draw_chains(
+        (chain,),
+        [note, hold_note],
+        song_time=0.5,
+        song_beat=0.5,
+        chain_mode=ChainMode.OFF,
     )
 
     assert screen.get_size() == (1280, 720)
