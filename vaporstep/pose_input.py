@@ -50,13 +50,11 @@ RIGHT_ANKLE = 28
 
 
 def _strict_timestamp_ms(elapsed_seconds: float, previous_ms: int) -> int:
-    """Convert monotonic time to the strictly increasing milliseconds MediaPipe requires."""
     candidate = max(0, int(float(elapsed_seconds) * 1000.0))
     return max(candidate, int(previous_ms) + 1)
 
 
 def _open_camera_capture(camera_index: int):
-    """Open a camera using the preferred native backend for this platform."""
     if platform.system() == "Darwin" and hasattr(cv2, "CAP_AVFOUNDATION"):
         cap = cv2.VideoCapture(camera_index, cv2.CAP_AVFOUNDATION)
         if not cap.isOpened():
@@ -76,13 +74,6 @@ def _open_camera_capture(camera_index: int):
 
 
 def probe_camera(camera_index: int = 0) -> bool:
-    """Briefly open and immediately release a camera.
-
-    This is intentionally independent of MediaPipe. On macOS it is enough to
-    trigger the OS camera-permission flow without leaving the camera active
-    while VaporStep is sitting in its menus. A failed probe is non-fatal; the
-    normal gameplay camera path retries when the device is actually needed.
-    """
     cap = None
     try:
         cap = _open_camera_capture(max(0, int(camera_index)))
@@ -108,8 +99,6 @@ class PoseSnapshot:
 
 @dataclass
 class _LowerLegFilter:
-    """Smooth only ankle contribution, never the resulting x/y control point."""
-
     ankle_weight: float = 0.0
 
     def reset(self) -> None:
@@ -148,13 +137,12 @@ class PoseCameraInput:
             "left": _LowerLegFilter(),
             "right": _LowerLegFilter(),
         }
+        # Both wrists use identical body-relative segment logic. Resolver state
+        # remains separate only so hysteresis is tracked independently per wrist.
         self._hand_resolvers = {
-            "left": HandPoseResolver("left"),
-            "right": HandPoseResolver("right"),
+            "left": HandPoseResolver(),
+            "right": HandPoseResolver(),
         }
-
-        # Feet remain an absolute floor-placement problem. Hands deliberately do
-        # not use these perspective lane resolvers anymore.
         self._resolvers = {
             "lk": HystereticLaneResolver(
                 FOOT_PLAYFIELD_LEFT, FOOT_PLAYFIELD_RIGHT, LANE_COUNT, LANE_HYSTERESIS, OUTER_LANE_ASSIST, OUTER_LANE_EDGE_EXTENSION
@@ -170,7 +158,6 @@ class PoseCameraInput:
     def start(self) -> None:
         if self._thread and self._thread.is_alive():
             return
-
         options = mp.tasks.vision.PoseLandmarkerOptions(
             base_options=mp.tasks.BaseOptions(model_asset_path=self.model_path),
             running_mode=mp.tasks.vision.RunningMode.LIVE_STREAM,
@@ -209,14 +196,12 @@ class PoseCameraInput:
         last_timestamp_ms = -1
         failed_reads = 0
         retry_count = 0
-
         while not self._stop.is_set():
             if self._capture is None or not self._capture.isOpened():
                 try:
                     cap = self._open_camera()
                 except Exception:
                     cap = None
-
                 if cap is None or not cap.isOpened():
                     if cap is not None:
                         cap.release()
@@ -234,7 +219,6 @@ class PoseCameraInput:
                         )
                     self._stop.wait(0.5 if retry_count <= 12 else 1.5)
                     continue
-
                 self._capture = cap
                 retry_count = 0
                 failed_reads = 0
@@ -283,7 +267,6 @@ class PoseCameraInput:
         return visibility >= LANDMARK_VISIBILITY_THRESHOLD and presence >= 0.35
 
     def _camera_point(self, lm, *, visible: bool | None = None) -> BodyPoint:
-        """Return a displayed camera-space point without resolving a lane."""
         if visible is None:
             visible = self._visible(lm)
         x = zoom_normalized_x(1.0 - float(lm.x), self.horizontal_zoom)
@@ -402,20 +385,8 @@ class PoseCameraInput:
         left_hand = self._hand_resolvers["left"].resolve(raw_lw, left_shoulder, right_shoulder)
         right_hand = self._hand_resolvers["right"].resolve(raw_rw, left_shoulder, right_shoulder)
 
-        # Keep raw camera coordinates for motion velocity while attaching the
-        # resolved body-relative lane used by timing events.
-        lw = BodyPoint(
-            x=raw_lw.x,
-            y=raw_lw.y,
-            lane=left_hand.lane,
-            visible=raw_lw.visible,
-        )
-        rw = BodyPoint(
-            x=raw_rw.x,
-            y=raw_rw.y,
-            lane=right_hand.lane,
-            visible=raw_rw.visible,
-        )
+        lw = BodyPoint(x=raw_lw.x, y=raw_lw.y, lane=left_hand.lane, visible=raw_lw.visible)
+        rw = BodyPoint(x=raw_rw.x, y=raw_rw.y, lane=right_hand.lane, visible=raw_rw.visible)
 
         lk, la, lfc = self._lower_body_points(
             lm[LEFT_KNEE], lm[LEFT_ANKLE], self._resolvers["lk"], leg="left"
@@ -450,8 +421,6 @@ class PoseCameraInput:
         elif any(p.lane is None for p in (lfc, rfc)):
             message = "Move your feet into the floor play area"
         else:
-            # Neutral is the intended resting hand state; hand lanes are not
-            # required to be active before gameplay can begin.
             message = "READY"
 
         with self._lock:
