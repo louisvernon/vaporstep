@@ -62,45 +62,8 @@ _TARGET_PREENTRY_BEATS = 1.5
 _TARGET_PREENTRY_SECONDS = 0.75
 
 
-class _ReceptorLabelFilter:
-    """Suppress captions and the base renderer's late foot key labels."""
-
-    def __init__(self, font) -> None:
-        self._font = font
-
-    def render(self, text, antialias, color, *args, **kwargs):
-        if text in {"FEET", "HANDS", "J", "K", "L", ";"}:
-            return pygame.Surface((1, 1), pygame.SRCALPHA)
-        return self._font.render(text, antialias, color, *args, **kwargs)
-
-    def __getattr__(self, name):
-        return getattr(self._font, name)
-
-
 class Renderer(_base.Renderer):
     """Authoritative gameplay renderer for the projected hand tunnel and foot field."""
-
-    def __init__(self, screen: pygame.Surface) -> None:
-        super().__init__(screen)
-        self._suppress_legacy_hands = False
-
-    # The mature base renderer still contains its original hand fan. Until the
-    # foot-only base passes are separated cleanly, route that disabled geometry
-    # off-screen while this renderer owns the hand tunnel.
-    def _field_bounds(self, kind: NoteKind, progress: float) -> tuple[float, float]:
-        if self._suppress_legacy_hands and kind == NoteKind.HANDS:
-            return (-2000.0, -1999.0)
-        return super()._field_bounds(kind, progress)
-
-    def _field_y(self, kind: NoteKind, progress: float) -> float:
-        if self._suppress_legacy_hands and kind == NoteKind.HANDS:
-            return -2000.0
-        return super()._field_y(kind, progress)
-
-    def _lane_boundary_x(self, kind: NoteKind, boundary: int, progress: float) -> float:
-        if self._suppress_legacy_hands and kind == NoteKind.HANDS:
-            return -2000.0 + boundary * 0.1
-        return super()._lane_boundary_x(kind, boundary, progress)
 
     @staticmethod
     def _offset_rail(
@@ -445,6 +408,73 @@ class Renderer(_base.Renderer):
             off = self.small_font.render("NO HAND NOTES", True, _blend(DIM, BG, 0.30))
             self.screen.blit(off, off.get_rect(center=(int(cx), int(cy - 20))))
 
+    def _draw_foot_playfield(
+        self,
+        body: BodyState,
+        song_time: float,
+        beat_pulse: float,
+        downbeat: bool,
+        enabled: bool,
+        overdrive: bool,
+        animate_buzz: bool,
+    ) -> None:
+        if self._lane_fill_surface is None or self._lane_fill_surface.get_size() != self.size:
+            self._lane_fill_surface = pygame.Surface(self.size, pygame.SRCALPHA)
+        self._lane_fill_surface.fill((0, 0, 0, 0))
+        if enabled:
+            for lane in body.foot_lanes:
+                self._draw_active_lane_fill(
+                    self._lane_fill_surface,
+                    NoteKind.FOOT,
+                    lane,
+                    CYAN,
+                    beat_pulse,
+                )
+        self.screen.blit(self._lane_fill_surface, (0, 0))
+
+        occupied = body.foot_lanes if enabled else frozenset()
+        disabled_grid = _blend(GRID, BG, 0.62)
+        local_grid = GRID if enabled else disabled_grid
+        outer_color = CYAN if enabled else _blend(DIM, BG, 0.55)
+        outer_width = 2 if enabled else 1
+
+        for i in range(5):
+            x0 = self._lane_boundary_x(NoteKind.FOOT, i, 0.0)
+            x1 = self._lane_boundary_x(NoteKind.FOOT, i, 1.0)
+            y0 = self._field_y(NoteKind.FOOT, 0.0)
+            y1 = self._field_y(NoteKind.FOOT, 1.0)
+            if i in (0, 4):
+                pygame.draw.line(self.screen, outer_color, (x0, y0), (x1, y1), outer_width)
+            else:
+                pygame.draw.line(self.screen, local_grid, (x0, y0), (x1, y1), 1)
+
+        if enabled:
+            for lane in occupied:
+                for boundary in (lane - 1, lane):
+                    x0 = self._lane_boundary_x(NoteKind.FOOT, boundary, 0.0)
+                    x1 = self._lane_boundary_x(NoteKind.FOOT, boundary, 1.0)
+                    y0 = self._field_y(NoteKind.FOOT, 0.0)
+                    y1 = self._field_y(NoteKind.FOOT, 1.0)
+                    pygame.draw.line(self.screen, CYAN, (x0, y0), (x1, y1), 3)
+
+        for j in range(1, 8):
+            p = j / 8.0
+            left = self._lane_boundary_x(NoteKind.FOOT, 0, p)
+            right = self._lane_boundary_x(NoteKind.FOOT, 4, p)
+            y = self._field_y(NoteKind.FOOT, p)
+            pygame.draw.line(self.screen, local_grid, (left, y), (right, y), 1)
+
+        if enabled:
+            self._draw_buzz_rails(
+                NoteKind.FOOT,
+                CYAN,
+                song_time,
+                beat_pulse,
+                downbeat,
+                overdrive,
+                animated=animate_buzz,
+            )
+
     def _foot_outside_strengths(self, body: BodyState) -> tuple[float, float]:
         lane_width = (FOOT_PLAYFIELD_RIGHT - FOOT_PLAYFIELD_LEFT) / 4.0
         extension = lane_width * OUTER_LANE_EDGE_EXTENSION
@@ -531,20 +561,15 @@ class Renderer(_base.Renderer):
         overdrive: bool = False,
         animate_buzz: bool = True,
     ) -> None:
-        self._suppress_legacy_hands = True
-        try:
-            super()._draw_playfields(
-                body,
-                song_time,
-                beat_pulse,
-                downbeat,
-                False,
-                foot_enabled,
-                overdrive,
-                animate_buzz,
-            )
-        finally:
-            self._suppress_legacy_hands = False
+        self._draw_foot_playfield(
+            body,
+            song_time,
+            beat_pulse,
+            downbeat,
+            foot_enabled,
+            overdrive,
+            animate_buzz,
+        )
         self._draw_hand_playfield(body, song_time, beat_pulse, hand_enabled)
         if foot_enabled:
             self._draw_foot_boundary_warning(body)
@@ -905,8 +930,6 @@ class Renderer(_base.Renderer):
                         color,
                     )
 
-        # Preserve the original muted sustain-body styling, then redraw only
-        # the leading edge of a live hand hold at ordinary note brightness.
         for chain in chains:
             definition = chain.definition
             if definition.kind != NoteKind.HANDS:
@@ -1038,6 +1061,239 @@ class Renderer(_base.Renderer):
             tx, ty = self._hand_target_point(lane, 0.90)
             self.screen.blit(word, word.get_rect(center=(int(tx), int(ty))))
 
+    def _draw_foot_receptors(
+        self,
+        body: BodyState,
+        notes: list[GameNote],
+        song_time: float,
+        enabled: bool,
+        strike_events: tuple[MotionEvent, ...],
+    ) -> None:
+        occupied = body.foot_lanes if enabled else frozenset()
+        y = self._field_y(NoteKind.FOOT, 1.0)
+        left, right = self._field_bounds(NoteKind.FOOT, 1.0)
+        line_color = _blend(WHITE, BG, 0.30) if enabled else _blend(DIM, BG, 0.55)
+        pygame.draw.line(self.screen, line_color, (left, y), (right, y), 1)
+
+        for lane in range(1, 5):
+            l, r = self._lane_bounds(NoteKind.FOOT, lane, 1.0)
+            pad = max(5, int((r - l) * 0.08))
+            gate_l = l + pad
+            gate_r = r - pad
+            center_x = (gate_l + gate_r) / 2.0
+            is_occupied = enabled and lane in occupied
+            near = enabled and self._target_is_near(notes, song_time, NoteKind.FOOT, lane)
+            judgement, age = (
+                self._judgement_for_lane(notes, song_time, NoteKind.FOOT, lane)
+                if enabled
+                else (None, 999.0)
+            )
+            strike_age: float | None = None
+            strike_strength = 0.0
+            if enabled and strike_events:
+                matching = [
+                    e
+                    for e in strike_events
+                    if e.kind == NoteKind.FOOT
+                    and e.lane == lane
+                    and 0.0
+                    <= song_time - e.song_time
+                    <= MOTION_EVENT_VISUAL_SECONDS + 0.04
+                ]
+                if matching:
+                    latest = max(matching, key=lambda e: e.song_time)
+                    strike_age = song_time - latest.song_time
+                    strike_strength = max(1.0, min(2.2, float(latest.strength)))
+
+            idle_color = DIM if enabled else _blend(DIM, BG, 0.58)
+            base_gate_color = CYAN if is_occupied else idle_color
+            input_flash = 0.0
+            if strike_age is not None:
+                life = min(1.0, strike_age / MOTION_EVENT_VISUAL_SECONDS)
+                input_flash = (1.0 - life) ** 1.45
+                input_flash *= min(1.0, 0.82 + 0.08 * strike_strength)
+
+            gate_color = _blend(base_gate_color, WHITE, 0.90 * input_flash)
+            gate_width = max(1, (4 if is_occupied else 1) + int(round(2.0 * input_flash)))
+            tick = 9 + int(round(5.0 * input_flash))
+            arm = max(10, int((gate_r - gate_l) * (0.15 + 0.035 * input_flash)))
+
+            if input_flash > 0.02:
+                halo_color = _blend(
+                    BG,
+                    _blend(CYAN, WHITE, 0.62),
+                    0.30 + 0.52 * input_flash,
+                )
+                halo_pad = 4 + int(5 * input_flash)
+                halo_tick = tick + 4 + int(4 * input_flash)
+                pygame.draw.line(
+                    self.screen,
+                    halo_color,
+                    (gate_l - halo_pad, y - halo_tick),
+                    (gate_l - halo_pad, y + halo_tick),
+                    2,
+                )
+                pygame.draw.line(
+                    self.screen,
+                    halo_color,
+                    (gate_r + halo_pad, y - halo_tick),
+                    (gate_r + halo_pad, y + halo_tick),
+                    2,
+                )
+
+            pygame.draw.line(self.screen, gate_color, (gate_l, y - tick), (gate_l, y + tick), gate_width)
+            pygame.draw.line(self.screen, gate_color, (gate_l, y), (gate_l + arm, y), gate_width)
+            pygame.draw.line(self.screen, gate_color, (gate_r, y - tick), (gate_r, y + tick), gate_width)
+            pygame.draw.line(self.screen, gate_color, (gate_r - arm, y), (gate_r, y), gate_width)
+
+            base_diamond = CYAN if is_occupied else idle_color
+            diamond_color = _blend(base_diamond, WHITE, 0.96 * input_flash)
+            radius = (6 if is_occupied else 3) + int(round(5.0 * input_flash))
+            pygame.draw.polygon(
+                self.screen,
+                diamond_color,
+                [
+                    (center_x, y - radius),
+                    (center_x + radius, y),
+                    (center_x, y + radius),
+                    (center_x - radius, y),
+                ],
+                0 if (is_occupied or input_flash > 0.02) else 1,
+            )
+
+            if input_flash > 0.08:
+                core_r = max(2, int(3 + 4 * input_flash))
+                pygame.draw.circle(self.screen, WHITE, (int(center_x), int(y)), core_r)
+
+            if near:
+                outer_tick = 14
+                near_color = _blend(WHITE, CYAN, 0.25)
+                pygame.draw.line(
+                    self.screen,
+                    near_color,
+                    (gate_l - 4, y - outer_tick),
+                    (gate_l - 4, y + outer_tick),
+                    1,
+                )
+                pygame.draw.line(
+                    self.screen,
+                    near_color,
+                    (gate_r + 4, y - outer_tick),
+                    (gate_r + 4, y + outer_tick),
+                    1,
+                )
+
+            if judgement is not None:
+                phase = 1.0 - min(age / _base.HIT_FLASH_SECONDS, 1.0)
+                is_hit = judgement != "miss"
+                if judgement == "perfect":
+                    jcolor = _blend(AMBER, WHITE, 0.35)
+                    pulse_power = 1.65
+                elif judgement == "great":
+                    jcolor = _blend(CYAN, WHITE, 0.55)
+                    pulse_power = 1.30
+                elif judgement == "hit":
+                    jcolor = GREEN
+                    pulse_power = 1.0
+                else:
+                    jcolor = RED
+                    pulse_power = 0.0
+
+                if is_hit:
+                    travel = min(1.0, age / _base.HIT_FLASH_SECONDS)
+                    head_p = max(0.03, 1.0 - travel * 0.97)
+                    tail_p = min(1.0, head_p + 0.22 + 0.06 * pulse_power)
+                    pulse_color = _blend(CYAN, WHITE, min(0.96, 0.64 + 0.16 * pulse_power))
+                    trail_color = _blend(BG, CYAN, min(0.75, 0.34 * pulse_power * phase))
+                    for boundary in (lane - 1, lane):
+                        frac = boundary / 4.0
+                        hl, hr = self._field_bounds(NoteKind.FOOT, head_p)
+                        tl, tr = self._field_bounds(NoteKind.FOOT, tail_p)
+                        el, er = self._field_bounds(NoteKind.FOOT, 1.0)
+                        x_head = hl + (hr - hl) * frac
+                        x_tail = tl + (tr - tl) * frac
+                        x_end = el + (er - el) * frac
+                        y_head = self._field_y(NoteKind.FOOT, head_p)
+                        y_tail = self._field_y(NoteKind.FOOT, tail_p)
+                        y_end = self._field_y(NoteKind.FOOT, 1.0)
+                        pygame.draw.line(
+                            self.screen,
+                            trail_color,
+                            (x_head, y_head),
+                            (x_end, y_end),
+                            max(2, int(2 * pulse_power)),
+                        )
+                        pygame.draw.line(
+                            self.screen,
+                            pulse_color,
+                            (x_head, y_head),
+                            (x_tail, y_tail),
+                            max(6, int(6 * pulse_power)),
+                        )
+                        pygame.draw.line(
+                            self.screen,
+                            WHITE,
+                            (x_head, y_head),
+                            (x_tail, y_tail),
+                            max(2, int(2 * pulse_power)),
+                        )
+
+                    center_frac = (lane - 0.5) / 4.0
+                    hl, hr = self._field_bounds(NoteKind.FOOT, head_p)
+                    tl, tr = self._field_bounds(NoteKind.FOOT, tail_p)
+                    cx_head = hl + (hr - hl) * center_frac
+                    cx_tail = tl + (tr - tl) * center_frac
+                    pygame.draw.line(
+                        self.screen,
+                        _blend(CYAN, WHITE, min(0.92, 0.48 + 0.22 * pulse_power)),
+                        (cx_head, self._field_y(NoteKind.FOOT, head_p)),
+                        (cx_tail, self._field_y(NoteKind.FOOT, tail_p)),
+                        max(3, int(3 * pulse_power)),
+                    )
+
+                    ring_r = int(12 + (22 + 8 * pulse_power) * (1.0 - phase))
+                    pygame.draw.circle(
+                        self.screen,
+                        jcolor,
+                        (int(center_x), int(y)),
+                        ring_r,
+                        max(2, int(4 * phase * pulse_power)),
+                    )
+                    pygame.draw.circle(
+                        self.screen,
+                        WHITE,
+                        (int(center_x), int(y)),
+                        max(3, int(6 * phase * pulse_power)),
+                        1,
+                    )
+                else:
+                    cross = int(7 + 7 * (1.0 - phase))
+                    pygame.draw.line(
+                        self.screen,
+                        jcolor,
+                        (center_x - cross, y - cross),
+                        (center_x + cross, y + cross),
+                        3,
+                    )
+                    pygame.draw.line(
+                        self.screen,
+                        jcolor,
+                        (center_x - cross, y + cross),
+                        (center_x + cross, y - cross),
+                        3,
+                    )
+
+                surf = self.hit_font.render(judgement.upper(), True, jcolor)
+                self.screen.blit(surf, surf.get_rect(center=(center_x, y + 31)))
+
+        if not enabled:
+            off = self.small_font.render(
+                "NO FOOT NOTES",
+                True,
+                _blend(DIM, BG, 0.30),
+            )
+            self.screen.blit(off, off.get_rect(center=((left + right) / 2, y - 48)))
+
     def _draw_receptors(
         self,
         body: BodyState,
@@ -1047,34 +1303,24 @@ class Renderer(_base.Renderer):
         foot_enabled: bool,
         strike_events: tuple[MotionEvent, ...],
     ) -> None:
-        original_font = self.small_font
-        self.small_font = _ReceptorLabelFilter(original_font)
-        try:
-            foot_notes = [note for note in notes if note.kind == NoteKind.FOOT]
-            foot_events = tuple(
-                event for event in strike_events if event.kind == NoteKind.FOOT
-            )
-            self._suppress_legacy_hands = True
-            try:
-                super()._draw_receptors(
-                    body,
-                    foot_notes,
-                    song_time,
-                    False,
-                    foot_enabled,
-                    foot_events,
-                )
-            finally:
-                self._suppress_legacy_hands = False
-            self._draw_hand_receptor_feedback(
-                body,
-                notes,
-                song_time,
-                hand_enabled,
-                strike_events,
-            )
-        finally:
-            self.small_font = original_font
+        foot_notes = [note for note in notes if note.kind == NoteKind.FOOT]
+        foot_events = tuple(
+            event for event in strike_events if event.kind == NoteKind.FOOT
+        )
+        self._draw_foot_receptors(
+            body,
+            foot_notes,
+            song_time,
+            foot_enabled,
+            foot_events,
+        )
+        self._draw_hand_receptor_feedback(
+            body,
+            notes,
+            song_time,
+            hand_enabled,
+            strike_events,
+        )
 
         if not foot_enabled:
             return
