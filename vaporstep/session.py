@@ -32,6 +32,11 @@ READY_HOLD_SECONDS = 0.8
 MIN_WARNING_BEFORE_FAIL_SECONDS = 5.0
 FAIL_HOLD_SECONDS = 3.0
 SUSTAIN_TAIL_SCORE_WEIGHT = 2.0
+# Keep session preroll aligned with the renderer's anticipation glow. This gives
+# the very first target the same warning as every later target instead of
+# starting exactly when that target becomes normally visible.
+PREENTRY_GLOW_BEATS = 1.5
+PREENTRY_GLOW_SECONDS = 0.75
 
 
 def fresh_notes(notes: Iterable[GameNote]) -> list[GameNote]:
@@ -156,8 +161,6 @@ class GameSession:
             definition = chain.definition
             if definition.source == SustainSource.IMPLICIT_CHAIN:
                 suppressed_indices.update(definition.note_indices[1:])
-            # Runtime updates process sustain tails before source notes at the
-            # same song time, so preserve that ordering in the theoretical max.
             timeline.append(
                 (definition.end_time, 0, definition.id, SUSTAIN_TAIL_SCORE_WEIGHT)
             )
@@ -214,8 +217,6 @@ class GameSession:
         if self.failed:
             return "failed"
         raw = self.stats.performance_state
-        # Once the statistical fail threshold is crossed, keep showing DANGER
-        # during the guaranteed recovery grace period.
         return "danger" if raw == "failed" else raw
 
     def stop(self) -> None:
@@ -225,16 +226,16 @@ class GameSession:
     def _compute_lead_in_start_time(self) -> float:
         """Virtual chart time where the pre-roll should begin.
 
-        Begin far enough back that the earliest target enters from the central
-        origin rather than appearing partway through the playfield at time 0.
-        Real charts use the timing engine so BPM and chart offset are respected.
+        Begin early enough to show both the anticipation glow and the full
+        normal lookahead for the earliest target. Real charts use the timing
+        engine so BPM and chart offset are respected.
         """
         if not self._source_notes:
             return 0.0
 
         first = min(self._source_notes, key=lambda n: n.time)
         if self.chart is not None and self.chart.timing_engine is not None and first.beat is not None:
-            target_beat = float(first.beat) - LOOKAHEAD_BEATS
+            target_beat = float(first.beat) - LOOKAHEAD_BEATS - PREENTRY_GLOW_BEATS
             try:
                 beat_fraction = Fraction(target_beat).limit_denominator(192)
                 start_time = float(self.chart.timing_engine.time_at(beat_fraction))
@@ -242,7 +243,7 @@ class GameSession:
             except Exception:
                 pass
 
-        return min(0.0, first.time - LOOKAHEAD_SECONDS)
+        return min(0.0, first.time - LOOKAHEAD_SECONDS - PREENTRY_GLOW_SECONDS)
 
     def _start_audio_clock(self, now: float) -> None:
         """Begin chart time zero and start audio if the chart has music."""
@@ -285,22 +286,15 @@ class GameSession:
 
     @property
     def beat_position(self) -> float:
-        """Current musical beat used for beat-relative visual scrolling.
-
-        Real charts delegate to simfile's timing engine, so BPM changes, stops,
-        delays, and warps affect visual motion consistently with note timing.
-        The synthetic demo falls back to a fixed 120 BPM clock.
-        """
         t = self.time
         if self.chart is not None and self.chart.timing_engine is not None:
             try:
                 return float(self.chart.timing_engine.beat_at(t))
             except Exception:
                 pass
-        return t * 2.0  # 120 BPM fallback
+        return t * 2.0
 
     def beat_pulse(self) -> tuple[float, bool]:
-        """Return a short 0..1 pulse and whether the most recent beat is a downbeat."""
         t = self.time
         if (
             self.chart is not None
@@ -308,9 +302,6 @@ class GameSession:
             and self._beat_times
             and t < self._beat_times[0]
         ):
-            # Pre-roll can precede the precomputed marker table. Ask the timing
-            # engine for the previous integer beat so tempo feedback is already
-            # alive before the music itself starts.
             try:
                 beat_index = math.floor(self.beat_position)
                 marker_time = float(self.chart.timing_engine.time_at(Fraction(beat_index, 1)))
@@ -328,7 +319,6 @@ class GameSession:
             downbeat = self._beat_numbers[idx] % 4 == 0
             return strength, downbeat
 
-        # Demo/no-chart fallback: 120 BPM.
         beat_duration = 0.5
         beat_index = math.floor(t / beat_duration)
         age = t - beat_index * beat_duration
@@ -352,10 +342,6 @@ class GameSession:
         else:
             self.stats.register_miss()
 
-        # Keep live/exported audio sparse and musical: only GREAT/PERFECT
-        # confirmations get a cue, and both use the same sound. Record the
-        # event at the authored note time so reconstructed clips reinforce the
-        # beat rather than raw camera/motion timing.
         if hit and quality in (HitQuality.GREAT, HitQuality.PERFECT):
             self._gameplay_events.append(
                 GameplayEvent(
@@ -449,10 +435,6 @@ class GameSession:
                                 hit=True,
                             )
                         )
-                        # Reuse the renderer's existing receptor pulse as visual
-                        # feedback for a successful sustain tail. These events are
-                        # visual-only: they do not enter MotionTracker and cannot
-                        # satisfy or upgrade a later note judgement.
                         for lane in definition.lanes:
                             self.recent_motion_events.append(
                                 MotionEvent(
@@ -465,9 +447,6 @@ class GameSession:
                                 )
                             )
 
-            # A broken sustain still owns one failed tail judgement, but it is a
-            # scoring/performance penalty only. It must never destroy a combo
-            # rebuilt after the head or after the player left the sustain.
             if (
                 chain.state == ChainState.BROKEN
                 and not chain.completion_judged
@@ -485,15 +464,12 @@ class GameSession:
     ) -> None:
         now = time.monotonic()
 
-        # Hold the failed playfield on screen for a moment before results.
         if self.failed:
             if self.failed_at is not None and now - self.failed_at >= FAIL_HOLD_SECONDS:
                 self.finished = True
             return
 
         if not self.running:
-            # Keep motion baselines warm while positioning, but deliberately do
-            # not emit timing events before the song starts.
             self.motion.update(body, None)
             self.recent_motion_events = []
             if ready_to_start:
@@ -521,55 +497,58 @@ class GameSession:
         if generated:
             self.recent_motion_events.extend(generated)
         self.recent_motion_events = [
-            e for e in self.recent_motion_events if t - e.song_time <= MOTION_EVENT_VISUAL_SECONDS + 0.04
+            event
+            for event in self.recent_motion_events
+            if t - event.song_time <= max(0.55, MOTION_EVENT_VISUAL_SECONDS + 0.10)
         ]
-        self._update_active_chains(body, t)
 
+        self._update_active_chains(body, t)
         for note in self.notes:
             if note.judged:
                 continue
             chain = self._chain_by_id.get(note.chain_id) if note.chain_id is not None else None
-            if chain is not None and not self._sustain_enabled(chain):
-                chain = None
+            if chain is not None and self._sustain_enabled(chain):
+                definition = chain.definition
+                if note.chain_index > 0 and definition.source == SustainSource.IMPLICIT_CHAIN:
+                    continue
+                if chain.state == ChainState.PENDING:
+                    self._update_regular_note(note, body, t)
+                    if note.judged:
+                        if note.hit:
+                            chain.state = ChainState.ACTIVE
+                            chain.last_occupancy_at = t
+                            chain.quality = note.judgement or HitQuality.HIT
+                        else:
+                            chain.state = ChainState.BROKEN
+                            chain.broken_at = t
+                    continue
+            self._update_regular_note(note, body, t)
 
-            if chain is None:
-                self._update_regular_note(note, body, t)
-                continue
+        total_weight = max(1.0, self.stats.total_score_weight)
+        progress = self.stats.judged_score_weight / total_weight
+        if progress >= 0.10:
+            raw_state = self.stats.performance_state
+            if raw_state == "failed":
+                if self.warning_since is None:
+                    self.warning_since = now
+                elif now - self.warning_since >= MIN_WARNING_BEFORE_FAIL_SECONDS:
+                    self.failed = True
+                    self.failed_at = now
+                    self.failed_song_time = t
+                    _stop_music()
+            elif raw_state == "danger":
+                if self.warning_since is None:
+                    self.warning_since = now
+            else:
+                self.warning_since = None
 
-            if note.chain_index == 0:
-                self._update_regular_note(note, body, t)
-                if note.judged:
-                    if note.hit:
-                        chain.state = ChainState.ACTIVE
-                        chain.last_occupancy_at = t
-                        chain.quality = note.judgement or HitQuality.HIT
-                    else:
-                        chain.state = ChainState.BROKEN
-                        chain.broken_at = t
-                continue
-
-            # Generated-chain intermediate notes remain available to DEBUG
-            # rendering but are not gameplay judgements while chaining is on.
-            # The shared sustain owns the single weighted tail judgement.
-            continue
-
-        raw_performance = self.stats.performance_state
-        if raw_performance in ("warning", "danger", "failed"):
-            if self.warning_since is None:
-                self.warning_since = now
-        else:
-            self.warning_since = None
-
-        if raw_performance == "failed":
-            warned_for = 0.0 if self.warning_since is None else now - self.warning_since
-            if warned_for >= MIN_WARNING_BEFORE_FAIL_SECONDS:
-                self.failed = True
-                self.failed_at = now
-                self.failed_song_time = t
-                _stop_music()
+        if self.notes and all(note.judged for note in self.notes):
+            all_sustains_done = all(
+                (not self._sustain_enabled(chain))
+                or chain.state in (ChainState.BROKEN, ChainState.COMPLETE)
+                for chain in self.chains
+            )
+            if all_sustains_done and not self.failed:
+                self.finished = True
                 self.running = False
-                return
-
-        last = self.chart.last_note_time if self.chart is not None else max((n.time for n in self.notes), default=0.0)
-        if t > last + 2.0 and (not self.audio_loaded or not pygame.mixer.music.get_busy()):
-            self.finished = True
+                _stop_music()
