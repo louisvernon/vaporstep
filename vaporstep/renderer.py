@@ -8,6 +8,10 @@ from .domain import BodyState, NoteKind
 from .keyboard_input import label_for_lane
 
 
+# Wildcard imports deliberately omit underscore-prefixed names. Keep this
+# compatibility export because the song-menu renderer imports it directly.
+_blend = _previous._blend
+
 _HAND_TUNNEL_VERTICAL_SCALE = 0.86
 
 
@@ -203,6 +207,27 @@ class Renderer(_previous.Renderer):
             animate_buzz,
         )
         self._draw_key_labels(hand_enabled, foot_enabled)
+
+    @classmethod
+    def _draw_preentry_glow(
+        cls,
+        surface: pygame.Surface,
+        points: list[tuple[int, int]],
+        color,
+        intensity: float,
+        core_width: int,
+    ) -> None:
+        """One simple additive halo at the entry shape before the target appears."""
+        if len(points) < 2 or intensity <= 0.0:
+            return
+        glow_color = cls._scaled_additive_color(color, intensity * 0.34)
+        pygame.draw.lines(
+            surface,
+            glow_color,
+            False,
+            points,
+            max(1, core_width + 34),
+        )
 
     def _draw_outward_glow(
         self,
