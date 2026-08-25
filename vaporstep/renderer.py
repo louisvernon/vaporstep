@@ -5,12 +5,10 @@ import math
 import pygame
 
 from . import renderer_base as _base
-from .domain import BodyState, ChainMode, ChainState, GameNote, HitQuality, NoteKind, RuntimeChain, SustainSource
+from .domain import BodyState, ChainMode, ChainState, GameNote, NoteKind, RuntimeChain, SustainSource
 from .motion import MOTION_EVENT_VISUAL_SECONDS, MotionEvent
 from .scroll import note_is_within_lookahead, timed_is_within_lookahead, timed_progress
 
-# Preserve the renderer module's public constants/helpers for the song-library
-# renderer and other callers while specializing gameplay hands below.
 BG = _base.BG
 CYAN = _base.CYAN
 MAGENTA = _base.MAGENTA
@@ -25,9 +23,6 @@ ELECTRIC_YELLOW = _base.ELECTRIC_YELLOW
 HIT_BRICK_POP_SECONDS = _base.HIT_BRICK_POP_SECONDS
 _blend = _base._blend
 
-
-# Hand lanes retain their authored 1..4 identities but occupy radial gestures.
-# Angles are screen-space degrees: 0 right, 90 down, -90 up.
 _HAND_ANGLES = {
     1: -165.0,  # left/out
     2: -120.0,  # left/high
@@ -39,6 +34,28 @@ _HAND_HALF_ARC = 18.0
 
 class Renderer(_base.Renderer):
     """Base VaporStep renderer with a body-relative radial hand playfield."""
+
+    def __init__(self, screen: pygame.Surface) -> None:
+        super().__init__(screen)
+        self._suppress_legacy_hands = False
+
+    # The inherited renderer still knows how to render the old four hand rails.
+    # During inherited foot-only passes, route those disabled hand coordinates
+    # safely off-screen so no ghost hand playfield or labels remain visible.
+    def _field_bounds(self, kind: NoteKind, progress: float) -> tuple[float, float]:
+        if self._suppress_legacy_hands and kind == NoteKind.HANDS:
+            return (-2000.0, -1999.0)
+        return super()._field_bounds(kind, progress)
+
+    def _field_y(self, kind: NoteKind, progress: float) -> float:
+        if self._suppress_legacy_hands and kind == NoteKind.HANDS:
+            return -2000.0
+        return super()._field_y(kind, progress)
+
+    def _lane_boundary_x(self, kind: NoteKind, boundary: int, progress: float) -> float:
+        if self._suppress_legacy_hands and kind == NoteKind.HANDS:
+            return -2000.0 + boundary * 0.1
+        return super()._lane_boundary_x(kind, boundary, progress)
 
     def _hand_geometry(self) -> tuple[tuple[float, float], float, float]:
         viewport = self._camera_rect()
@@ -122,9 +139,6 @@ class Renderer(_base.Renderer):
                     max(1, int(3 * phase)),
                 )
 
-        # Two continuous state dots show what the body-relative resolver sees.
-        # They are intentionally controller-space positions, not camera-space
-        # wrist markers, so the player is not encouraged to align raw X/Y.
         for control, color in (
             (body.left_hand_control, CYAN),
             (body.right_hand_control, MAGENTA),
@@ -137,11 +151,13 @@ class Renderer(_base.Renderer):
             if length > 1.0:
                 vx /= length
                 vy /= length
-            radius = inner * 0.72 + (outer - inner) * 0.78 * min(1.0, length)
-            angle = math.degrees(math.atan2(vy, vx)) if length > 1e-4 else -90.0
+                length = 1.0
             if length < 0.16:
                 radius = inner * 0.42
-                angle = -90.0 if control is body.left_hand_control else -90.0
+                angle = -90.0
+            else:
+                radius = inner * 0.72 + (outer - inner) * 0.78 * length
+                angle = math.degrees(math.atan2(vy, vx))
             x, y = self._polar(center, radius, angle)
             pygame.draw.circle(self.screen, BG, (int(x), int(y)), 7)
             pygame.draw.circle(self.screen, color, (int(x), int(y)), 5, 2)
@@ -161,18 +177,20 @@ class Renderer(_base.Renderer):
         overdrive: bool = False,
         animate_buzz: bool = True,
     ) -> None:
-        # Feet keep the proven perspective floor. Suppress only the old hand
-        # rails and draw the radial controller in their place.
-        super()._draw_playfields(
-            body,
-            song_time,
-            beat_pulse,
-            downbeat,
-            False,
-            foot_enabled,
-            overdrive,
-            animate_buzz,
-        )
+        self._suppress_legacy_hands = True
+        try:
+            super()._draw_playfields(
+                body,
+                song_time,
+                beat_pulse,
+                downbeat,
+                False,
+                foot_enabled,
+                overdrive,
+                animate_buzz,
+            )
+        finally:
+            self._suppress_legacy_hands = False
         self._draw_hand_playfield(body, song_time, beat_pulse, hand_enabled)
 
     def _draw_notes(
@@ -217,7 +235,13 @@ class Renderer(_base.Renderer):
                 radius = max(5, int(7 + 5 * max(0.0, min(1.0, progress))))
                 pygame.draw.circle(self.screen, BG, (int(x), int(y)), radius + 5)
                 pygame.draw.circle(self.screen, color, (int(x), int(y)), radius)
-                pygame.draw.circle(self.screen, WHITE if note.judged and note.hit else color, (int(x), int(y)), max(2, radius // 2), 1)
+                pygame.draw.circle(
+                    self.screen,
+                    WHITE if note.judged and note.hit else color,
+                    (int(x), int(y)),
+                    max(2, radius // 2),
+                    1,
+                )
 
     def _draw_chains(
         self,
@@ -274,9 +298,17 @@ class Renderer(_base.Renderer):
     ) -> None:
         foot_notes = [note for note in notes if note.kind == NoteKind.FOOT]
         foot_events = tuple(event for event in strike_events if event.kind == NoteKind.FOOT)
-        super()._draw_receptors(body, foot_notes, song_time, False, foot_enabled, foot_events)
-        # Redraw hand sectors here so timing-entry pulses sit above notes/holds.
+        self._suppress_legacy_hands = True
+        try:
+            super()._draw_receptors(body, foot_notes, song_time, False, foot_enabled, foot_events)
+        finally:
+            self._suppress_legacy_hands = False
         self._draw_hand_playfield(body, song_time, 0.0, hand_enabled, strike_events)
+
+    def _spawn_note_effects(self, notes: list[GameNote]) -> None:
+        # Keep the mature particle system for feet. Hand confirmation is handled
+        # directly by the radial receptor flashes while this prototype settles.
+        super()._spawn_note_effects([note for note in notes if note.kind == NoteKind.FOOT])
 
     def _draw_body_markers(
         self,
@@ -286,8 +318,6 @@ class Renderer(_base.Renderer):
         foot_enabled: bool = True,
         show_lower_body_sources: bool = False,
     ) -> None:
-        # Raw wrist markers belong to the old absolute-position model. The two
-        # controller-space dots in the radial field are now the hand feedback.
         super()._draw_body_markers(
             body,
             show_labels=show_labels,
