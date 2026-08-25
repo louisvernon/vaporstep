@@ -34,17 +34,18 @@ def test_knee_lift_does_not_strike_but_downward_stomp_does():
     assert stomp[0].source == "strike"
 
 
-def test_hand_downward_windup_does_not_strike_but_upward_motion_does():
+def test_high_hand_downward_windup_does_not_strike_but_upward_motion_does():
     tracker = MotionTracker()
-    tracker.update(body(1.000, lw=point(0.20, 0.30, 1)), None)
+    tracker.update(body(1.000, lw=point(0.40, 0.30, 2)), None)
 
-    down = tracker.update(body(1.050, lw=point(0.20, 0.34, 1)), 3.00)
+    down = tracker.update(body(1.050, lw=point(0.40, 0.34, 2)), 3.00)
     assert down == []
 
-    tracker.update(body(1.100, lw=point(0.20, 0.33, 1)), 3.05)
-    up = tracker.update(body(1.150, lw=point(0.20, 0.27, 1)), 3.10)
+    tracker.update(body(1.100, lw=point(0.40, 0.33, 2)), 3.05)
+    up = tracker.update(body(1.150, lw=point(0.40, 0.27, 2)), 3.10)
     assert len(up) == 1
     assert up[0].kind == NoteKind.HANDS
+    assert up[0].lane == 2
     assert up[0].source == "strike"
 
 
@@ -78,14 +79,14 @@ def test_one_motion_event_can_only_grade_one_note():
     assert tracker.match(NoteKind.FOOT, (2,), 4.08) is None
 
 
-def test_double_hand_timing_requires_upward_impulse_in_both_required_lanes():
+def test_double_outer_hand_timing_requires_outward_impulse_in_both_lanes():
     tracker = MotionTracker()
     tracker.update(
-        body(1.000, lw=point(0.20, 0.34, 1), rw=point(0.80, 0.34, 4)),
+        body(1.000, lw=point(0.26, 0.34, 1), rw=point(0.74, 0.34, 4)),
         None,
     )
     tracker.update(
-        body(1.050, lw=point(0.20, 0.28, 1), rw=point(0.80, 0.28, 4)),
+        body(1.050, lw=point(0.20, 0.34, 1), rw=point(0.80, 0.34, 4)),
         6.12,
     )
     match = tracker.match(NoteKind.HANDS, (1, 4), 6.00)
@@ -135,7 +136,7 @@ def test_subtle_in_lane_stomp_now_registers():
     tracker = MotionTracker()
     tracker.update(body(1.000, lk=point(0.40, 0.700, 2)), None)
     # 0.025 normalized units over 50 ms => 0.5/s instantaneous; after EMA this
-    # is ~0.275/s: below the old 0.30 knee threshold, above the new 0.20.
+    # is ~0.275/s: below the old 0.30 knee threshold, above the current threshold.
     events = tracker.update(body(1.050, lk=point(0.40, 0.725, 2)), 12.00)
     assert len(events) == 1
     assert events[0].source == "strike"
