@@ -4,8 +4,9 @@ import pygame
 
 from .renderer_previous import *
 from . import renderer_previous as _previous
-from .domain import BodyState, NoteKind
+from .domain import BodyState, ChainMode, ChainState, NoteKind, SustainSource
 from .keyboard_input import label_for_lane
+from .scroll import timed_is_within_lookahead, timed_progress
 
 
 _blend = _previous._blend
@@ -297,12 +298,12 @@ class Renderer(_previous.Renderer):
             definition = chain.definition
             if definition.kind != NoteKind.HANDS:
                 continue
-            if chain.state not in (_previous.ChainState.PENDING, _previous.ChainState.ACTIVE):
+            if chain.state not in (ChainState.PENDING, ChainState.ACTIVE):
                 continue
-            is_hold = definition.source == _previous.SustainSource.EXPLICIT_HOLD
-            if not is_hold and chain_mode == _previous.ChainMode.OFF:
+            is_hold = definition.source == SustainSource.EXPLICIT_HOLD
+            if not is_hold and chain_mode == ChainMode.OFF:
                 continue
-            if not _previous.timed_is_within_lookahead(
+            if not timed_is_within_lookahead(
                 definition.start_time,
                 definition.start_beat,
                 song_time,
@@ -310,7 +311,7 @@ class Renderer(_previous.Renderer):
             ):
                 continue
 
-            head = _previous.timed_progress(
+            head = timed_progress(
                 definition.start_time,
                 definition.start_beat,
                 song_time,
@@ -323,7 +324,7 @@ class Renderer(_previous.Renderer):
                     lane,
                     head,
                     _previous.MAGENTA,
-                    highlight=chain.state == _previous.ChainState.ACTIVE,
+                    highlight=chain.state == ChainState.ACTIVE,
                 )
 
     def _draw_receptors(
