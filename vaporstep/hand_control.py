@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
 
 from .domain import BodyPoint
 
@@ -14,15 +15,35 @@ HIGH_EXIT = 0.12
 OUT_ENTER = 0.72
 OUT_EXIT = 0.50
 HIGH_SIDE_HYSTERESIS = 0.10
-VISUAL_RANGE = 1.45
 
 
 @dataclass(frozen=True)
 class HandControlSample:
     lane: int | None
-    visual: BodyPoint
+    control: BodyPoint
     high_amount: float
     horizontal_amount: float
+
+    @property
+    def visual(self) -> BodyPoint:
+        """Compatibility alias for the canonical body-relative control point."""
+        return self.control
+
+
+def hand_control_perimeter_along(control: BodyPoint) -> float:
+    """Project canonical hand-control coordinates onto the tunnel perimeter.
+
+    ``control.x`` is horizontal displacement divided by the OUT entry threshold
+    and clamped to -1..1. ``control.y`` is upward displacement divided by the
+    HIGH entry threshold. Because the renderer uses these same threshold-scaled
+    coordinates, the non-hysteretic gesture boundaries naturally line up with
+    the four visual hand segments. Hysteresis may legitimately let the resolved
+    lane lag the continuous marker slightly at a boundary.
+    """
+    x = max(-1.0, min(1.0, float(control.x)))
+    y = max(0.0, float(control.y))
+    angle = math.atan2(y, x)
+    return max(0.0, min(1.0, 1.0 - angle / math.pi))
 
 
 class HandPoseResolver:
@@ -86,9 +107,15 @@ class HandPoseResolver:
 
         self.current_lane = lane
 
-        # Retain normalized controller-space coordinates for diagnostics and
-        # possible future UI work. Gameplay currently uses segment highlighting.
-        visual_x = max(0.0, min(1.0, 0.5 + dx / (2.0 * VISUAL_RANGE)))
-        visual_y = max(0.0, min(1.0, 0.5 - up / (2.0 * VISUAL_RANGE)))
-        visual = BodyPoint(x=visual_x, y=visual_y, lane=lane, visible=True)
-        return HandControlSample(lane, visual, high_amount, horizontal_amount)
+        # Canonical continuous controller coordinates. These are deliberately
+        # expressed in the resolver's own threshold units rather than arbitrary
+        # screen units, so visualization and classification share one geometry.
+        control_x = max(-1.0, min(1.0, dx / OUT_ENTER))
+        control_y = max(0.0, up / HIGH_ENTER)
+        control = BodyPoint(
+            x=control_x,
+            y=control_y,
+            lane=lane,
+            visible=True,
+        )
+        return HandControlSample(lane, control, high_amount, horizontal_amount)
