@@ -47,6 +47,7 @@ HIT_BRICK_POP_SECONDS = _tunnel.HIT_BRICK_POP_SECONDS
 _blend = _tunnel._blend
 
 _HAND_SHOULDER_EXTENSION = 0.12
+_HAND_TUNNEL_VERTICAL_SCALE = 0.82
 _HAND_TRACKER_OFFSET_PX = 10.0
 _TARGET_PREENTRY_BEATS = 1.5
 _TARGET_PREENTRY_SECONDS = 0.75
@@ -55,85 +56,51 @@ _TARGET_PREENTRY_SECONDS = 0.75
 class Renderer(_tunnel.Renderer):
     """Body-relative hand tunnel with one canonical smooth gameplay surface."""
 
-    @staticmethod
-    def _cubic_point(
-        p0: tuple[float, float],
-        p1: tuple[float, float],
-        p2: tuple[float, float],
-        p3: tuple[float, float],
-        t: float,
-    ) -> tuple[float, float]:
-        u = 1.0 - t
-        return (
-            u * u * u * p0[0]
-            + 3.0 * u * u * t * p1[0]
-            + 3.0 * u * t * t * p2[0]
-            + t * t * t * p3[0],
-            u * u * u * p0[1]
-            + 3.0 * u * u * t * p1[1]
-            + 3.0 * u * t * t * p2[1]
-            + t * t * t * p3[1],
-        )
-
     def _hand_tunnel_geometry(self):
-        """Return inner arc, flared outer arch and the side-floor anchors."""
+        """Return matching flattened inner/outer ellipses plus floor anchors."""
         inner, old_outer = super()._hand_arc_geometry()
         viewport = self._camera_rect()
-        cx, base_y, rx, _ = old_outer
 
-        # The hand receptor meets the floor close to the foot-field edges. The
-        # extra width belongs to the flat floor gutters, not to the scoring line.
-        seam_left = (cx - rx, base_y)
-        seam_right = (cx + rx, base_y)
+        inner_cx, inner_base_y, inner_rx, inner_ry = inner
+        inner = (
+            inner_cx,
+            inner_base_y,
+            inner_rx,
+            inner_ry * _HAND_TUNNEL_VERTICAL_SCALE,
+        )
+
+        outer_cx, outer_base_y, old_rx, old_ry = old_outer
+        seam_left = (outer_cx - old_rx, outer_base_y)
+        seam_right = (outer_cx + old_rx, outer_base_y)
         extension = viewport.width * _HAND_SHOULDER_EXTENSION
         shoulder_left = (
             max(float(viewport.left + 10), seam_left[0] - extension),
-            base_y,
+            outer_base_y,
         )
         shoulder_right = (
             min(float(viewport.right - 10), seam_right[0] + extension),
-            base_y,
+            outer_base_y,
         )
 
-        # Slightly squash the tunnel peak while retaining the broad side flare.
-        outer_top = float(viewport.top) + max(48.0, viewport.height * 0.075)
-        outer = (seam_left, seam_right, shoulder_left, shoulder_right, outer_top)
-        return inner, outer
-
-    def _outer_arch_point(self, outer, along: float) -> tuple[float, float]:
-        """Broad arch that rises from the floor seam before flaring outward."""
-        seam_left, seam_right, shoulder_left, shoulder_right, top_y = outer
-        t = max(0.0, min(1.0, along))
-        cx = (seam_left[0] + seam_right[0]) * 0.5
-        base_y = (seam_left[1] + seam_right[1]) * 0.5
-        height = max(20.0, base_y - top_y)
-        top = (cx, top_y)
-
-        if t <= 0.5:
-            u = t * 2.0
-            return self._cubic_point(
-                seam_left,
-                (seam_left[0], base_y - height * 0.34),
-                (shoulder_left[0], top_y),
-                top,
-                u,
-            )
-
-        u = (t - 0.5) * 2.0
-        return self._cubic_point(
-            top,
-            (shoulder_right[0], top_y),
-            (seam_right[0], base_y - height * 0.34),
-            seam_right,
-            u,
+        # Return to the smooth elliptical tunnel that tested well, but flatten
+        # both its outer arch and inner opening by the same proportion. That
+        # keeps the origin/opening visually consistent with the tunnel surface.
+        outer_rx = max(inner_rx + 20.0, (shoulder_right[0] - shoulder_left[0]) * 0.5)
+        outer = (
+            (shoulder_left[0] + shoulder_right[0]) * 0.5,
+            outer_base_y,
+            outer_rx,
+            old_ry * _HAND_TUNNEL_VERTICAL_SCALE,
         )
+        shelves = (seam_left, seam_right, shoulder_left, shoulder_right)
+        return inner, outer, shelves
 
     def _hand_point(self, along: float, progress: float) -> tuple[float, float]:
         """The one surface used by rails, notes, holds, effects and markers."""
-        inner, outer = self._hand_tunnel_geometry()
+        inner, outer, _ = self._hand_tunnel_geometry()
         p = max(0.0, min(1.0, progress)) ** 1.25
         ix, iy = self._ellipse_upper_point(inner, along)
-        ox, oy = self._outer_arch_point(outer, along)
+        ox, oy = self._ellipse_upper_point(outer, along)
         return ix + (ox - ix) * p, iy + (oy - iy) * p
 
     def _hand_note_arc_points(
@@ -198,16 +165,10 @@ class Renderer(_tunnel.Renderer):
         return [*outer, *inner]
 
     def _floor_gutter_outer_point(self, side: str, progress: float) -> tuple[float, float]:
-        """Outer edge of the flat floor strip beside the foot playfield."""
-        inner, outer = self._hand_tunnel_geometry()
-        _, _, shoulder_left, shoulder_right, _ = outer
+        """Outer wall edge of the flat floor strip beside the foot playfield."""
         along = 0.0 if side == "left" else 1.0
-        near_x, _ = self._ellipse_upper_point(inner, along)
-        far_x = shoulder_left[0] if side == "left" else shoulder_right[0]
-        p = max(0.0, min(1.0, progress)) ** 1.25
-        x = near_x + (far_x - near_x) * p
-        y = self._field_y(NoteKind.FOOT, progress)
-        return x, y
+        wall_x, _ = self._hand_point(along, progress)
+        return wall_x, self._field_y(NoteKind.FOOT, progress)
 
     def _floor_gutter_polygon(self, side: str, samples: int = 20) -> list[tuple[int, int]]:
         boundary = 0 if side == "left" else 4
@@ -225,12 +186,34 @@ class Renderer(_tunnel.Renderer):
         return [*outer, *foot]
 
     def _draw_floor_gutter_structure(self, rail_color) -> None:
+        """Make the non-scoring floor gutters visibly part of the tunnel floor."""
+        floor_surface = pygame.Surface(self.size, pygame.SRCALPHA)
         for side in ("left", "right"):
+            pygame.draw.polygon(
+                floor_surface,
+                (*GRID, 10),
+                self._floor_gutter_polygon(side),
+            )
+        self.screen.blit(floor_surface, (0, 0))
+
+        for side in ("left", "right"):
+            boundary = 0 if side == "left" else 4
             points = [
                 tuple(int(v) for v in self._floor_gutter_outer_point(side, i / 24.0))
                 for i in range(25)
             ]
             pygame.draw.lines(self.screen, rail_color, False, points, 1)
+
+            # Carry the foot-depth grid across the dead floor so the empty strip
+            # reads as a flat continuation of the floor, not missing geometry.
+            for step in range(1, 8):
+                progress = step / 8.0
+                outer = self._floor_gutter_outer_point(side, progress)
+                inner = (
+                    self._lane_boundary_x(NoteKind.FOOT, boundary, progress),
+                    self._field_y(NoteKind.FOOT, progress),
+                )
+                pygame.draw.line(self.screen, rail_color, inner, outer, 1)
 
     def _draw_hand_playfield(
         self,
@@ -352,6 +335,11 @@ class Renderer(_tunnel.Renderer):
                 right_strength = max(right_strength, min(1.0, (adjusted - right_limit) / ramp))
         return left_strength, right_strength
 
+    @staticmethod
+    def _scaled_additive_color(color, amount: float) -> tuple[int, int, int]:
+        amount = max(0.0, min(1.0, amount))
+        return tuple(max(0, min(255, int(channel * amount))) for channel in color)
+
     def _draw_foot_boundary_warning(self, body: BodyState) -> None:
         left_strength, right_strength = self._foot_outside_strengths(body)
         if max(left_strength, right_strength) <= 0.0:
@@ -364,14 +352,11 @@ class Renderer(_tunnel.Renderer):
             if strength <= 0.0:
                 continue
             polygon = self._floor_gutter_polygon(side)
-            # Fill the whole flat floor strip, like an occupied scoring segment.
             pygame.draw.polygon(
                 fill,
                 (*RED, int(42 + 78 * strength)),
                 polygon,
             )
-            # Add a low, soft red illumination so it still reads as a warning
-            # rather than simply another gameplay lane.
             glow_color = self._scaled_additive_color(RED, 0.18 + 0.28 * strength)
             pygame.draw.polygon(glow, glow_color, polygon)
 
@@ -439,19 +424,34 @@ class Renderer(_tunnel.Renderer):
             return None
         return self._timed_glow_state(note.time, note.beat, song_time, song_beat)
 
-    def _foot_note_points(self, lane: int, progress: float) -> list[tuple[int, int]]:
-        left, right = self._lane_bounds(NoteKind.FOOT, lane, progress)
-        y = self._field_y(NoteKind.FOOT, progress)
-        pad = max(2.0, (right - left) * 0.08)
-        return [(int(left + pad), int(y)), (int(right - pad), int(y))]
+    def _target_points(
+        self,
+        kind: NoteKind,
+        lane: int,
+        progress: float,
+    ) -> tuple[list[tuple[int, int]], int]:
+        p = max(0.0, min(1.0, progress))
+        if kind == NoteKind.HANDS:
+            return (
+                self._hand_note_arc_points(
+                    lane,
+                    p,
+                    _tunnel._HAND_NOTE_ARC_FRACTION,
+                    samples=18,
+                ),
+                max(5, int(5 + 12 * p)),
+            )
 
-    @staticmethod
-    def _scaled_additive_color(color, amount: float) -> tuple[int, int, int]:
-        amount = max(0.0, min(1.0, amount))
-        return tuple(max(0, min(255, int(channel * amount))) for channel in color)
+        left, right = self._lane_bounds(NoteKind.FOOT, lane, p)
+        y = self._field_y(NoteKind.FOOT, p)
+        pad = max(2.0, (right - left) * 0.08)
+        return (
+            [(int(left + pad), int(y)), (int(right - pad), int(y))],
+            max(4, int(4 + 12 * p)),
+        )
 
     @classmethod
-    def _draw_glow_stroke(
+    def _draw_preentry_glow(
         cls,
         surface: pygame.Surface,
         points: list[tuple[int, int]],
@@ -459,7 +459,7 @@ class Renderer(_tunnel.Renderer):
         intensity: float,
         core_width: int,
     ) -> None:
-        """Broad additive source glow with no reflected surface band."""
+        """Broad symmetric light is kept only before the target enters."""
         if len(points) < 2 or intensity <= 0.0:
             return
         for extra, scale in ((52, 0.12), (36, 0.19), (22, 0.30), (10, 0.46)):
@@ -472,6 +472,35 @@ class Renderer(_tunnel.Renderer):
                 max(1, core_width + extra),
             )
 
+    def _draw_outward_glow(
+        self,
+        surface: pygame.Surface,
+        kind: NoteKind,
+        lane: int,
+        progress: float,
+        color,
+        intensity: float,
+    ) -> None:
+        """Cast light only toward larger progress, never back into the playfield."""
+        for offset, width_extra, scale in (
+            (0.012, 24, 0.46),
+            (0.030, 20, 0.34),
+            (0.054, 15, 0.23),
+            (0.082, 10, 0.14),
+        ):
+            p = progress + offset
+            if p > 1.0:
+                break
+            points, core_width = self._target_points(kind, lane, p)
+            glow_color = self._scaled_additive_color(color, intensity * scale)
+            pygame.draw.lines(
+                surface,
+                glow_color,
+                False,
+                points,
+                max(1, core_width + width_extra),
+            )
+
     def _draw_source_glow(
         self,
         surface: pygame.Surface,
@@ -482,25 +511,25 @@ class Renderer(_tunnel.Renderer):
         *,
         preentry: bool = False,
     ) -> None:
-        p = 0.0 if preentry else max(0.0, min(1.0, progress))
         theme = MAGENTA if kind == NoteKind.HANDS else CYAN
-        if kind == NoteKind.HANDS:
-            points = self._hand_note_arc_points(
-                lane,
-                p,
-                _tunnel._HAND_NOTE_ARC_FRACTION,
-                samples=18,
+        if preentry:
+            points, core_width = self._target_points(kind, lane, 0.0)
+            self._draw_preentry_glow(
+                surface,
+                points,
+                theme,
+                intensity * 0.92,
+                core_width,
             )
-            core_width = max(5, int(5 + 12 * p))
-        else:
-            points = self._foot_note_points(lane, p)
-            core_width = max(4, int(4 + 12 * p))
-        self._draw_glow_stroke(
+            return
+
+        self._draw_outward_glow(
             surface,
-            points,
+            kind,
+            lane,
+            max(0.0, min(1.0, progress)),
             theme,
-            intensity * (0.92 if preentry else 1.0),
-            core_width,
+            intensity,
         )
 
     def _draw_target_glows(
