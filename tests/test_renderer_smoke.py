@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib
 from pathlib import Path
+from types import SimpleNamespace
 
 import pygame
 
@@ -58,5 +59,38 @@ def test_renderer_constructs_and_draws_startup_smoke() -> None:
     renderer = renderer_module.Renderer(screen)
 
     renderer.draw_startup_splash("TEST")
+
+    assert screen.get_size() == (1280, 720)
+
+
+def test_renderer_draws_gameplay_surfaces_smoke() -> None:
+    pygame.font.init()
+    screen = pygame.Surface((1280, 720))
+    renderer_module = importlib.import_module("vaporstep.renderer")
+    renderer = renderer_module.Renderer(screen)
+    hidden_control = SimpleNamespace(visible=False, x=0.5, y=0.5)
+    body = SimpleNamespace(
+        foot_lanes=frozenset({1, 3}),
+        hand_lanes=frozenset({2, 4}),
+        left_foot_control=hidden_control,
+        right_foot_control=hidden_control,
+    )
+
+    renderer._draw_playfields(
+        body,
+        song_time=0.0,
+        beat_pulse=0.5,
+        downbeat=False,
+        hand_enabled=True,
+        foot_enabled=True,
+    )
+    renderer._draw_receptors(
+        body,
+        notes=[],
+        song_time=0.0,
+        hand_enabled=True,
+        foot_enabled=True,
+        strike_events=(),
+    )
 
     assert screen.get_size() == (1280, 720)
