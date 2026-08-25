@@ -10,65 +10,70 @@ def shoulders():
     return point(0.40, 0.40), point(0.60, 0.40)
 
 
-def test_neutral_hands_do_not_occupy_a_lane():
+def test_neutral_wrist_does_not_occupy_a_lane():
     left_shoulder, right_shoulder = shoulders()
-    resolver = HandPoseResolver("left")
-    sample = resolver.resolve(point(0.35, 0.48), left_shoulder, right_shoulder)
+    resolver = HandPoseResolver()
+    sample = resolver.resolve(point(0.50, 0.48), left_shoulder, right_shoulder)
     assert sample.lane is None
     assert sample.visual.visible
 
 
-def test_left_arm_maps_out_and_high_to_authored_lanes_one_and_two():
+def test_any_wrist_can_select_either_outer_segment():
     left_shoulder, right_shoulder = shoulders()
-    resolver = HandPoseResolver("left")
+    resolver = HandPoseResolver()
 
-    out = resolver.resolve(point(0.22, 0.43), left_shoulder, right_shoulder)
-    assert out.lane == 1
-
+    assert resolver.resolve(point(0.34, 0.46), left_shoulder, right_shoulder).lane == 1
     resolver.reset()
-    high = resolver.resolve(point(0.38, 0.30), left_shoulder, right_shoulder)
-    assert high.lane == 2
+    assert resolver.resolve(point(0.66, 0.46), left_shoulder, right_shoulder).lane == 4
 
 
-def test_right_arm_maps_high_and_out_to_authored_lanes_three_and_four():
+def test_any_wrist_can_select_either_high_segment():
     left_shoulder, right_shoulder = shoulders()
-    resolver = HandPoseResolver("right")
+    resolver = HandPoseResolver()
 
-    high = resolver.resolve(point(0.62, 0.30), left_shoulder, right_shoulder)
-    assert high.lane == 3
-
+    assert resolver.resolve(point(0.44, 0.30), left_shoulder, right_shoulder).lane == 2
     resolver.reset()
-    out = resolver.resolve(point(0.78, 0.43), left_shoulder, right_shoulder)
-    assert out.lane == 4
+    assert resolver.resolve(point(0.56, 0.30), left_shoulder, right_shoulder).lane == 3
 
 
-def test_hysteresis_keeps_gesture_until_exit_threshold_is_crossed():
+def test_cross_body_reach_can_select_opposite_side_segments():
     left_shoulder, right_shoulder = shoulders()
-    resolver = HandPoseResolver("left")
+    left_wrist_resolver = HandPoseResolver()
+    right_wrist_resolver = HandPoseResolver()
 
-    assert resolver.resolve(point(0.22, 0.43), left_shoulder, right_shoulder).lane == 1
-    # Not far enough outward to newly enter lane 1, but still beyond OUT_EXIT.
-    assert resolver.resolve(point(0.39, 0.43), left_shoulder, right_shoulder).lane == 1
-    assert resolver.resolve(point(0.41, 0.45), left_shoulder, right_shoulder).lane is None
+    # Resolver identity is irrelevant: either tracked wrist can occupy any lane.
+    assert left_wrist_resolver.resolve(point(0.66, 0.46), left_shoulder, right_shoulder).lane == 4
+    assert right_wrist_resolver.resolve(point(0.34, 0.46), left_shoulder, right_shoulder).lane == 1
+
+    left_wrist_resolver.reset()
+    right_wrist_resolver.reset()
+    assert left_wrist_resolver.resolve(point(0.56, 0.30), left_shoulder, right_shoulder).lane == 3
+    assert right_wrist_resolver.resolve(point(0.44, 0.30), left_shoulder, right_shoulder).lane == 2
 
 
-def test_raised_hand_wins_even_when_it_is_far_outward():
+def test_outer_hysteresis_keeps_segment_until_exit_threshold_is_crossed():
     left_shoulder, right_shoulder = shoulders()
-    left = HandPoseResolver("left")
-    right = HandPoseResolver("right")
+    resolver = HandPoseResolver()
 
-    # These are deliberately very lateral as well as raised. HIGH should be a
-    # simple raise gesture, not require the wrist to move horizontally over the
-    # head or compete with the OUT gesture.
-    assert left.resolve(point(0.20, 0.29), left_shoulder, right_shoulder).lane == 2
-    assert right.resolve(point(0.80, 0.29), left_shoulder, right_shoulder).lane == 3
+    assert resolver.resolve(point(0.34, 0.46), left_shoulder, right_shoulder).lane == 1
+    assert resolver.resolve(point(0.39, 0.46), left_shoulder, right_shoulder).lane == 1
+    assert resolver.resolve(point(0.41, 0.46), left_shoulder, right_shoulder).lane is None
 
 
-def test_high_hysteresis_keeps_a_raised_hand_selected_during_small_drops():
+def test_high_hysteresis_keeps_raised_wrist_selected_during_small_drops():
     left_shoulder, right_shoulder = shoulders()
-    resolver = HandPoseResolver("left")
+    resolver = HandPoseResolver()
 
-    assert resolver.resolve(point(0.34, 0.30), left_shoulder, right_shoulder).lane == 2
-    # Below the entry threshold, but still above the lower HIGH exit threshold.
-    assert resolver.resolve(point(0.34, 0.34), left_shoulder, right_shoulder).lane == 2
-    assert resolver.resolve(point(0.34, 0.36), left_shoulder, right_shoulder).lane is None
+    assert resolver.resolve(point(0.44, 0.30), left_shoulder, right_shoulder).lane == 2
+    assert resolver.resolve(point(0.44, 0.34), left_shoulder, right_shoulder).lane == 2
+    assert resolver.resolve(point(0.44, 0.38), left_shoulder, right_shoulder).lane is None
+
+
+def test_high_side_hysteresis_prevents_centerline_flicker():
+    left_shoulder, right_shoulder = shoulders()
+    resolver = HandPoseResolver()
+
+    assert resolver.resolve(point(0.46, 0.30), left_shoulder, right_shoulder).lane == 2
+    # Slightly right of center remains lane 2 until crossing the side hysteresis.
+    assert resolver.resolve(point(0.51, 0.30), left_shoulder, right_shoulder).lane == 2
+    assert resolver.resolve(point(0.53, 0.30), left_shoulder, right_shoulder).lane == 3
