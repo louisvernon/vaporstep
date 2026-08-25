@@ -12,8 +12,11 @@ from .domain import BodyPoint
 # distance largely divide out.
 HIGH_ENTER = 0.24
 HIGH_EXIT = 0.12
-OUT_ENTER = 0.72
-OUT_EXIT = 0.50
+# Keep low hands neutral across a slightly wider torso region. The exit
+# threshold remains comfortably inside the entry threshold so an intentional
+# outer reach still has useful hysteresis once acquired.
+OUT_ENTER = 0.82
+OUT_EXIT = 0.58
 HIGH_SIDE_HYSTERESIS = 0.10
 
 
