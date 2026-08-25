@@ -217,17 +217,22 @@ class Renderer(_previous.Renderer):
         intensity: float,
         core_width: int,
     ) -> None:
-        """One simple additive halo at the entry shape before the target appears."""
+        """Compact diffuse additive light around the entry shape."""
         if len(points) < 2 or intensity <= 0.0:
             return
-        glow_color = cls._scaled_additive_color(color, intensity * 0.34)
-        pygame.draw.lines(
-            surface,
-            glow_color,
-            False,
-            points,
-            max(1, core_width + 34),
-        )
+
+        # Keep the light close to the tunnel mouth. Two low-energy passes give
+        # it the soft falloff of the boundary-warning glow without making the
+        # target look like several stacked copies.
+        for extra, scale in ((20, 0.11), (9, 0.22)):
+            glow_color = cls._scaled_additive_color(color, intensity * scale)
+            pygame.draw.lines(
+                surface,
+                glow_color,
+                False,
+                points,
+                max(1, core_width + extra),
+            )
 
     def _draw_outward_glow(
         self,
