@@ -2,13 +2,27 @@ from __future__ import annotations
 
 import pygame
 
-from .renderer_previous import *
 from . import renderer_previous as _previous
 from .domain import BodyState, ChainMode, ChainState, NoteKind, SustainSource
 from .keyboard_input import label_for_lane
 from .scroll import timed_is_within_lookahead, timed_progress
 
 
+# Public renderer palette/helpers used by sibling UI modules. Keep these
+# explicit while the prototype renderer hierarchy is flattened so callers do
+# not depend on wildcard re-export leakage.
+BG = _previous.BG
+CYAN = _previous.CYAN
+MAGENTA = _previous.MAGENTA
+PURPLE = _previous.PURPLE
+WHITE = _previous.WHITE
+DIM = _previous.DIM
+GRID = _previous.GRID
+GREEN = _previous.GREEN
+RED = _previous.RED
+AMBER = _previous.AMBER
+ELECTRIC_YELLOW = _previous.ELECTRIC_YELLOW
+HIT_BRICK_POP_SECONDS = _previous.HIT_BRICK_POP_SECONDS
 _blend = _previous._blend
 
 _HAND_TUNNEL_VERTICAL_SCALE = 0.86
@@ -236,9 +250,6 @@ class Renderer(_previous.Renderer):
         preentry: bool = False,
     ) -> None:
         if preentry and kind == NoteKind.FOOT:
-            # The foot lanes are tightly packed at the literal vanishing point;
-            # draw only the anticipation light a little inside the floor mouth
-            # so each lane cue is visible while the actual note remains absent.
             points, core_width = self._target_points(kind, lane, 0.08)
             self._draw_preentry_glow(
                 surface,
@@ -290,8 +301,6 @@ class Renderer(_previous.Renderer):
         song_beat: float,
         chain_mode,
     ) -> None:
-        # Preserve the original muted sustain-body styling, then redraw only
-        # the leading edge of a live hand hold at ordinary note brightness.
         super()._draw_chains(chains, notes, song_time, song_beat, chain_mode)
 
         for chain in chains:
