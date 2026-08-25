@@ -8,8 +8,6 @@ from .domain import BodyState, NoteKind
 from .keyboard_input import label_for_lane
 
 
-# Wildcard imports deliberately omit underscore-prefixed names. Keep this
-# compatibility export because the song-menu renderer imports it directly.
 _blend = _previous._blend
 
 _HAND_TUNNEL_VERTICAL_SCALE = 0.86
@@ -34,7 +32,6 @@ class Renderer(_previous.Renderer):
     """Small visual-polish layer over the validated body-relative tunnel."""
 
     def _hand_tunnel_geometry(self):
-        """Use the same smooth tunnel, just slightly taller than the prior pass."""
         inner, old_outer = super(_previous.Renderer, self)._hand_arc_geometry()
         viewport = self._camera_rect()
 
@@ -75,7 +72,6 @@ class Renderer(_previous.Renderer):
         beat_pulse: float,
         enabled: bool,
     ) -> None:
-        """Draw the hand field without embedded key labels."""
         occupied = body.hand_lanes if enabled else frozenset()
         disabled = _previous._blend(_previous.DIM, _previous.BG, 0.58)
 
@@ -162,7 +158,6 @@ class Renderer(_previous.Renderer):
             self.screen.blit(off, off.get_rect(center=(int(cx), int(cy - 20))))
 
     def _draw_key_labels(self, hand_enabled: bool, foot_enabled: bool) -> None:
-        """Draw all key hints before notes so targets consistently pass over them."""
         if hand_enabled:
             for lane in range(1, 5):
                 x, y = self._hand_target_point(lane, 0.955)
@@ -217,13 +212,8 @@ class Renderer(_previous.Renderer):
         intensity: float,
         core_width: int,
     ) -> None:
-        """Compact diffuse additive light around the entry shape."""
         if len(points) < 2 or intensity <= 0.0:
             return
-
-        # Keep the light close to the tunnel mouth. Two low-energy passes give
-        # it the soft falloff of the boundary-warning glow without making the
-        # target look like several stacked copies.
         for extra, scale in ((20, 0.11), (9, 0.22)):
             glow_color = cls._scaled_additive_color(color, intensity * scale)
             pygame.draw.lines(
@@ -234,6 +224,39 @@ class Renderer(_previous.Renderer):
                 max(1, core_width + extra),
             )
 
+    def _draw_source_glow(
+        self,
+        surface: pygame.Surface,
+        kind: NoteKind,
+        lane: int,
+        progress: float,
+        intensity: float,
+        *,
+        preentry: bool = False,
+    ) -> None:
+        if preentry and kind == NoteKind.FOOT:
+            # At literal progress zero the four foot lanes are packed into the
+            # tiny vanishing region, so the cue is almost invisible. Place only
+            # the light (not the note) just inside the floor mouth. It remains a
+            # pre-entry warning while becoming spatially legible per lane.
+            points, core_width = self._target_points(kind, lane, 0.08)
+            self._draw_preentry_glow(
+                surface,
+                points,
+                _previous.CYAN,
+                intensity * 1.15,
+                core_width,
+            )
+            return
+        super()._draw_source_glow(
+            surface,
+            kind,
+            lane,
+            progress,
+            intensity,
+            preentry=preentry,
+        )
+
     def _draw_outward_glow(
         self,
         surface: pygame.Surface,
@@ -243,7 +266,6 @@ class Renderer(_previous.Renderer):
         color,
         intensity: float,
     ) -> None:
-        """Project one illuminated sheet onto a parallel cross-section ahead."""
         p0 = max(0.0, min(1.0, progress))
         p1 = min(1.0, p0 + 0.065)
         if p1 <= p0 + 1e-6:
@@ -269,7 +291,6 @@ class Renderer(_previous.Renderer):
         foot_enabled: bool,
         strike_events,
     ) -> None:
-        """Suppress captions/late letters, then visually close the tunnel floor edge."""
         original_font = self.small_font
         self.small_font = _ReceptorLabelFilter(original_font)
         try:
