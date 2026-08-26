@@ -195,8 +195,8 @@ def test_renderer_connects_heads_from_one_paired_hand_note(monkeypatch) -> None:
     renderer = renderer_module.Renderer(screen)
     connectors = []
 
-    def record_connector(lanes, progress, color, song_time, pulse):
-        connectors.append((lanes, progress, color, song_time, pulse))
+    def record_connector(lanes, progress, color, song_time, beat_pulse, downbeat):
+        connectors.append((lanes, progress, color, song_time, beat_pulse, downbeat))
 
     monkeypatch.setattr(renderer, "_draw_hand_note_connector", record_connector)
     renderer._draw_notes(
@@ -204,10 +204,13 @@ def test_renderer_connects_heads_from_one_paired_hand_note(monkeypatch) -> None:
         song_time=0.5,
         song_beat=0.5,
         chain_mode=ChainMode.OFF,
+        beat_pulse=0.75,
+        downbeat=True,
     )
 
     assert len(connectors) == 1
     assert connectors[0][0] == (1, 3)
+    assert connectors[0][4:] == (0.75, True)
 
 
 def test_renderer_does_not_connect_paired_foot_note(monkeypatch) -> None:
@@ -239,7 +242,14 @@ def test_hand_note_connector_ignores_single_lane_notes() -> None:
     renderer = renderer_module.Renderer(screen)
     before = pygame.image.tostring(screen, "RGBA")
 
-    renderer._draw_hand_note_connector((2,), 0.5, renderer_module.MAGENTA, 0.0, 1.0)
+    renderer._draw_hand_note_connector(
+        (2,),
+        0.5,
+        renderer_module.MAGENTA,
+        0.0,
+        1.0,
+        False,
+    )
 
     assert pygame.image.tostring(screen, "RGBA") == before
 

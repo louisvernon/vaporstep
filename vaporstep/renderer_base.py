@@ -151,7 +151,14 @@ class Renderer:
         # A failed run deliberately keeps the frozen chart visible during its hold.
         visible_notes = notes if (running or performance_state == "failed") else []
         self._draw_chains(chains, visible_notes, song_time, song_beat, chain_mode)
-        self._draw_notes(visible_notes, song_time, song_beat, chain_mode)
+        self._draw_notes(
+            visible_notes,
+            song_time,
+            song_beat,
+            chain_mode,
+            beat_pulse=beat_pulse,
+            downbeat=downbeat,
+        )
         if running:
             self._spawn_note_effects(notes)
             self._draw_particles(song_time)
