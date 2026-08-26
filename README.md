@@ -16,7 +16,7 @@ VaporStep has out of the box support for StepMania style step/sim files, so you 
 
 
 
-[▶ Gameplay demo](https://github.com/user-attachments/assets/f7e4009d-6738-4d5f-801c-370e0ecce669)
+[▶ Gameplay demo](https://github.com/user-attachments/assets/8f571ca3-fc21-4314-9f68-8db05ae7cd76)
 
 🎵 “Neutralize” by SiLiS — [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/).
 
