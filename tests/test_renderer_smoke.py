@@ -9,6 +9,7 @@ import pytest
 
 from vaporstep.domain import (
     ChainMode,
+    ChainState,
     GameNote,
     HitQuality,
     ImplicitChain,
@@ -233,6 +234,57 @@ def test_renderer_does_not_connect_paired_foot_note(monkeypatch) -> None:
     )
 
     assert connectors == []
+
+
+@pytest.mark.parametrize("state", [ChainState.PENDING, ChainState.ACTIVE])
+def test_renderer_connects_paired_hand_hold_head(monkeypatch, state) -> None:
+    pygame.font.init()
+    screen = pygame.Surface((1280, 720))
+    renderer_module = importlib.import_module("vaporstep.renderer")
+    renderer = renderer_module.Renderer(screen)
+    connectors = []
+    monkeypatch.setattr(
+        renderer,
+        "_draw_hand_note_connector",
+        lambda *args: connectors.append(args),
+    )
+    hold = GameNote(
+        time=1.0,
+        beat=1.0,
+        end_time=2.0,
+        end_beat=2.0,
+        lanes=(1, 3),
+        kind=NoteKind.HANDS,
+        chain_id=7,
+    )
+    chain = RuntimeChain(
+        definition=ImplicitChain(
+            id=7,
+            kind=NoteKind.HANDS,
+            lanes=(1, 3),
+            note_indices=(0,),
+            start_time=1.0,
+            end_time=2.0,
+            start_beat=1.0,
+            end_beat=2.0,
+            source=SustainSource.EXPLICIT_HOLD,
+        ),
+        state=state,
+    )
+
+    renderer._draw_chains(
+        (chain,),
+        [hold],
+        song_time=1.0 if state == ChainState.ACTIVE else 0.5,
+        song_beat=1.0 if state == ChainState.ACTIVE else 0.5,
+        chain_mode=ChainMode.OFF,
+        beat_pulse=0.75,
+        downbeat=True,
+    )
+
+    assert len(connectors) == 1
+    assert connectors[0][0] == (1, 3)
+    assert connectors[0][4:] == (0.75, True)
 
 
 def test_hand_note_connector_ignores_single_lane_notes() -> None:

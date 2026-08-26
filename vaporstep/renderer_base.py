@@ -150,7 +150,15 @@ class Renderer:
         # Do not preview the opening bars while the player is still positioning.
         # A failed run deliberately keeps the frozen chart visible during its hold.
         visible_notes = notes if (running or performance_state == "failed") else []
-        self._draw_chains(chains, visible_notes, song_time, song_beat, chain_mode)
+        self._draw_chains(
+            chains,
+            visible_notes,
+            song_time,
+            song_beat,
+            chain_mode,
+            beat_pulse=beat_pulse,
+            downbeat=downbeat,
+        )
         self._draw_notes(
             visible_notes,
             song_time,

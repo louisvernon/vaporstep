@@ -1189,6 +1189,8 @@ class Renderer(_base.Renderer):
         song_time: float,
         song_beat: float,
         chain_mode: ChainMode,
+        beat_pulse: float = 0.0,
+        downbeat: bool = False,
     ) -> None:
         self._draw_chain_head_glows(chains, song_time, song_beat, chain_mode)
         self._draw_foot_chains(chains, notes, song_time, song_beat, chain_mode)
@@ -1269,6 +1271,14 @@ class Renderer(_base.Renderer):
             )
             if head < 0.0 or head > 1.0:
                 continue
+            self._draw_hand_note_connector(
+                definition.lanes,
+                head,
+                MAGENTA,
+                song_time,
+                beat_pulse,
+                downbeat,
+            )
             for lane in definition.lanes:
                 self._draw_hand_note_arc(
                     lane,
