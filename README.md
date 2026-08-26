@@ -1,16 +1,16 @@
-# VaporStep
+# <img width="90%" alt="VaporStep-Banner" src="https://github.com/user-attachments/assets/9cd483b2-2d4c-4e98-8750-c71cf438e051" />
 
-<img src="assets/vaporstep_icon.png" alt="VaporStep icon" width="160">
+
 
 **VaporStep turns your webcam into a full-body rhythm game.** Step, reach, stomp and pump your hands through the lanes as notes arrive with the music — no dance pad or motion controllers required.
 
 VaporStep has out of the box support for StepMania style step/sim files, so you should be able to point it at your existing libraries and play.
 
 <p float="left">
-  <img width="18%" alt="VaporStep-Menu" src="https://github.com/user-attachments/assets/fb53254e-31ec-465c-af79-1c3df5e6029d" />
-  <img width="18%" alt="VaporStep-SongList" src="https://github.com/user-attachments/assets/414f7d41-2655-4fd8-bec1-0287f9c5dd19" />
-  <img width="18%" alt="VaporStep-Play" src="https://github.com/user-attachments/assets/5ceb5b3a-ab57-46bd-8c93-12aa61ebd476" />
-  <img width="18%"alt="VaportStep-ResultsScreen" src="https://github.com/user-attachments/assets/b4713e77-7489-4baf-aff5-572da87bc4a1" />
+  <img width="18%" alt="VaporStep-Menu" src="https://github.com/user-attachments/assets/60a93ae6-bc3a-44f0-a612-09ffaa0600ee" />
+  <img width="18%" alt="VaporStep-SongList" src="https://github.com/user-attachments/assets/57099977-4e1e-48ee-a4dc-2480ababdc80" />
+  <img width="18%" alt="VaporStep-Play" src="https://github.com/user-attachments/assets/f3e05618-25f6-443a-aba8-9bf2c0dfbc71" />
+  <img width="18%" alt="VaportStep-ResultsScreen" src="https://github.com/user-attachments/assets/814d120d-3d85-4f69-99ab-0fa5e3d2408a" />
   <img width="18%" alt="VaporStep-Stats" src="https://github.com/user-attachments/assets/377e4975-36be-4096-ad38-907b7a804ee5" />
 </p>
 
