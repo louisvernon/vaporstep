@@ -286,6 +286,7 @@ class Renderer(_base.Renderer):
         progress: float,
         color,
         song_time: float,
+        pulse: float,
     ) -> None:
         """Electrically join the heads that belong to one simultaneous note."""
         ordered = sorted(set(lanes))
@@ -300,9 +301,15 @@ class Renderer(_base.Renderer):
             return
 
         p = max(0.0, min(1.0, progress))
-        samples = max(5, int(round(32 * (end - start))))
+        samples = max(8, int(round(48 * (end - start))))
         base_points = self._hand_arc_points(start, end, p, samples=samples)
-        amplitude = 1.8 + 6.2 * p
+        path_length = sum(
+            math.hypot(x1 - x0, y1 - y0)
+            for (x0, y0), (x1, y1) in zip(base_points, base_points[1:])
+        )
+        surge = max(0.0, min(1.0, pulse))
+        amplitude = (4.0 + 11.0 * p) + (6.0 + 10.0 * p) * surge
+        amplitude = min(amplitude, max(3.5, path_length * 0.18))
         lane_phase = sum(ordered) * 0.73
         points: list[tuple[int, int]] = []
         for index, (x, y) in enumerate(base_points):
@@ -312,25 +319,20 @@ class Renderer(_base.Renderer):
             length = max(1.0, math.hypot(dx, dy))
             nx, ny = -dy / length, dx / length
             along = index / max(1, len(base_points) - 1)
-            noise = (
-                math.sin(song_time * 22.0 + along * 77.0 + lane_phase)
-                + 0.55 * math.sin(song_time * 41.0 + along * 143.0 + lane_phase * 1.3)
-                + 0.28 * math.sin(song_time * 67.0 + along * 211.0)
-            ) / 1.83
+            noise = self._electric_noise(song_time, along, lane_phase)
             offset = amplitude * noise
             points.append((int(round(x + nx * offset)), int(round(y + ny * offset))))
 
         thickness = max(1, int(round(1.0 + 2.0 * p)))
-        pygame.draw.lines(self.screen, BG, False, points, thickness + 4)
-        trace_color = _blend(BG, color, 0.72)
-        pygame.draw.lines(
-            self.screen,
-            _blend(BG, trace_color, 0.30),
-            False,
+        pygame.draw.lines(self.screen, BG, False, points, thickness + 5)
+        trace_color = _blend(DIM, color, 0.34 + 0.58 * surge)
+        self._draw_electric_trace(
             points,
-            thickness + 2,
+            trace_color,
+            core_width=thickness,
+            glow_width=thickness + 3,
+            glow_strength=0.35,
         )
-        pygame.draw.lines(self.screen, trace_color, False, points, thickness)
 
     def _draw_hand_hit_pop(self, lane: int, age: float, quality: HitQuality) -> None:
         phase = max(0.0, min(1.0, age / HIT_BRICK_POP_SECONDS))
@@ -681,6 +683,16 @@ class Renderer(_base.Renderer):
         phase = (note.time - song_time) / _NOTE_BREATHE_CYCLE_SECONDS
         return 0.5 + 0.5 * math.cos(phase * math.tau)
 
+    @staticmethod
+    def _breathing_note_color(base, breathe: float, progress: float):
+        """Apply an obvious but readable target-time brightness pulse."""
+        pulse = max(0.0, min(1.0, breathe))
+        near_receptor = max(0.0, min(1.0, progress))
+        trough = 0.48 + 0.18 * near_receptor
+        intensity = trough + (1.0 - trough) * pulse
+        color = _blend(BG, base, intensity)
+        return _blend(color, WHITE, 0.12 * pulse * pulse)
+
     def _target_glow_state(
         self,
         note: GameNote,
@@ -945,11 +957,7 @@ class Renderer(_base.Renderer):
             progress = self._note_progress(note, song_time, song_beat)
             if not note.judged:
                 breathe = self._note_breathe(note, song_time)
-                near_receptor = max(0.0, min(1.0, progress))
-                trough = 0.72 + 0.14 * near_receptor
-                intensity = trough + (1.0 - trough) * breathe
-                color = _blend(BG, color, intensity)
-                color = _blend(color, WHITE, 0.05 * breathe)
+                color = self._breathing_note_color(color, breathe, progress)
 
             for lane in note.lanes:
                 if note.judged and note.hit and note.judged_at is not None:
@@ -1003,14 +1011,12 @@ class Renderer(_base.Renderer):
 
             if note.judged:
                 color = RED
+                breathe = 0.0
             else:
                 breathe = self._note_breathe(note, song_time)
-                near = max(0.0, min(1.0, progress))
-                intensity = (0.72 + 0.14 * near) + (0.28 - 0.14 * near) * breathe
-                color = _blend(BG, MAGENTA, intensity)
-                color = _blend(color, WHITE, 0.05 * breathe)
+                color = self._breathing_note_color(MAGENTA, breathe, progress)
 
-            self._draw_hand_note_connector(note.lanes, progress, color, song_time)
+            self._draw_hand_note_connector(note.lanes, progress, color, song_time, breathe)
             for lane in note.lanes:
                 self._draw_hand_note_arc(lane, progress, color)
 

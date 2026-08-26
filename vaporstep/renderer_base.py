@@ -771,6 +771,36 @@ class Renderer:
         alpha = 54
         pygame.draw.polygon(surface, (*color, alpha), [(l0, y0), (r0, y0), (r1, y1), (l1, y1)])
 
+    @staticmethod
+    def _electric_noise(song_time: float, along: float, phase: float = 0.0) -> float:
+        """Return the shared animated waveform used by VaporStep's electric traces."""
+        return (
+            math.sin(song_time * 22.0 + along * 77.0 + phase)
+            + 0.55 * math.sin(song_time * 41.0 + along * 143.0 + phase * 1.3)
+            + 0.28 * math.sin(song_time * 67.0 + along * 211.0)
+        ) / 1.83
+
+    def _draw_electric_trace(
+        self,
+        points: list[tuple[int, int]],
+        color,
+        *,
+        core_width: int = 1,
+        glow_width: int = 3,
+        glow_strength: float = 0.35,
+    ) -> None:
+        """Draw the shared glow-and-core treatment for an electric trace."""
+        if len(points) < 2:
+            return
+        pygame.draw.lines(
+            self.screen,
+            _blend(BG, color, glow_strength),
+            False,
+            points,
+            max(core_width, glow_width),
+        )
+        pygame.draw.lines(self.screen, color, False, points, core_width)
+
 
     def _draw_buzz_rails(
         self,
@@ -793,9 +823,11 @@ class Renderer:
                     y = self._field_y(kind, p)
                     offset = -8.0 if side == 0 else 8.0
                     points.append((int(boundary_x + offset), int(y)))
-                if len(points) >= 2:
-                    pygame.draw.lines(self.screen, _blend(BG, trace_color, 0.25), False, points, 3)
-                    pygame.draw.lines(self.screen, trace_color, False, points, 1)
+                self._draw_electric_trace(
+                    points,
+                    trace_color,
+                    glow_strength=0.25,
+                )
             return
 
         base_amp = 11.2
@@ -811,17 +843,11 @@ class Renderer:
                 p = i / samples
                 boundary_x = self._lane_boundary_x(kind, side, p)
                 y = self._field_y(kind, p)
-                noise = (
-                    math.sin(song_time * 22.0 + p * 77.0 + side * 0.7)
-                    + 0.55 * math.sin(song_time * 41.0 + p * 143.0 + side * 1.3)
-                    + 0.28 * math.sin(song_time * 67.0 + p * 211.0)
-                ) / 1.83
+                noise = self._electric_noise(song_time, p, side * 0.7)
                 offset = sign * (8.0 + amplitude * noise)
                 points.append((int(boundary_x + offset), int(y)))
 
-            if len(points) >= 2:
-                pygame.draw.lines(self.screen, _blend(BG, trace_color, 0.35), False, points, 3)
-                pygame.draw.lines(self.screen, trace_color, False, points, 1)
+            self._draw_electric_trace(points, trace_color)
 
     def _note_progress(self, note: GameNote, song_time: float, song_beat: float) -> float:
         return note_progress(note, song_time, song_beat)

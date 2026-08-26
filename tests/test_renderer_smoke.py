@@ -195,8 +195,8 @@ def test_renderer_connects_heads_from_one_paired_hand_note(monkeypatch) -> None:
     renderer = renderer_module.Renderer(screen)
     connectors = []
 
-    def record_connector(lanes, progress, color, song_time):
-        connectors.append((lanes, progress, color, song_time))
+    def record_connector(lanes, progress, color, song_time, pulse):
+        connectors.append((lanes, progress, color, song_time, pulse))
 
     monkeypatch.setattr(renderer, "_draw_hand_note_connector", record_connector)
     renderer._draw_notes(
@@ -239,7 +239,7 @@ def test_hand_note_connector_ignores_single_lane_notes() -> None:
     renderer = renderer_module.Renderer(screen)
     before = pygame.image.tostring(screen, "RGBA")
 
-    renderer._draw_hand_note_connector((2,), 0.5, renderer_module.MAGENTA, 0.0)
+    renderer._draw_hand_note_connector((2,), 0.5, renderer_module.MAGENTA, 0.0, 1.0)
 
     assert pygame.image.tostring(screen, "RGBA") == before
 
@@ -254,6 +254,18 @@ def test_note_breath_is_slow_and_anchored_to_its_target_time() -> None:
     assert renderer._note_breathe(note, 10.0) == pytest.approx(1.0)
     assert renderer._note_breathe(note, 9.6) == pytest.approx(0.5)
     assert renderer._note_breathe(note, 9.2) == pytest.approx(0.0)
+
+
+def test_note_breath_has_a_clearly_visible_brightness_range() -> None:
+    pygame.font.init()
+    screen = pygame.Surface((1280, 720))
+    renderer_module = importlib.import_module("vaporstep.renderer")
+    renderer = renderer_module.Renderer(screen)
+
+    trough = renderer._breathing_note_color(renderer_module.MAGENTA, 0.0, 0.25)
+    peak = renderer._breathing_note_color(renderer_module.MAGENTA, 1.0, 0.25)
+
+    assert sum(peak) > sum(trough) * 1.8
 
 
 def test_renderer_generates_and_draws_mixed_effects_smoke() -> None:
