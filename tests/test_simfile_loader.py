@@ -168,6 +168,24 @@ def test_ds3ddx_all_four_foot_columns_map_left_to_right():
     assert [n.lanes for n in notes] == [(1,), (2,), (3,), (4,)]
 
 
+def test_ds3ddx_keeps_simultaneous_foot_and_hand_pairs_separate():
+    from vaporstep.simfile_loader import convert_ds3ddx_rows
+
+    row = [
+        FakeNote(Fraction(2), 1),
+        FakeNote(Fraction(2), 5),
+        FakeNote(Fraction(2), 0),
+        FakeNote(Fraction(2), 7),
+    ]
+    notes, skipped = convert_ds3ddx_rows([row], FakeEngine())
+
+    assert skipped == 0
+    assert [(note.kind, note.lanes) for note in notes] == [
+        (NoteKind.FOOT, (1, 3)),
+        (NoteKind.HANDS, (1, 4)),
+    ]
+
+
 def test_stepfile_asset_paths_cannot_escape_song_directory(tmp_path: Path):
     from vaporstep.simfile_loader import _resolve_asset
 

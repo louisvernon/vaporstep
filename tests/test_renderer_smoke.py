@@ -5,9 +5,11 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pygame
+import pytest
 
 from vaporstep.domain import (
     ChainMode,
+    ChainState,
     GameNote,
     HitQuality,
     ImplicitChain,
@@ -185,6 +187,147 @@ def test_renderer_draws_explicit_foot_notes_and_chains_smoke() -> None:
     )
 
     assert screen.get_size() == (1280, 720)
+
+
+def test_renderer_connects_heads_from_one_paired_hand_note(monkeypatch) -> None:
+    pygame.font.init()
+    screen = pygame.Surface((1280, 720))
+    renderer_module = importlib.import_module("vaporstep.renderer")
+    renderer = renderer_module.Renderer(screen)
+    connectors = []
+
+    def record_connector(lanes, progress, color, song_time, beat_pulse, downbeat):
+        connectors.append((lanes, progress, color, song_time, beat_pulse, downbeat))
+
+    monkeypatch.setattr(renderer, "_draw_hand_note_connector", record_connector)
+    renderer._draw_notes(
+        [GameNote(time=1.0, beat=1.0, lanes=(1, 3), kind=NoteKind.HANDS)],
+        song_time=0.5,
+        song_beat=0.5,
+        chain_mode=ChainMode.OFF,
+        beat_pulse=0.75,
+        downbeat=True,
+    )
+
+    assert len(connectors) == 1
+    assert connectors[0][0] == (1, 3)
+    assert connectors[0][4:] == (0.75, True)
+
+
+def test_renderer_does_not_connect_paired_foot_note(monkeypatch) -> None:
+    pygame.font.init()
+    screen = pygame.Surface((1280, 720))
+    renderer_module = importlib.import_module("vaporstep.renderer")
+    renderer = renderer_module.Renderer(screen)
+    connectors = []
+    monkeypatch.setattr(
+        renderer,
+        "_draw_hand_note_connector",
+        lambda *args: connectors.append(args),
+    )
+
+    renderer._draw_notes(
+        [GameNote(time=1.0, beat=1.0, lanes=(1, 3), kind=NoteKind.FOOT)],
+        song_time=0.5,
+        song_beat=0.5,
+        chain_mode=ChainMode.OFF,
+    )
+
+    assert connectors == []
+
+
+@pytest.mark.parametrize("state", [ChainState.PENDING, ChainState.ACTIVE])
+def test_renderer_connects_paired_hand_hold_head(monkeypatch, state) -> None:
+    pygame.font.init()
+    screen = pygame.Surface((1280, 720))
+    renderer_module = importlib.import_module("vaporstep.renderer")
+    renderer = renderer_module.Renderer(screen)
+    connectors = []
+    monkeypatch.setattr(
+        renderer,
+        "_draw_hand_note_connector",
+        lambda *args: connectors.append(args),
+    )
+    hold = GameNote(
+        time=1.0,
+        beat=1.0,
+        end_time=2.0,
+        end_beat=2.0,
+        lanes=(1, 3),
+        kind=NoteKind.HANDS,
+        chain_id=7,
+    )
+    chain = RuntimeChain(
+        definition=ImplicitChain(
+            id=7,
+            kind=NoteKind.HANDS,
+            lanes=(1, 3),
+            note_indices=(0,),
+            start_time=1.0,
+            end_time=2.0,
+            start_beat=1.0,
+            end_beat=2.0,
+            source=SustainSource.EXPLICIT_HOLD,
+        ),
+        state=state,
+    )
+
+    renderer._draw_chains(
+        (chain,),
+        [hold],
+        song_time=1.0 if state == ChainState.ACTIVE else 0.5,
+        song_beat=1.0 if state == ChainState.ACTIVE else 0.5,
+        chain_mode=ChainMode.OFF,
+        beat_pulse=0.75,
+        downbeat=True,
+    )
+
+    assert len(connectors) == 1
+    assert connectors[0][0] == (1, 3)
+    assert connectors[0][4:] == (0.75, True)
+
+
+def test_hand_note_connector_ignores_single_lane_notes() -> None:
+    pygame.font.init()
+    screen = pygame.Surface((1280, 720))
+    renderer_module = importlib.import_module("vaporstep.renderer")
+    renderer = renderer_module.Renderer(screen)
+    before = pygame.image.tostring(screen, "RGBA")
+
+    renderer._draw_hand_note_connector(
+        (2,),
+        0.5,
+        renderer_module.MAGENTA,
+        0.0,
+        1.0,
+        False,
+    )
+
+    assert pygame.image.tostring(screen, "RGBA") == before
+
+
+def test_note_breath_is_slow_and_anchored_to_its_target_time() -> None:
+    pygame.font.init()
+    screen = pygame.Surface((1280, 720))
+    renderer_module = importlib.import_module("vaporstep.renderer")
+    renderer = renderer_module.Renderer(screen)
+    note = GameNote(time=10.0, lanes=(1,), kind=NoteKind.HANDS)
+
+    assert renderer._note_breathe(note, 10.0) == pytest.approx(1.0)
+    assert renderer._note_breathe(note, 9.6) == pytest.approx(0.5)
+    assert renderer._note_breathe(note, 9.2) == pytest.approx(0.0)
+
+
+def test_note_breath_has_a_clearly_visible_brightness_range() -> None:
+    pygame.font.init()
+    screen = pygame.Surface((1280, 720))
+    renderer_module = importlib.import_module("vaporstep.renderer")
+    renderer = renderer_module.Renderer(screen)
+
+    trough = renderer._breathing_note_color(renderer_module.MAGENTA, 0.0, 0.25)
+    peak = renderer._breathing_note_color(renderer_module.MAGENTA, 1.0, 0.25)
+
+    assert sum(peak) > sum(trough) * 1.8
 
 
 def test_renderer_generates_and_draws_mixed_effects_smoke() -> None:

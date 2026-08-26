@@ -60,6 +60,7 @@ _HAND_TUNNEL_VERTICAL_SCALE = 0.86
 _HAND_TRACKER_OFFSET_PX = 10.0
 _TARGET_PREENTRY_BEATS = 1.5
 _TARGET_PREENTRY_SECONDS = 0.75
+_NOTE_BREATHE_CYCLE_SECONDS = 1.6
 
 
 class Renderer(_base.Renderer):
@@ -278,6 +279,72 @@ class Renderer(_base.Renderer):
         pygame.draw.lines(self.screen, color, False, arc, thickness)
         if highlight:
             pygame.draw.lines(self.screen, WHITE, False, arc, max(1, thickness // 5))
+
+    def _draw_hand_note_connector(
+        self,
+        lanes: tuple[int, ...],
+        progress: float,
+        color,
+        song_time: float,
+        beat_pulse: float,
+        downbeat: bool,
+    ) -> None:
+        """Electrically join the heads that belong to one simultaneous note."""
+        ordered = sorted(set(lanes))
+        if len(ordered) < 2:
+            return
+
+        lane_width = _HAND_BOUNDARIES[1] - _HAND_BOUNDARIES[0]
+        note_half = lane_width * 0.5 * _HAND_NOTE_ARC_FRACTION
+        start = _HAND_CENTERS[ordered[0] - 1] + note_half
+        end = _HAND_CENTERS[ordered[-1] - 1] - note_half
+        if end <= start:
+            return
+
+        p = max(0.0, min(1.0, progress))
+        probe_points = self._hand_arc_points(start, end, p, samples=12)
+        path_length = sum(
+            math.hypot(x1 - x0, y1 - y0)
+            for (x0, y0), (x1, y1) in zip(probe_points, probe_points[1:])
+        )
+        foot_start = (
+            self._lane_boundary_x(NoteKind.FOOT, 0, 0.0),
+            self._field_y(NoteKind.FOOT, 0.0),
+        )
+        foot_end = (
+            self._lane_boundary_x(NoteKind.FOOT, 0, 1.0),
+            self._field_y(NoteKind.FOOT, 1.0),
+        )
+        reference_length = max(
+            1.0,
+            math.hypot(foot_end[0] - foot_start[0], foot_end[1] - foot_start[1]),
+        )
+        spatial_span = path_length / reference_length
+        samples = max(4, int(round(30 * spatial_span)))
+        base_points = self._hand_arc_points(start, end, p, samples=samples)
+        pulse = max(0.0, min(1.0, beat_pulse))
+        amplitude = 0.30 * (11.2 + (33.6 if downbeat else 25.6) * pulse)
+        amplitude = min(amplitude, max(3.0, path_length * 0.12))
+        lane_phase = sum(ordered) * 0.73
+        points: list[tuple[int, int]] = []
+        for index, (x, y) in enumerate(base_points):
+            before = base_points[max(0, index - 1)]
+            after = base_points[min(len(base_points) - 1, index + 1)]
+            dx, dy = after[0] - before[0], after[1] - before[1]
+            length = max(1.0, math.hypot(dx, dy))
+            nx, ny = -dy / length, dx / length
+            along = index / max(1, len(base_points) - 1)
+            noise = self._electric_noise(
+                song_time,
+                along * spatial_span,
+                lane_phase,
+            )
+            offset = amplitude * noise
+            points.append((int(round(x + nx * offset)), int(round(y + ny * offset))))
+
+        glow = min(1.0, 0.34 + pulse * (0.58 if downbeat else 0.46))
+        trace_color = _blend(DIM, color, glow)
+        self._draw_electric_trace(points, trace_color)
 
     def _draw_hand_hit_pop(self, lane: int, age: float, quality: HitQuality) -> None:
         phase = max(0.0, min(1.0, age / HIT_BRICK_POP_SECONDS))
@@ -622,6 +689,22 @@ class Renderer(_base.Renderer):
         progress = timed_progress(event_time, event_beat, song_time, song_beat)
         return progress, 0.24 + 0.48 * (progress ** 0.85), False
 
+    @staticmethod
+    def _note_breathe(note: GameNote, song_time: float) -> float:
+        """Return a target-time-anchored pulse with a BPM-independent period."""
+        phase = (note.time - song_time) / _NOTE_BREATHE_CYCLE_SECONDS
+        return 0.5 + 0.5 * math.cos(phase * math.tau)
+
+    @staticmethod
+    def _breathing_note_color(base, breathe: float, progress: float):
+        """Apply an obvious but readable target-time brightness pulse."""
+        pulse = max(0.0, min(1.0, breathe))
+        near_receptor = max(0.0, min(1.0, progress))
+        trough = 0.48 + 0.18 * near_receptor
+        intensity = trough + (1.0 - trough) * pulse
+        color = _blend(BG, base, intensity)
+        return _blend(color, WHITE, 0.12 * pulse * pulse)
+
     def _target_glow_state(
         self,
         note: GameNote,
@@ -885,13 +968,8 @@ class Renderer(_base.Renderer):
 
             progress = self._note_progress(note, song_time, song_beat)
             if not note.judged:
-                beat_phase = song_beat - math.floor(song_beat)
-                breathe = 0.5 + 0.5 * math.cos(beat_phase * math.tau)
-                near_receptor = max(0.0, min(1.0, progress))
-                trough = 0.72 + 0.14 * near_receptor
-                intensity = trough + (1.0 - trough) * breathe
-                color = _blend(BG, color, intensity)
-                color = _blend(color, WHITE, 0.05 * breathe)
+                breathe = self._note_breathe(note, song_time)
+                color = self._breathing_note_color(color, breathe, progress)
 
             for lane in note.lanes:
                 if note.judged and note.hit and note.judged_at is not None:
@@ -910,6 +988,8 @@ class Renderer(_base.Renderer):
         song_time: float,
         song_beat: float,
         chain_mode: ChainMode = ChainMode.OFF,
+        beat_pulse: float = 0.0,
+        downbeat: bool = False,
     ) -> None:
         self._draw_target_glows(notes, song_time, song_beat, chain_mode)
         self._draw_foot_notes(notes, song_time, song_beat, chain_mode)
@@ -945,14 +1025,20 @@ class Renderer(_base.Renderer):
 
             if note.judged:
                 color = RED
+                connector_color = RED
             else:
-                beat_phase = song_beat - math.floor(song_beat)
-                breathe = 0.5 + 0.5 * math.cos(beat_phase * math.tau)
-                near = max(0.0, min(1.0, progress))
-                intensity = (0.72 + 0.14 * near) + (0.28 - 0.14 * near) * breathe
-                color = _blend(BG, MAGENTA, intensity)
-                color = _blend(color, WHITE, 0.05 * breathe)
+                breathe = self._note_breathe(note, song_time)
+                color = self._breathing_note_color(MAGENTA, breathe, progress)
+                connector_color = MAGENTA
 
+            self._draw_hand_note_connector(
+                note.lanes,
+                progress,
+                connector_color,
+                song_time,
+                beat_pulse,
+                downbeat,
+            )
             for lane in note.lanes:
                 self._draw_hand_note_arc(lane, progress, color)
 
@@ -1103,6 +1189,8 @@ class Renderer(_base.Renderer):
         song_time: float,
         song_beat: float,
         chain_mode: ChainMode,
+        beat_pulse: float = 0.0,
+        downbeat: bool = False,
     ) -> None:
         self._draw_chain_head_glows(chains, song_time, song_beat, chain_mode)
         self._draw_foot_chains(chains, notes, song_time, song_beat, chain_mode)
@@ -1183,6 +1271,14 @@ class Renderer(_base.Renderer):
             )
             if head < 0.0 or head > 1.0:
                 continue
+            self._draw_hand_note_connector(
+                definition.lanes,
+                head,
+                MAGENTA,
+                song_time,
+                beat_pulse,
+                downbeat,
+            )
             for lane in definition.lanes:
                 self._draw_hand_note_arc(
                     lane,
