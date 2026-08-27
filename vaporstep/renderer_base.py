@@ -138,6 +138,7 @@ class Renderer:
         chains: tuple[RuntimeChain, ...] = (),
         chain_mode: ChainMode = ChainMode.OFF,
         show_lower_body_sources: bool = False,
+        show_body_markers: bool = True,
     ) -> None:
         self.screen.fill(BG)
         self._draw_background(song_time, beat_pulse, downbeat)
@@ -171,13 +172,14 @@ class Renderer:
             self._spawn_note_effects(notes)
             self._draw_particles(song_time)
         self._draw_receptors(body, visible_notes, song_time, hand_enabled, foot_enabled, strike_events)
-        self._draw_body_markers(
-            body,
-            show_labels=debug,
-            hand_enabled=hand_enabled,
-            foot_enabled=foot_enabled,
-            show_lower_body_sources=show_lower_body_sources,
-        )
+        if show_body_markers:
+            self._draw_body_markers(
+                body,
+                show_labels=debug,
+                hand_enabled=hand_enabled,
+                foot_enabled=foot_enabled,
+                show_lower_body_sources=show_lower_body_sources,
+            )
 
         if running and stats is not None:
             self._draw_hud(

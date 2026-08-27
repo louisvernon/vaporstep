@@ -50,14 +50,18 @@ _blend = _base._blend
 
 # Authored hand lanes retain their left-to-right semantic ordering along the
 # tunnel shell: 1 left/out, 2 left/high, 3 right/high, 4 right/out.
-_HAND_BOUNDARIES = (0.0, 0.25, 0.50, 0.75, 1.0)
-_HAND_CENTERS = (0.125, 0.375, 0.625, 0.875)
+# Give the two raised-hand segments more of the tunnel shell. Their note heads
+# sit slightly toward the lower edge of each segment so their source-to-target
+# travel is closer to the much longer outer-hand travel.
+_HAND_BOUNDARIES = (0.0, 0.20, 0.50, 0.80, 1.0)
+_HAND_CENTERS = (0.10, 0.31, 0.69, 0.90)
 _HAND_NOTE_ARC_FRACTION = 0.62
 _HAND_FOOT_GAP_PX = 7.0
 
 _HAND_SHOULDER_EXTENSION = 0.12
-_HAND_TUNNEL_VERTICAL_SCALE = 0.86
+_HAND_TUNNEL_VERTICAL_SCALE = 0.96
 _HAND_TRACKER_OFFSET_PX = 10.0
+_NOTE_GLOW_OFFSET_PROGRESS = 0.075
 _TARGET_PREENTRY_BEATS = 1.5
 _TARGET_PREENTRY_SECONDS = 0.75
 _NOTE_BREATHE_CYCLE_SECONDS = 1.6
@@ -771,8 +775,7 @@ class Renderer(_base.Renderer):
         color,
         intensity: float,
     ) -> None:
-        p0 = max(0.0, min(1.0, progress))
-        p1 = min(1.0, p0 + 0.065)
+        p0, p1 = self._glow_projection_progress(progress)
         if p1 <= p0 + 1e-6:
             return
 
@@ -786,6 +789,16 @@ class Renderer(_base.Renderer):
         pygame.draw.polygon(surface, light, polygon)
         edge = self._scaled_additive_color(color, intensity * 0.18)
         pygame.draw.lines(surface, edge, False, projected, 2)
+
+    @staticmethod
+    def _glow_projection_progress(progress: float) -> tuple[float, float]:
+        p0 = max(0.0, min(1.0, float(progress)))
+        # Treat the offset glow like a reflection/shadow cast toward the
+        # receptor. Its separation collapses continuously into the note body
+        # instead of remaining detached until the final few frames.
+        separation = _NOTE_GLOW_OFFSET_PROGRESS * ((1.0 - p0) ** 0.80)
+        p1 = min(1.0, p0 + separation)
+        return p0, p1
 
     def _aperture_target_points(
         self,
@@ -834,8 +847,9 @@ class Renderer(_base.Renderer):
         intensity: float,
         *,
         preentry: bool = False,
+        color=None,
     ) -> None:
-        theme = MAGENTA if kind == NoteKind.HANDS else CYAN
+        theme = color or (MAGENTA if kind == NoteKind.HANDS else CYAN)
         if preentry:
             points, core_width = self._aperture_target_points(kind, lane)
             boost = 1.15 if kind == NoteKind.FOOT else 0.92
@@ -867,7 +881,12 @@ class Renderer(_base.Renderer):
         glow_surface = self._scratch_surface("_additive_scratch")
         any_glow = False
 
+        hand_ordinal = 0
         for note in notes:
+            note_color = MAGENTA
+            if note.kind == NoteKind.HANDS:
+                note_color = self._hand_note_color(hand_ordinal)
+                hand_ordinal += 1
             if note.end_time is not None and note.chain_id is not None:
                 continue
             if note.chain_id is not None and chain_mode == ChainMode.BLOCKS:
@@ -885,6 +904,7 @@ class Renderer(_base.Renderer):
                     progress,
                     intensity,
                     preentry=preentry,
+                    color=note_color if note.kind == NoteKind.HANDS else CYAN,
                 )
                 any_glow = True
 
@@ -994,9 +1014,12 @@ class Renderer(_base.Renderer):
         self._draw_target_glows(notes, song_time, song_beat, chain_mode)
         self._draw_foot_notes(notes, song_time, song_beat, chain_mode)
 
+        hand_ordinal = 0
         for note in notes:
             if note.kind != NoteKind.HANDS:
                 continue
+            note_color = self._hand_note_color(hand_ordinal)
+            hand_ordinal += 1
             if note.end_time is not None and note.chain_id is not None:
                 continue
             if note.chain_id is not None and chain_mode == ChainMode.BLOCKS:
@@ -1028,8 +1051,8 @@ class Renderer(_base.Renderer):
                 connector_color = RED
             else:
                 breathe = self._note_breathe(note, song_time)
-                color = self._breathing_note_color(MAGENTA, breathe, progress)
-                connector_color = MAGENTA
+                color = self._breathing_note_color(note_color, breathe, progress)
+                connector_color = note_color
 
             self._draw_hand_note_connector(
                 note.lanes,
@@ -1041,6 +1064,11 @@ class Renderer(_base.Renderer):
             )
             for lane in note.lanes:
                 self._draw_hand_note_arc(lane, progress, color)
+
+    @staticmethod
+    def _hand_note_color(ordinal: int):
+        """Alternate authored hand events without splitting simultaneous lanes."""
+        return MAGENTA if int(ordinal) % 2 == 0 else PURPLE
 
     def _draw_foot_chains(
         self,

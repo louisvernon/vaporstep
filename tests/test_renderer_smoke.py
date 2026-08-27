@@ -8,6 +8,7 @@ import pygame
 import pytest
 
 from vaporstep.domain import (
+    BodyState,
     ChainMode,
     ChainState,
     GameNote,
@@ -426,3 +427,57 @@ def test_preentry_cues_are_inside_tunnel_aperture() -> None:
                 normalized = ((x - cx) / rx) ** 2 + ((y - base_y) / ry) ** 2
                 assert normalized < 0.95
                 assert y <= base_y
+
+
+def test_hand_note_colors_alternate_by_event() -> None:
+    pygame.font.init()
+    screen = pygame.Surface((1280, 720))
+    renderer_module = importlib.import_module("vaporstep.renderer")
+    renderer = renderer_module.Renderer(screen)
+
+    assert renderer._hand_note_color(0) == renderer_module.MAGENTA
+    assert renderer._hand_note_color(1) == renderer_module.PURPLE
+    assert renderer._hand_note_color(2) == renderer_module.MAGENTA
+
+
+def test_note_glow_converges_smoothly_into_target() -> None:
+    pygame.font.init()
+    screen = pygame.Surface((1280, 720))
+    renderer_module = importlib.import_module("vaporstep.renderer")
+    renderer = renderer_module.Renderer(screen)
+
+    separations = []
+    for progress in (0.0, 0.25, 0.50, 0.75, 1.0):
+        body, reflection = renderer._glow_projection_progress(progress)
+        separations.append(reflection - body)
+
+    assert all(a > b for a, b in zip(separations, separations[1:]))
+    assert separations[-1] == 0.0
+
+
+def test_keyboard_mode_can_suppress_body_markers() -> None:
+    pygame.font.init()
+    screen = pygame.Surface((1280, 720))
+    renderer_module = importlib.import_module("vaporstep.renderer")
+    renderer = renderer_module.Renderer(screen)
+    marker_calls = 0
+
+    def counted_markers(*args, **kwargs):
+        nonlocal marker_calls
+        marker_calls += 1
+
+    renderer._draw_body_markers = counted_markers
+    renderer.draw(
+        body=BodyState(),
+        mask=None,
+        notes=[],
+        song_time=0.0,
+        song_beat=0.0,
+        status="KEYBOARD ONLY",
+        debug=False,
+        pose_fps=0.0,
+        input_name="keyboard",
+        show_body_markers=False,
+    )
+
+    assert marker_calls == 0

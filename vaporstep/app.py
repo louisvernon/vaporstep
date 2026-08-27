@@ -1271,6 +1271,7 @@ def main(argv: list[str] | None = None) -> int:
                     performance_state="ok",
                     strike_events=tuple(calibration_session.recent_motion_events),
                     show_lower_body_sources=True,
+                    show_body_markers=not keyboard_only and camera is not None,
                 )
                 renderer.draw_calibration_overlay(
                     displayed_camera_index(),
@@ -1392,6 +1393,7 @@ def main(argv: list[str] | None = None) -> int:
                 strike_events=tuple(session.recent_motion_events),
                 chains=tuple(session.chains),
                 chain_mode=session.chain_mode,
+                show_body_markers=not keyboard_only and camera is not None,
             )
             if active_recording is not None:
                 active_recording.capture(renderer.screen, time.monotonic())
