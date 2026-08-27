@@ -445,6 +445,29 @@ def test_preentry_glow_brightens_smoothly_toward_entry() -> None:
     assert all(a < b for a, b in zip(brightness, brightness[1:]))
 
 
+def test_preentry_glow_is_a_broad_bright_bloom_without_a_hard_core() -> None:
+    pygame.font.init()
+    renderer_module = importlib.import_module("vaporstep.renderer")
+    surface = pygame.Surface((200, 200))
+    renderer = renderer_module.Renderer(surface)
+
+    renderer._draw_preentry_glow(
+        surface,
+        [(60, 100), (140, 100)],
+        renderer_module.MAGENTA,
+        1.0,
+    )
+
+    center = surface.get_at((100, 100)).r
+    inner_haze = surface.get_at((100, 115)).r
+    outer_haze = surface.get_at((100, 135)).r
+    beyond_glow = surface.get_at((100, 155)).r
+
+    assert center > 150
+    assert center > inner_haze > outer_haze > 0
+    assert beyond_glow == 0
+
+
 def test_hand_note_colors_alternate_by_event() -> None:
     pygame.font.init()
     screen = pygame.Surface((1280, 720))

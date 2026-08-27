@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 
+import numpy as np
 import pygame
 
 from . import renderer_base as _base
@@ -65,6 +66,9 @@ _NOTE_GLOW_OFFSET_PROGRESS = 0.075
 _TARGET_PREENTRY_BEATS = 1.5
 _TARGET_PREENTRY_SECONDS = 0.75
 _NOTE_BREATHE_CYCLE_SECONDS = 1.6
+_PREENTRY_GLOW_RADIUS_PX = 48
+_PREENTRY_GLOW_SIGMA_PX = 18.0
+_PREENTRY_GLOW_PEAK = 0.82
 
 
 class Renderer(_base.Renderer):
@@ -748,9 +752,60 @@ class Renderer(_base.Renderer):
             max(4, int(4 + 12 * p)),
         )
 
-    @classmethod
+    def _preentry_glow_sprite(
+        self,
+        points: list[tuple[int, int]],
+        color,
+    ) -> tuple[pygame.Surface, tuple[int, int]]:
+        cache_state = getattr(self, "_preentry_glow_cache", None)
+        if cache_state is None or cache_state[0] != self.size:
+            cache_state = (self.size, {})
+            self._preentry_glow_cache = cache_state
+        cache = cache_state[1]
+        key = (tuple(points), tuple(color))
+        cached = cache.get(key)
+        if cached is not None:
+            return cached
+
+        pad = _PREENTRY_GLOW_RADIUS_PX
+        left = min(x for x, _ in points) - pad
+        top = min(y for _, y in points) - pad
+        width = max(x for x, _ in points) - left + pad + 1
+        height = max(y for _, y in points) - top + pad + 1
+
+        xs = np.arange(width, dtype=np.float32)[:, None]
+        ys = np.arange(height, dtype=np.float32)[None, :]
+        distance_sq = np.full((width, height), np.inf, dtype=np.float32)
+        local_points = [(x - left, y - top) for x, y in points]
+        for (x0, y0), (x1, y1) in zip(local_points, local_points[1:]):
+            dx = float(x1 - x0)
+            dy = float(y1 - y0)
+            length_sq = max(dx * dx + dy * dy, 1.0)
+            along = np.clip(
+                ((xs - x0) * dx + (ys - y0) * dy) / length_sq,
+                0.0,
+                1.0,
+            )
+            segment_distance_sq = (xs - (x0 + along * dx)) ** 2 + (
+                ys - (y0 + along * dy)
+            ) ** 2
+            np.minimum(distance_sq, segment_distance_sq, out=distance_sq)
+
+        falloff = _PREENTRY_GLOW_PEAK * np.exp(
+            -0.5 * distance_sq / (_PREENTRY_GLOW_SIGMA_PX ** 2)
+        )
+        sprite = pygame.Surface((width, height))
+        pixels = pygame.surfarray.pixels3d(sprite)
+        for channel, value in enumerate(color):
+            pixels[:, :, channel] = np.clip(falloff * value, 0, 255).astype(np.uint8)
+        del pixels
+
+        result = (sprite, (left, top))
+        cache[key] = result
+        return result
+
     def _draw_preentry_glow(
-        cls,
+        self,
         surface: pygame.Surface,
         points: list[tuple[int, int]],
         color,
@@ -758,17 +813,16 @@ class Renderer(_base.Renderer):
     ) -> None:
         if len(points) < 2 or brightness <= 0.0:
             return
-        # Layered translucent strokes form one soft cue without a hard note-like
-        # core. Brightness is the only thing that changes as entry approaches.
-        for width, strength in ((34, 0.035), (22, 0.065), (12, 0.12)):
-            glow_color = cls._scaled_additive_color(color, brightness * strength)
-            pygame.draw.lines(
-                surface,
-                glow_color,
-                False,
-                points,
-                width,
-            )
+        # A cached distance field gives the short arc one continuous Gaussian
+        # falloff: bright at the horizon and genuinely diffuse around it.
+        sprite, position = self._preentry_glow_sprite(points, color)
+        if brightness >= 1.0:
+            surface.blit(sprite, position, special_flags=pygame.BLEND_RGB_ADD)
+            return
+        scaled = sprite.copy()
+        level = max(0, min(255, round(brightness * 255)))
+        scaled.fill((level, level, level), special_flags=pygame.BLEND_RGB_MULT)
+        surface.blit(scaled, position, special_flags=pygame.BLEND_RGB_ADD)
 
     def _draw_outward_glow(
         self,
@@ -817,12 +871,12 @@ class Renderer(_base.Renderer):
             start = _HAND_BOUNDARIES[lane - 1]
             end = _HAND_BOUNDARIES[lane]
             center = _HAND_CENTERS[lane - 1]
-            half = (end - start) * 0.20
+            half = (end - start) * 0.30
             geometry = (cx, base_y, rx * 0.92, ry * 0.92)
         else:
             lane_width = 0.25
             center = (lane - 0.5) * lane_width
-            half = lane_width * 0.18
+            half = lane_width * 0.30
             geometry = (cx, base_y - 2.0, rx * 0.78, ry * 0.18)
 
         points = []
