@@ -411,7 +411,7 @@ def test_hand_arc_reuses_cached_tunnel_geometry() -> None:
     assert calls == 1
 
 
-def test_preentry_cues_are_inside_tunnel_aperture() -> None:
+def test_preentry_glows_are_curved_arcs_inside_tunnel_aperture() -> None:
     pygame.font.init()
     screen = pygame.Surface((1280, 720))
     renderer_module = importlib.import_module("vaporstep.renderer")
@@ -421,12 +421,28 @@ def test_preentry_cues_are_inside_tunnel_aperture() -> None:
 
     for kind in (NoteKind.HANDS, NoteKind.FOOT):
         for lane in range(1, 5):
-            points, _ = renderer._aperture_target_points(kind, lane)
-            assert points
+            points = renderer._preentry_glow_arc(kind, lane)
+            assert len(points) == 13
+            assert len({y for _, y in points}) > 1
             for x, y in points:
                 normalized = ((x - cx) / rx) ** 2 + ((y - base_y) / ry) ** 2
                 assert normalized < 0.95
                 assert y <= base_y
+
+
+def test_preentry_glow_brightens_smoothly_toward_entry() -> None:
+    pygame.font.init()
+    screen = pygame.Surface((1280, 720))
+    renderer_module = importlib.import_module("vaporstep.renderer")
+    renderer = renderer_module.Renderer(screen)
+
+    brightness = [
+        renderer._preentry_brightness(distance, 1.0)
+        for distance in (1.0, 0.75, 0.50, 0.25, 0.0)
+    ]
+    assert brightness[0] == 0.0
+    assert brightness[-1] == 1.0
+    assert all(a < b for a, b in zip(brightness, brightness[1:]))
 
 
 def test_hand_note_colors_alternate_by_event() -> None:

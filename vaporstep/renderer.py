@@ -679,19 +679,22 @@ class Renderer(_base.Renderer):
                 extra = distance - LOOKAHEAD_BEATS
                 if extra > _TARGET_PREENTRY_BEATS:
                     return None
-                strength = 1.0 - extra / _TARGET_PREENTRY_BEATS
-                return 0.0, 0.30 * strength, True
+                return 0.0, self._preentry_brightness(extra, _TARGET_PREENTRY_BEATS), True
         else:
             distance = event_time - song_time
             if distance > LOOKAHEAD_SECONDS:
                 extra = distance - LOOKAHEAD_SECONDS
                 if extra > _TARGET_PREENTRY_SECONDS:
                     return None
-                strength = 1.0 - extra / _TARGET_PREENTRY_SECONDS
-                return 0.0, 0.30 * strength, True
+                return 0.0, self._preentry_brightness(extra, _TARGET_PREENTRY_SECONDS), True
 
         progress = timed_progress(event_time, event_beat, song_time, song_beat)
         return progress, 0.24 + 0.48 * (progress ** 0.85), False
+
+    @staticmethod
+    def _preentry_brightness(distance: float, window: float) -> float:
+        proximity = 1.0 - max(0.0, min(1.0, distance / max(window, 1e-6)))
+        return proximity * proximity * (3.0 - 2.0 * proximity)
 
     @staticmethod
     def _note_breathe(note: GameNote, song_time: float) -> float:
@@ -751,19 +754,20 @@ class Renderer(_base.Renderer):
         surface: pygame.Surface,
         points: list[tuple[int, int]],
         color,
-        intensity: float,
-        core_width: int,
+        brightness: float,
     ) -> None:
-        if len(points) < 2 or intensity <= 0.0:
+        if len(points) < 2 or brightness <= 0.0:
             return
-        for extra, scale in ((20, 0.11), (9, 0.22)):
-            glow_color = cls._scaled_additive_color(color, intensity * scale)
+        # Layered translucent strokes form one soft cue without a hard note-like
+        # core. Brightness is the only thing that changes as entry approaches.
+        for width, strength in ((34, 0.035), (22, 0.065), (12, 0.12)):
+            glow_color = cls._scaled_additive_color(color, brightness * strength)
             pygame.draw.lines(
                 surface,
                 glow_color,
                 False,
                 points,
-                max(1, core_width + extra),
+                width,
             )
 
     def _draw_outward_glow(
@@ -800,12 +804,12 @@ class Renderer(_base.Renderer):
         p1 = min(1.0, p0 + separation)
         return p0, p1
 
-    def _aperture_target_points(
+    def _preentry_glow_arc(
         self,
         kind: NoteKind,
         lane: int,
-    ) -> tuple[list[tuple[int, int]], int]:
-        """Return a pre-entry cue that sits inside the tunnel opening."""
+    ) -> list[tuple[int, int]]:
+        """Return a small diffuse arc just inside the shared entry aperture."""
         inner, _, _ = self._hand_tunnel_geometry()
         cx, base_y, rx, ry = inner
 
@@ -813,30 +817,20 @@ class Renderer(_base.Renderer):
             start = _HAND_BOUNDARIES[lane - 1]
             end = _HAND_BOUNDARIES[lane]
             center = _HAND_CENTERS[lane - 1]
-            half = (end - start) * 0.5 * _HAND_NOTE_ARC_FRACTION
-            inset = 0.16
-            points = []
-            samples = 18
-            for i in range(samples + 1):
-                along = center - half + (2.0 * half) * i / samples
-                x, y = self._ellipse_upper_point(inner, along)
-                points.append((
-                    int(cx + (x - cx) * (1.0 - inset)),
-                    int(base_y + (y - base_y) * (1.0 - inset)),
-                ))
-            return points, 5
+            half = (end - start) * 0.20
+            geometry = (cx, base_y, rx * 0.92, ry * 0.92)
+        else:
+            lane_width = 0.25
+            center = (lane - 0.5) * lane_width
+            half = lane_width * 0.18
+            geometry = (cx, base_y - 2.0, rx * 0.78, ry * 0.18)
 
-        left = cx - rx * 0.84
-        right = cx + rx * 0.84
-        lane_width = (right - left) / 4.0
-        lane_left = left + (lane - 1) * lane_width
-        lane_right = lane_left + lane_width
-        pad = max(2.0, lane_width * 0.08)
-        y = base_y - max(5.0, ry * 0.12)
-        return (
-            [(int(lane_left + pad), int(y)), (int(lane_right - pad), int(y))],
-            5,
-        )
+        points = []
+        for index in range(13):
+            along = center - half + 2.0 * half * index / 12
+            x, y = self._ellipse_upper_point(geometry, along)
+            points.append((int(x), int(y)))
+        return points
 
     def _draw_source_glow(
         self,
@@ -851,14 +845,11 @@ class Renderer(_base.Renderer):
     ) -> None:
         theme = color or (MAGENTA if kind == NoteKind.HANDS else CYAN)
         if preentry:
-            points, core_width = self._aperture_target_points(kind, lane)
-            boost = 1.15 if kind == NoteKind.FOOT else 0.92
             self._draw_preentry_glow(
                 surface,
-                points,
+                self._preentry_glow_arc(kind, lane),
                 theme,
-                intensity * boost,
-                core_width,
+                intensity,
             )
             return
 
