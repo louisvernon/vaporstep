@@ -66,9 +66,11 @@ _NOTE_GLOW_OFFSET_PROGRESS = 0.075
 _TARGET_PREENTRY_BEATS = 1.5
 _TARGET_PREENTRY_SECONDS = 0.75
 _NOTE_BREATHE_CYCLE_SECONDS = 1.6
-_PREENTRY_GLOW_RADIUS_PX = 48
+_PREENTRY_GLOW_RADIUS_X_PX = 48
+_PREENTRY_GLOW_RADIUS_Y_PX = 24
+_PREENTRY_GLOW_VERTICAL_SCALE = 2.0
 _PREENTRY_GLOW_SIGMA_PX = 18.0
-_PREENTRY_GLOW_PEAK = 0.82
+_PREENTRY_GLOW_PEAK = 0.41
 
 
 class Renderer(_base.Renderer):
@@ -767,16 +769,23 @@ class Renderer(_base.Renderer):
         if cached is not None:
             return cached
 
-        pad = _PREENTRY_GLOW_RADIUS_PX
-        left = min(x for x, _ in points) - pad
-        top = min(y for _, y in points) - pad
-        width = max(x for x, _ in points) - left + pad + 1
-        height = max(y for _, y in points) - top + pad + 1
+        pad_x = _PREENTRY_GLOW_RADIUS_X_PX
+        pad_y = _PREENTRY_GLOW_RADIUS_Y_PX
+        left = min(x for x, _ in points) - pad_x
+        top = min(y for _, y in points) - pad_y
+        width = max(x for x, _ in points) - left + pad_x + 1
+        height = max(y for _, y in points) - top + pad_y + 1
 
         xs = np.arange(width, dtype=np.float32)[:, None]
-        ys = np.arange(height, dtype=np.float32)[None, :]
+        ys = (
+            np.arange(height, dtype=np.float32)[None, :]
+            * _PREENTRY_GLOW_VERTICAL_SCALE
+        )
         distance_sq = np.full((width, height), np.inf, dtype=np.float32)
-        local_points = [(x - left, y - top) for x, y in points]
+        local_points = [
+            (x - left, (y - top) * _PREENTRY_GLOW_VERTICAL_SCALE)
+            for x, y in points
+        ]
         for (x0, y0), (x1, y1) in zip(local_points, local_points[1:]):
             dx = float(x1 - x0)
             dy = float(y1 - y0)
@@ -872,12 +881,12 @@ class Renderer(_base.Renderer):
             end = _HAND_BOUNDARIES[lane]
             center = _HAND_CENTERS[lane - 1]
             half = (end - start) * 0.30
-            geometry = (cx, base_y, rx * 0.92, ry * 0.92)
+            geometry = (cx, base_y, rx * 0.98, ry * 0.98)
         else:
             lane_width = 0.25
             center = (lane - 0.5) * lane_width
             half = lane_width * 0.30
-            geometry = (cx, base_y - 2.0, rx * 0.78, ry * 0.18)
+            geometry = (cx, base_y + 3.0, rx * 0.78, ry * 0.10)
 
         points = []
         for index in range(13):

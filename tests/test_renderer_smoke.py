@@ -426,8 +426,17 @@ def test_preentry_glows_are_curved_arcs_inside_tunnel_aperture() -> None:
             assert len({y for _, y in points}) > 1
             for x, y in points:
                 normalized = ((x - cx) / rx) ** 2 + ((y - base_y) / ry) ** 2
-                assert normalized < 0.95
-                assert y <= base_y
+                assert normalized < 1.02
+                assert y <= base_y + 3
+
+            if kind == NoteKind.HANDS:
+                assert all(
+                    ((x - cx) / rx) ** 2 + ((y - base_y) / ry) ** 2 > 0.90
+                    for x, y in points
+                )
+            else:
+                entry_y = renderer._field_y(NoteKind.FOOT, 0.0)
+                assert max(abs(y - entry_y) for _, y in points) <= 10
 
 
 def test_preentry_glow_brightens_smoothly_toward_entry() -> None:
@@ -459,11 +468,11 @@ def test_preentry_glow_is_a_broad_bright_bloom_without_a_hard_core() -> None:
     )
 
     center = surface.get_at((100, 100)).r
-    inner_haze = surface.get_at((100, 115)).r
-    outer_haze = surface.get_at((100, 135)).r
-    beyond_glow = surface.get_at((100, 155)).r
+    inner_haze = surface.get_at((100, 107)).r
+    outer_haze = surface.get_at((100, 117)).r
+    beyond_glow = surface.get_at((100, 130)).r
 
-    assert center > 150
+    assert center > 75
     assert center > inner_haze > outer_haze > 0
     assert beyond_glow == 0
 
