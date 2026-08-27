@@ -170,8 +170,17 @@ When changing runtime dependencies, review their redistribution requirements bef
 
 ## Gameplay recording
 
-Recording is a normal VaporStep runtime feature. `imageio-ffmpeg==0.6.0` supplies the FFmpeg command-line executable used by source runs and packaged builds. The PyInstaller spec explicitly collects that package and its bundled executable.
+Recording is a normal VaporStep runtime feature. The pinned PyAV wheel supplies
+the in-process media bindings and native shared libraries used by source runs
+and packaged builds. The PyInstaller spec collects PyAV without bundling a
+command-line encoder executable.
 
-The implementation records the rendered 1280×720 surface at 30 fps on a worker thread. Gameplay sound effects are logged as timestamped events and reconstructed after the run; FFmpeg then mixes those effects with the original song and muxes the result into the final MP4. Recording never blocks the gameplay loop if the encoder queue falls behind.
+The implementation records the rendered 1280×720 surface at 30 fps on a worker
+thread. Gameplay sound effects are logged as timestamped events and
+reconstructed after the run; PyAV decodes and resamples the song, mixes the
+tracks, encodes AAC audio, and muxes it with the recorded video. Recording never
+blocks the gameplay loop if the encoder queue falls behind.
 
-FFmpeg remains a separately licensed executable. Keep `THIRD_PARTY_NOTICES.md` and `FFMPEG_PROVENANCE.md` aligned with the pinned `imageio-ffmpeg` version when changing recording dependencies.
+PyAV and the native libraries/codecs in its wheels retain their own licenses.
+Keep `THIRD_PARTY_NOTICES.md` and the collected distribution license material
+aligned with the pinned PyAV version when changing recording dependencies.

@@ -1,15 +1,74 @@
+from fractions import Fraction
 from pathlib import Path
-import subprocess
 import sys
 import threading
 import types
 import wave
 
+import av
 import numpy as np
 import pytest
 
 from vaporstep.domain import GameplayEvent, GameplayEventType, HitQuality, NoteKind
-from vaporstep.recording import RecordingSnapshot, RunRecorder, safe_filename_component, write_sfx_track
+from vaporstep.recording import (
+    RECORD_SIZE,
+    RecordingSnapshot,
+    RunRecorder,
+    recording_backend_status,
+    safe_filename_component,
+    write_sfx_track,
+)
+
+
+def _write_solid_video(path: Path, *, duration: float = 0.8) -> None:
+    frame_count = int(round(duration * 30))
+    pixels = np.zeros((64, 64, 3), dtype=np.uint8)
+    with av.open(str(path), mode="w") as container:
+        stream = container.add_stream("libx264", rate=30)
+        stream.width = 64
+        stream.height = 64
+        stream.pix_fmt = "yuv420p"
+        for index in range(frame_count):
+            frame = av.VideoFrame.from_ndarray(pixels, format="rgb24")
+            frame.pts = index
+            frame.time_base = Fraction(1, 30)
+            for packet in stream.encode(frame):
+                container.mux(packet)
+        for packet in stream.encode():
+            container.mux(packet)
+
+
+def _write_tone(path: Path, codec: str, *, duration: float = 0.6) -> None:
+    sample_rate = 48_000 if codec == "libopus" else 44_100
+    sample_count = int(round(duration * sample_rate))
+    time = np.arange(sample_count) / sample_rate
+    samples = (np.sin(2 * np.pi * 440 * time) * 10_000).astype(np.int16)[None, :]
+    with av.open(str(path), mode="w") as container:
+        stream = container.add_stream(codec, rate=sample_rate)
+        stream.layout = "mono"
+        for start in range(0, sample_count, 1024):
+            frame = av.AudioFrame.from_ndarray(
+                np.ascontiguousarray(samples[:, start : start + 1024]),
+                format="s16p",
+                layout="mono",
+            )
+            frame.sample_rate = sample_rate
+            frame.pts = start
+            frame.time_base = Fraction(1, sample_rate)
+            for packet in stream.encode(frame):
+                container.mux(packet)
+        for packet in stream.encode():
+            container.mux(packet)
+
+
+def _decode_audio(path: Path) -> np.ndarray:
+    chunks = []
+    resampler = av.AudioResampler(format="s16p", layout="stereo", rate=44_100)
+    with av.open(str(path), mode="r") as container:
+        for decoded in container.decode(audio=0):
+            chunks.extend(frame.to_ndarray() for frame in resampler.resample(decoded))
+        chunks.extend(frame.to_ndarray() for frame in resampler.resample(None))
+    return np.concatenate(chunks, axis=1)
 
 
 def test_safe_filename_component_removes_path_and_shell_characters():
@@ -71,41 +130,50 @@ def test_recording_snapshot_surfaces_audio_fallback_error(tmp_path: Path):
     assert "AUDIO ERROR" in snap.message
 
 
+def test_threaded_pyav_recorder_produces_video_and_audio(tmp_path: Path):
+    available, error = recording_backend_status()
+    assert available, error
+
+    recorder = RunRecorder(
+        song_title="Smoke",
+        chart_label="Test",
+        music_path=None,
+        chart_time_at_start=-0.1,
+        output_dir=tmp_path,
+    )
+    assert recorder._encoder_ready.wait(10)
+    recorder._queue.put((bytes(RECORD_SIZE[0] * RECORD_SIZE[1] * 3), 3))
+    recorder.finish(grade="A")
+    assert recorder._finalizer is not None
+    recorder._finalizer.join(20)
+
+    snapshot = recorder.snapshot()
+    assert snapshot.error is None
+    assert snapshot.saved_path is not None and snapshot.saved_path.exists()
+    with av.open(str(snapshot.saved_path), mode="r") as container:
+        assert len(container.streams.video) == 1
+        assert len(container.streams.audio) == 1
+        assert sum(1 for _ in container.decode(video=0)) == 3
+
+
 @pytest.mark.parametrize(
-    ("suffix", "codec_args"),
+    ("suffix", "codec"),
     [
-        ("ogg", ["-c:a", "libvorbis"]),
-        ("mp3", ["-c:a", "libmp3lame"]),
-        ("wav", ["-c:a", "pcm_s16le"]),
+        ("ogg", "libopus"),
+        ("mp3", "libmp3lame"),
+        ("wav", "pcm_s16le"),
     ],
 )
 def test_mux_audio_from_common_song_formats_produces_non_silent_audio(
-    tmp_path: Path, suffix: str, codec_args: list[str]
+    tmp_path: Path, suffix: str, codec: str
 ):
-    import imageio_ffmpeg
-
-    ffmpeg = imageio_ffmpeg.get_ffmpeg_exe()
     video = tmp_path / "video.mp4"
     song = tmp_path / f"song.{suffix}"
     sfx = tmp_path / "effects.wav"
     output = tmp_path / "out.mp4"
 
-    subprocess.run(
-        [
-            ffmpeg, "-y", "-loglevel", "error",
-            "-f", "lavfi", "-i", "color=c=black:s=64x64:r=30:d=0.8",
-            "-an", "-c:v", "libx264", "-pix_fmt", "yuv420p", str(video),
-        ],
-        check=True,
-    )
-    subprocess.run(
-        [
-            ffmpeg, "-y", "-loglevel", "error",
-            "-f", "lavfi", "-i", "sine=frequency=440:duration=0.6",
-            *codec_args, str(song),
-        ],
-        check=True,
-    )
+    _write_solid_video(video)
+    _write_tone(song, codec)
 
     event = GameplayEvent(
         time=0.0,
@@ -125,17 +193,8 @@ def test_mux_audio_from_common_song_formats_produces_non_silent_audio(
     recorder._sfx_wav = sfx
     recorder._mux_audio(output, duration=0.8, music_stop_time=None)
 
-    raw = tmp_path / "audio.raw"
-    subprocess.run(
-        [
-            ffmpeg, "-y", "-loglevel", "error", "-i", str(output),
-            "-vn", "-f", "s16le", "-acodec", "pcm_s16le",
-            "-ac", "1", "-ar", "44100", str(raw),
-        ],
-        check=True,
-    )
-    pcm = np.fromfile(raw, dtype=np.int16)
-    assert len(pcm) > 10_000
+    pcm = _decode_audio(output)
+    assert pcm.shape[1] > 10_000
     assert np.max(np.abs(pcm.astype(np.int32))) > 1_000
 
 

@@ -2,12 +2,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+from fractions import Fraction
 import os
 from pathlib import Path
 import queue
 import re
 import shutil
-import subprocess
 import tempfile
 import threading
 import unicodedata
@@ -28,17 +28,30 @@ from .user_paths import recordings_dir
 RECORD_FPS = 30
 RECORD_SIZE = (1280, 720)
 FRAME_QUEUE_SIZE = 6
+AUDIO_SAMPLE_RATE = 44_100
+AUDIO_CHANNELS = 2
+AUDIO_FRAME_SAMPLES = 1024
 
 
 
 def recording_backend_status() -> tuple[bool, str]:
     try:
-        import imageio_ffmpeg
+        import av
 
-        imageio_ffmpeg.get_ffmpeg_exe()
+        if not any(_codec_is_available(av, codec) for codec in ("libx264", "mpeg4")):
+            return False, "no usable MP4 video encoder"
+        av.codec.Codec("aac", "w")
         return True, ""
     except Exception as exc:
         return False, str(exc)
+
+
+def _codec_is_available(av_module, name: str) -> bool:
+    try:
+        av_module.codec.Codec(name, "w")
+        return True
+    except Exception:
+        return False
 
 
 def default_recordings_dir() -> Path:
@@ -163,67 +176,83 @@ class RunRecorder:
         self._worker.start()
 
     def _encode_worker(self) -> None:
-        writer = None
+        container = None
+        stream = None
+        encoder_finished = False
         try:
-            import imageio_ffmpeg
+            import av
 
             last_codec_error: Exception | None = None
-            for codec, extra_params in (
-                ("libx264", ["-preset", "veryfast"]),
-                ("mpeg4", []),
+            for codec, options in (
+                ("libx264", {"preset": "veryfast", "crf": "23"}),
+                ("mpeg4", {"qscale": "7"}),
             ):
                 try:
-                    writer = imageio_ffmpeg.write_frames(
+                    if not _codec_is_available(av, codec):
+                        raise RuntimeError(f"{codec} is unavailable")
+                    container = av.open(
                         str(self._temp_video),
-                        RECORD_SIZE,
-                        pix_fmt_in="rgb24",
-                        pix_fmt_out="yuv420p",
-                        fps=RECORD_FPS,
-                        codec=codec,
-                        quality=7,
-                        macro_block_size=2,
-                        ffmpeg_log_level="error",
-                        output_params=extra_params + ["-movflags", "+faststart", "-an"],
+                        mode="w",
+                        options={"movflags": "+faststart"},
                     )
-                    writer.send(None)
+                    stream = container.add_stream(codec, rate=RECORD_FPS)
+                    stream.width, stream.height = RECORD_SIZE
+                    stream.pix_fmt = "yuv420p"
+                    stream.options = options
                     break
                 except Exception as exc:
                     last_codec_error = exc
-                    if writer is not None:
+                    if container is not None:
                         try:
-                            writer.close()
+                            container.close()
                         except Exception:
                             pass
-                    writer = None
+                    container = None
+                    stream = None
                     try:
                         self._temp_video.unlink()
                     except OSError:
                         pass
-            if writer is None:
+            if container is None or stream is None:
                 raise RuntimeError(f"no usable MP4 video encoder: {last_codec_error}")
             self._encoder_ready.set()
+            frame_index = 0
             while True:
                 packet = self._queue.get()
                 if packet is None:
                     break
-                frame, repeats = packet
+                frame_bytes, repeats = packet
+                pixels = np.frombuffer(frame_bytes, dtype=np.uint8).reshape(
+                    RECORD_SIZE[1], RECORD_SIZE[0], 3
+                )
                 for _ in range(max(1, repeats)):
-                    writer.send(frame)
+                    frame = av.VideoFrame.from_ndarray(pixels, format="rgb24")
+                    frame.pts = frame_index
+                    frame.time_base = Fraction(1, RECORD_FPS)
+                    for encoded in stream.encode(frame):
+                        container.mux(encoded)
+                    frame_index += 1
                     with self._lock:
                         self._frames_written += 1
+            for encoded in stream.encode():
+                container.mux(encoded)
+            encoder_finished = True
         except Exception as exc:
             with self._lock:
                 self._error = f"video encoder: {exc}"
             self._encoder_failed.set()
             self._encoder_ready.set()
         finally:
-            if writer is not None:
+            if container is not None:
                 try:
-                    writer.close()
+                    container.close()
                 except Exception as exc:
                     with self._lock:
                         if self._error is None:
                             self._error = f"video encoder close: {exc}"
+            if not encoder_finished and self._error is None:
+                with self._lock:
+                    self._error = "video encoder stopped before finalizing"
 
     def add_events(self, events: tuple[GameplayEvent, ...] | list[GameplayEvent]) -> None:
         if events:
@@ -410,61 +439,165 @@ class RunRecorder:
         """Mux the original song and reconstructed VaporStep effects onto video.
 
         Keep this as a post-run operation so gameplay never waits on audio
-        encoding. Explicit resampling/channel layout makes the filter graph
-        behave consistently for OGG/MP3/WAV inputs across bundled FFmpeg builds.
+        encoding. PyAV performs decode, resampling, mixing, AAC encoding and MP4
+        muxing in-process; no command-line executable or child process is used.
         """
-        import imageio_ffmpeg
+        import av
 
-        ffmpeg = imageio_ffmpeg.get_ffmpeg_exe()
-        cmd = [ffmpeg, "-y", "-loglevel", "error", "-i", str(self._temp_video)]
-        has_music = self.music_path is not None and self.music_path.is_file()
-        if has_music:
-            cmd += ["-i", str(self.music_path), "-i", str(self._sfx_wav)]
-            delay_ms = max(0, int(round(-self.chart_time_at_start * 1000.0)))
-            music_filters = [
-                "aresample=44100",
-                f"volume={RECORDING_MUSIC_VOLUME:.3f}",
-            ]
-            if music_stop_time is not None:
-                music_filters.append(f"atrim=duration={max(0.0, float(music_stop_time)):.6f}")
-            if delay_ms:
-                music_filters.append(f"adelay={delay_ms}:all=1")
-            music_chain = ",".join(music_filters)
-            filter_complex = (
-                f"[1:a:0]{music_chain}[music];"
-                f"[2:a:0]aresample=44100,volume={RECORDING_SFX_VOLUME:.3f}[sfx];"
-                "[music][sfx]amix=inputs=2:duration=longest:dropout_transition=0:normalize=0,"
-                "alimiter=limit=0.95[a]"
+        sample_count = max(1, int(round(max(0.0, duration) * AUDIO_SAMPLE_RATE)))
+        mix = np.zeros((AUDIO_CHANNELS, sample_count), dtype=np.float32)
+        if self.music_path is not None and self.music_path.is_file():
+            self._mix_music(
+                av,
+                mix,
+                self.music_path,
+                chart_time_at_start=self.chart_time_at_start,
+                music_stop_time=music_stop_time,
             )
-            cmd += ["-filter_complex", filter_complex, "-map", "0:v:0", "-map", "[a]"]
-        else:
-            filter_complex = (
-                f"[1:a:0]aresample=44100,volume={RECORDING_SFX_VOLUME:.3f},"
-                "alimiter=limit=0.95[a]"
-            )
-            cmd += ["-i", str(self._sfx_wav), "-filter_complex", filter_complex, "-map", "0:v:0", "-map", "[a]"]
+        self._mix_sfx(mix, self._sfx_wav)
 
-        cmd += [
-            "-c:v",
-            "copy",
-            "-c:a",
-            "aac",
-            "-b:a",
-            "192k",
-            "-ar",
-            "44100",
-            "-ac",
-            "2",
-            "-t",
-            f"{duration:.6f}",
-            "-movflags",
-            "+faststart",
-            str(output),
-        ]
-        completed = subprocess.run(cmd, check=False, capture_output=True, text=True, shell=False)
-        if completed.returncode != 0:
-            detail = (completed.stderr or completed.stdout or "ffmpeg mux failed").strip()
-            raise RuntimeError(detail[-600:])
+        limit = 0.95 * np.iinfo(np.int16).max
+        pcm = np.clip(mix, -limit, limit).astype(np.int16)
+
+        try:
+            with av.open(str(self._temp_video), mode="r") as video_input:
+                video_stream = video_input.streams.video[0]
+                with av.open(
+                    str(output),
+                    mode="w",
+                    options={"movflags": "+faststart"},
+                ) as muxed:
+                    output_video = muxed.add_stream_from_template(video_stream)
+                    output_audio = muxed.add_stream("aac", rate=AUDIO_SAMPLE_RATE)
+                    output_audio.layout = "stereo"
+                    output_audio.bit_rate = 192_000
+                    audio_packets = self._encode_audio_packets(av, output_audio, pcm)
+
+                    audio_index = 0
+                    for packet in video_input.demux(video_stream):
+                        if packet.dts is None:
+                            continue
+                        video_time = float(packet.dts * packet.time_base)
+                        while audio_index < len(audio_packets):
+                            audio_packet = audio_packets[audio_index]
+                            if audio_packet.dts is None:
+                                muxed.mux(audio_packet)
+                                audio_index += 1
+                                continue
+                            audio_time = float(audio_packet.dts * audio_packet.time_base)
+                            if audio_time > video_time:
+                                break
+                            muxed.mux(audio_packet)
+                            audio_index += 1
+                        packet.stream = output_video
+                        muxed.mux(packet)
+
+                    for packet in audio_packets[audio_index:]:
+                        muxed.mux(packet)
+        except Exception:
+            try:
+                output.unlink()
+            except OSError:
+                pass
+            raise
+
+    @staticmethod
+    def _mix_music(
+        av_module,
+        mix: np.ndarray,
+        music_path: Path,
+        *,
+        chart_time_at_start: float,
+        music_stop_time: float | None,
+    ) -> None:
+        source_skip = max(0, int(round(chart_time_at_start * AUDIO_SAMPLE_RATE)))
+        destination_delay = max(0, int(round(-chart_time_at_start * AUDIO_SAMPLE_RATE)))
+        source_stop = (
+            max(0, int(round(float(music_stop_time) * AUDIO_SAMPLE_RATE)))
+            if music_stop_time is not None
+            else None
+        )
+        if source_stop is not None and source_stop <= source_skip:
+            return
+
+        resampler = av_module.AudioResampler(
+            format="s16p",
+            layout="stereo",
+            rate=AUDIO_SAMPLE_RATE,
+        )
+        source_position = 0
+
+        def add_frame(frame) -> bool:
+            nonlocal source_position
+            samples = frame.to_ndarray().astype(np.float32, copy=False)
+            frame_start = source_position
+            frame_end = frame_start + samples.shape[1]
+            source_position = frame_end
+
+            copy_start = max(frame_start, source_skip)
+            copy_end = frame_end if source_stop is None else min(frame_end, source_stop)
+            if copy_end <= copy_start:
+                return source_stop is not None and frame_end >= source_stop
+
+            source_offset = copy_start - frame_start
+            destination_start = destination_delay + copy_start - source_skip
+            count = min(copy_end - copy_start, mix.shape[1] - destination_start)
+            if count > 0:
+                mix[:, destination_start : destination_start + count] += (
+                    samples[:, source_offset : source_offset + count]
+                    * RECORDING_MUSIC_VOLUME
+                )
+            return (
+                destination_start + max(0, count) >= mix.shape[1]
+                or (source_stop is not None and frame_end >= source_stop)
+            )
+
+        with av_module.open(str(music_path), mode="r") as source:
+            audio_stream = next((stream for stream in source.streams if stream.type == "audio"), None)
+            if audio_stream is None:
+                raise RuntimeError(f"song has no audio stream: {music_path.name}")
+            for decoded in source.decode(audio_stream):
+                for frame in resampler.resample(decoded):
+                    if add_frame(frame):
+                        return
+            for frame in resampler.resample(None):
+                if add_frame(frame):
+                    return
+
+    @staticmethod
+    def _mix_sfx(mix: np.ndarray, path: Path) -> None:
+        with wave.open(str(path), "rb") as wav:
+            if wav.getsampwidth() != 2:
+                raise RuntimeError("recording effects must be 16-bit PCM")
+            if wav.getframerate() != AUDIO_SAMPLE_RATE:
+                raise RuntimeError("recording effects sample rate mismatch")
+            channels = wav.getnchannels()
+            samples = np.frombuffer(wav.readframes(wav.getnframes()), dtype=np.int16)
+
+        samples = samples.reshape(-1, channels).T
+        if channels == 1:
+            samples = np.repeat(samples, AUDIO_CHANNELS, axis=0)
+        elif channels != AUDIO_CHANNELS:
+            raise RuntimeError("recording effects channel layout mismatch")
+        count = min(samples.shape[1], mix.shape[1])
+        mix[:, :count] += samples[:, :count].astype(np.float32) * RECORDING_SFX_VOLUME
+
+    @staticmethod
+    def _encode_audio_packets(av_module, stream, pcm: np.ndarray) -> list:
+        packets = []
+        for start in range(0, pcm.shape[1], AUDIO_FRAME_SAMPLES):
+            chunk = np.ascontiguousarray(pcm[:, start : start + AUDIO_FRAME_SAMPLES])
+            frame = av_module.AudioFrame.from_ndarray(
+                chunk,
+                format="s16p",
+                layout="stereo",
+            )
+            frame.sample_rate = AUDIO_SAMPLE_RATE
+            frame.pts = start
+            frame.time_base = Fraction(1, AUDIO_SAMPLE_RATE)
+            packets.extend(stream.encode(frame))
+        packets.extend(stream.encode())
+        return packets
 
     def snapshot(self) -> RecordingSnapshot:
         with self._lock:

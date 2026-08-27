@@ -1,13 +1,11 @@
 # PyInstaller build for VaporStep.
-from pathlib import Path
 from importlib.metadata import PackageNotFoundError, distribution
+from pathlib import Path
 import os
 import re
 import sys
 
 from PyInstaller.utils.hooks import collect_all, collect_data_files
-
-import imageio_ffmpeg
 
 root = Path(SPECPATH)
 assets = root / "assets"
@@ -27,16 +25,9 @@ entitlements_file = (
 # frozen apps. Collecting the package is intentionally conservative for this
 # first portable build; we can trim it later if bundle size becomes important.
 mp_datas, mp_binaries, mp_hidden = collect_all("mediapipe")
-ffmpeg_datas, ffmpeg_binaries, ffmpeg_hidden = collect_all("imageio_ffmpeg")
-# imageio-ffmpeg discovers its executable relative to the Python package. Treat
-# that file explicitly as a collected binary so its executable permissions and
-# package-relative location survive the frozen build on macOS/Linux/Windows.
-ffmpeg_exe = Path(imageio_ffmpeg.get_ffmpeg_exe()).resolve()
-ffmpeg_datas = [entry for entry in ffmpeg_datas if Path(entry[0]).resolve() != ffmpeg_exe]
-ffmpeg_binaries = [entry for entry in ffmpeg_binaries if Path(entry[0]).resolve() != ffmpeg_exe]
 sim_datas = collect_data_files("simfile")
 
-datas = mp_datas + ffmpeg_datas + sim_datas + [
+datas = mp_datas + sim_datas + [
     (str(assets / "vaporstep_icon.png"), "assets"),
     (str(assets / "models.json"), "assets"),
     (str(assets / "fonts" / "VaporStepEmojiSymbols.ttf"), "assets/fonts"),
@@ -44,13 +35,12 @@ datas = mp_datas + ffmpeg_datas + sim_datas + [
     (str(root / "LICENSE"), "."),
     (str(root / "THIRD_PARTY_NOTICES.md"), "."),
     (str(root / "MODEL_ASSETS.md"), "."),
-    (str(root / "FFMPEG_PROVENANCE.md"), "."),
 ]
 
 # Preserve license/notice files from the exact distributions installed in the
 # build environment. This keeps frozen releases aligned with dependency
 # versions without maintaining copied license text by hand in this repository.
-for dist_name in ("mediapipe", "opencv-python", "pygame", "numpy", "simfile", "setuptools", "imageio-ffmpeg"):
+for dist_name in ("mediapipe", "opencv-python", "pygame", "numpy", "simfile", "setuptools", "av"):
     try:
         dist = distribution(dist_name)
     except PackageNotFoundError:
@@ -78,8 +68,8 @@ model = assets / "pose_landmarker_full.task"
 if model.exists():
     datas.append((str(model), "assets"))
 
-hiddenimports = list(mp_hidden) + list(ffmpeg_hidden) + ["pkg_resources"]
-binaries = list(mp_binaries) + list(ffmpeg_binaries) + [(str(ffmpeg_exe), "imageio_ffmpeg/binaries")]
+hiddenimports = list(mp_hidden) + ["pkg_resources"]
+binaries = list(mp_binaries)
 
 icon = None
 if sys.platform == "darwin" and (assets / "vaporstep.icns").exists():
