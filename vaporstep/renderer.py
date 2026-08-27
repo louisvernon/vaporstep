@@ -872,7 +872,7 @@ class Renderer(_base.Renderer):
         kind: NoteKind,
         lane: int,
     ) -> list[tuple[int, int]]:
-        """Return a small diffuse arc just inside the shared entry aperture."""
+        """Return the part of the actual entry boundary illuminated by a cue."""
         inner, _, _ = self._hand_tunnel_geometry()
         cx, base_y, rx, ry = inner
 
@@ -881,18 +881,23 @@ class Renderer(_base.Renderer):
             end = _HAND_BOUNDARIES[lane]
             center = _HAND_CENTERS[lane - 1]
             half = (end - start) * 0.30
-            geometry = (cx, base_y, rx * 0.98, ry * 0.98)
-        else:
-            lane_width = 0.25
-            center = (lane - 0.5) * lane_width
-            half = lane_width * 0.30
-            geometry = (cx, base_y + 3.0, rx * 0.78, ry * 0.10)
+            geometry = inner
 
+            points = []
+            for index in range(13):
+                along = center - half + 2.0 * half * index / 12
+                x, y = self._ellipse_upper_point(geometry, along)
+                points.append((int(x), int(y)))
+            return points
+
+        left, right = self._lane_bounds(NoteKind.FOOT, lane, 0.0)
+        center_x = (left + right) * 0.5
+        half_width = (right - left) * 0.30
+        entry_y = int(self._field_y(NoteKind.FOOT, 0.0))
         points = []
         for index in range(13):
-            along = center - half + 2.0 * half * index / 12
-            x, y = self._ellipse_upper_point(geometry, along)
-            points.append((int(x), int(y)))
+            x = center_x - half_width + 2.0 * half_width * index / 12
+            points.append((int(x), entry_y))
         return points
 
     def _draw_source_glow(

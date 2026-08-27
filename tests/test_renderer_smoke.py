@@ -411,7 +411,7 @@ def test_hand_arc_reuses_cached_tunnel_geometry() -> None:
     assert calls == 1
 
 
-def test_preentry_glows_are_curved_arcs_inside_tunnel_aperture() -> None:
+def test_preentry_glows_are_centered_on_the_entry_boundaries() -> None:
     pygame.font.init()
     screen = pygame.Surface((1280, 720))
     renderer_module = importlib.import_module("vaporstep.renderer")
@@ -423,20 +423,18 @@ def test_preentry_glows_are_curved_arcs_inside_tunnel_aperture() -> None:
         for lane in range(1, 5):
             points = renderer._preentry_glow_arc(kind, lane)
             assert len(points) == 13
-            assert len({y for _, y in points}) > 1
-            for x, y in points:
-                normalized = ((x - cx) / rx) ** 2 + ((y - base_y) / ry) ** 2
-                assert normalized < 1.02
-                assert y <= base_y + 3
 
             if kind == NoteKind.HANDS:
+                assert len({y for _, y in points}) > 1
                 assert all(
-                    ((x - cx) / rx) ** 2 + ((y - base_y) / ry) ** 2 > 0.90
+                    0.95
+                    < ((x - cx) / rx) ** 2 + ((y - base_y) / ry) ** 2
+                    < 1.05
                     for x, y in points
                 )
             else:
-                entry_y = renderer._field_y(NoteKind.FOOT, 0.0)
-                assert max(abs(y - entry_y) for _, y in points) <= 10
+                entry_y = int(renderer._field_y(NoteKind.FOOT, 0.0))
+                assert {y for _, y in points} == {entry_y}
 
 
 def test_preentry_glow_brightens_smoothly_toward_entry() -> None:
