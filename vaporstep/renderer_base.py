@@ -181,7 +181,7 @@ class Renderer:
                 show_lower_body_sources=show_lower_body_sources,
             )
 
-        if running and stats is not None:
+        if stats is not None and (running or performance_state == "failed"):
             self._draw_hud(
                 stats,
                 best_score,

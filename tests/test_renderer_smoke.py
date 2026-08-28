@@ -19,6 +19,7 @@ from vaporstep.domain import (
     SustainSource,
 )
 from vaporstep.font_support import MetadataFont
+from vaporstep.scoring import RunStats
 
 
 def test_renderer_module_imports() -> None:
@@ -136,6 +137,41 @@ def test_renderer_draws_gameplay_surfaces_smoke() -> None:
     )
 
     assert screen.get_size() == (1280, 720)
+
+
+def test_failed_hold_keeps_failed_hud_instead_of_intro_metadata(monkeypatch) -> None:
+    pygame.font.init()
+    screen = pygame.Surface((1280, 720))
+    renderer_module = importlib.import_module("vaporstep.renderer")
+    renderer = renderer_module.Renderer(screen)
+    hud_calls = []
+    status_calls = []
+    monkeypatch.setattr(renderer, "_draw_hud", lambda *args, **kwargs: hud_calls.append(args))
+    monkeypatch.setattr(
+        renderer,
+        "_draw_status",
+        lambda *args, **kwargs: status_calls.append(args),
+    )
+
+    renderer.draw(
+        body=BodyState(),
+        mask=None,
+        notes=[],
+        song_time=1.0,
+        song_beat=1.0,
+        status="READY",
+        debug=False,
+        pose_fps=0.0,
+        input_name="webcam",
+        song_title="SONG TITLE",
+        chart_label="HARD 9",
+        stats=RunStats(total_notes=10),
+        running=False,
+        performance_state="failed",
+    )
+
+    assert len(hud_calls) == 1
+    assert status_calls == []
 
 
 def test_renderer_draws_explicit_foot_notes_and_chains_smoke() -> None:
