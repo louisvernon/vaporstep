@@ -976,6 +976,7 @@ class Renderer(_base.Renderer):
         song_time: float,
         song_beat: float,
         chain_mode: ChainMode,
+        hand_chain_colors: dict[int, tuple[int, int, int]],
     ) -> None:
         glow_surface = self._scratch_surface("_additive_scratch")
         any_glow = False
@@ -997,6 +998,11 @@ class Renderer(_base.Renderer):
             if state is None:
                 continue
             progress, intensity, preentry = state
+            color = (
+                hand_chain_colors.get(definition.id, MAGENTA)
+                if definition.kind == NoteKind.HANDS
+                else CYAN
+            )
             for lane in definition.lanes:
                 self._draw_source_glow(
                     glow_surface,
@@ -1005,6 +1011,7 @@ class Renderer(_base.Renderer):
                     progress,
                     intensity,
                     preentry=preentry,
+                    color=color,
                 )
                 any_glow = True
 
@@ -1128,6 +1135,23 @@ class Renderer(_base.Renderer):
     def _hand_note_color(ordinal: int):
         """Alternate authored hand events without splitting simultaneous lanes."""
         return MAGENTA if int(ordinal) % 2 == 0 else PURPLE
+
+    @classmethod
+    def _hand_chain_colors(
+        cls,
+        notes: list[GameNote],
+    ) -> dict[int, tuple[int, int, int]]:
+        """Keep rendered hand chains in the authored event color sequence."""
+        colors: dict[int, tuple[int, int, int]] = {}
+        ordinal = 0
+        for note in notes:
+            if note.kind != NoteKind.HANDS:
+                continue
+            color = cls._hand_note_color(ordinal)
+            ordinal += 1
+            if note.chain_id is not None and note.chain_index == 0:
+                colors.setdefault(note.chain_id, color)
+        return colors
 
     def _draw_foot_chains(
         self,
@@ -1279,7 +1303,14 @@ class Renderer(_base.Renderer):
         beat_pulse: float = 0.0,
         downbeat: bool = False,
     ) -> None:
-        self._draw_chain_head_glows(chains, song_time, song_beat, chain_mode)
+        hand_chain_colors = self._hand_chain_colors(notes)
+        self._draw_chain_head_glows(
+            chains,
+            song_time,
+            song_beat,
+            chain_mode,
+            hand_chain_colors,
+        )
         self._draw_foot_chains(chains, notes, song_time, song_beat, chain_mode)
 
         if notes:
@@ -1315,12 +1346,13 @@ class Renderer(_base.Renderer):
                 lo, hi = min(head, tail), max(head, tail)
                 if hi <= 0.0:
                     continue
+                base_color = hand_chain_colors.get(definition.id, MAGENTA)
                 if chain.state == ChainState.BROKEN:
                     color = _blend(DIM, BG, 0.25)
                 elif chain.state == ChainState.ACTIVE:
-                    color = _blend(MAGENTA, WHITE, 0.25)
+                    color = _blend(base_color, WHITE, 0.25)
                 else:
-                    color = _blend(BG, MAGENTA, 0.55)
+                    color = _blend(BG, base_color, 0.55)
 
                 for lane in definition.lanes:
                     p0 = self._hand_target_point(lane, lo)
@@ -1361,7 +1393,7 @@ class Renderer(_base.Renderer):
             self._draw_hand_note_connector(
                 definition.lanes,
                 head,
-                MAGENTA,
+                hand_chain_colors.get(definition.id, MAGENTA),
                 song_time,
                 beat_pulse,
                 downbeat,
@@ -1370,7 +1402,7 @@ class Renderer(_base.Renderer):
                 self._draw_hand_note_arc(
                     lane,
                     head,
-                    MAGENTA,
+                    hand_chain_colors.get(definition.id, MAGENTA),
                     highlight=chain.state == ChainState.ACTIVE,
                 )
 

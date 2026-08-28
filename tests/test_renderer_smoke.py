@@ -258,6 +258,12 @@ def test_renderer_connects_paired_hand_hold_head(monkeypatch, state) -> None:
         kind=NoteKind.HANDS,
         chain_id=7,
     )
+    preceding_note = GameNote(
+        time=0.5,
+        beat=0.5,
+        lanes=(2,),
+        kind=NoteKind.HANDS,
+    )
     chain = RuntimeChain(
         definition=ImplicitChain(
             id=7,
@@ -275,7 +281,7 @@ def test_renderer_connects_paired_hand_hold_head(monkeypatch, state) -> None:
 
     renderer._draw_chains(
         (chain,),
-        [hold],
+        [preceding_note, hold],
         song_time=1.0 if state == ChainState.ACTIVE else 0.5,
         song_beat=1.0 if state == ChainState.ACTIVE else 0.5,
         chain_mode=ChainMode.OFF,
@@ -285,6 +291,7 @@ def test_renderer_connects_paired_hand_hold_head(monkeypatch, state) -> None:
 
     assert len(connectors) == 1
     assert connectors[0][0] == (1, 3)
+    assert connectors[0][2] == renderer_module.PURPLE
     assert connectors[0][4:] == (0.75, True)
 
 
