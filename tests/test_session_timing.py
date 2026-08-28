@@ -184,3 +184,44 @@ def test_session_pre_roll_delays_chart_zero_until_lead_in_finishes(monkeypatch):
     session.update(BodyState(), ready_to_start=True)
     assert session.audio_started
     assert session.time == 0.0
+
+
+def test_session_updates_only_notes_near_current_time(monkeypatch):
+    notes = [
+        GameNote(time=index * 0.05, lanes=(2,), kind=NoteKind.FOOT)
+        for index in range(2000)
+    ]
+    clock = [0.0]
+    monkeypatch.setattr(GameSession, "time", property(lambda self: clock[0]))
+    session = GameSession(demo_notes=notes)
+    session.running = True
+    session.audio_started = True
+    calls = []
+    monkeypatch.setattr(
+        session,
+        "_update_regular_note",
+        lambda note, body, t: calls.append(note.time),
+    )
+
+    session.update(BodyState(timestamp=1.0), ready_to_start=True)
+
+    assert calls == [0.0, 0.05, 0.1]
+
+
+def test_render_note_window_preserves_global_hand_ordinals() -> None:
+    notes = [
+        GameNote(
+            time=float(index),
+            lanes=(1,),
+            kind=NoteKind.HANDS if index % 2 == 0 else NoteKind.FOOT,
+        )
+        for index in range(100)
+    ]
+    session = GameSession(demo_notes=notes)
+
+    visible = session.render_notes(song_time=50.0, song_beat=100.0)
+    visible_hands = [note for note in visible if note.kind == NoteKind.HANDS]
+
+    assert len(visible) < len(session.notes)
+    assert visible_hands
+    assert visible_hands[0].visual_ordinal == 25

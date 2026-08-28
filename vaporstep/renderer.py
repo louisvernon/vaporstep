@@ -14,6 +14,8 @@ from .config import (
     LOOKAHEAD_BEATS,
     LOOKAHEAD_SECONDS,
     OUTER_LANE_EDGE_EXTENSION,
+    TARGET_PREENTRY_BEATS,
+    TARGET_PREENTRY_SECONDS,
     VANISH_HALF_WIDTH,
     VANISH_Y,
 )
@@ -63,8 +65,6 @@ _HAND_SHOULDER_EXTENSION = 0.12
 _HAND_TUNNEL_VERTICAL_SCALE = 0.96
 _HAND_TRACKER_OFFSET_PX = 10.0
 _NOTE_GLOW_OFFSET_PROGRESS = 0.075
-_TARGET_PREENTRY_BEATS = 1.5
-_TARGET_PREENTRY_SECONDS = 0.75
 _NOTE_BREATHE_CYCLE_SECONDS = 1.6
 _PREENTRY_GLOW_RADIUS_X_PX = 48
 _PREENTRY_GLOW_RADIUS_Y_PX = 24
@@ -683,16 +683,16 @@ class Renderer(_base.Renderer):
             distance = float(event_beat) - song_beat
             if distance > LOOKAHEAD_BEATS:
                 extra = distance - LOOKAHEAD_BEATS
-                if extra > _TARGET_PREENTRY_BEATS:
+                if extra > TARGET_PREENTRY_BEATS:
                     return None
-                return 0.0, self._preentry_brightness(extra, _TARGET_PREENTRY_BEATS), True
+                return 0.0, self._preentry_brightness(extra, TARGET_PREENTRY_BEATS), True
         else:
             distance = event_time - song_time
             if distance > LOOKAHEAD_SECONDS:
                 extra = distance - LOOKAHEAD_SECONDS
-                if extra > _TARGET_PREENTRY_SECONDS:
+                if extra > TARGET_PREENTRY_SECONDS:
                     return None
-                return 0.0, self._preentry_brightness(extra, _TARGET_PREENTRY_SECONDS), True
+                return 0.0, self._preentry_brightness(extra, TARGET_PREENTRY_SECONDS), True
 
         progress = timed_progress(event_time, event_beat, song_time, song_beat)
         return progress, 0.24 + 0.48 * (progress ** 0.85), False
@@ -944,7 +944,8 @@ class Renderer(_base.Renderer):
         for note in notes:
             note_color = MAGENTA
             if note.kind == NoteKind.HANDS:
-                note_color = self._hand_note_color(hand_ordinal)
+                ordinal = note.visual_ordinal if note.visual_ordinal is not None else hand_ordinal
+                note_color = self._hand_note_color(ordinal)
                 hand_ordinal += 1
             if note.end_time is not None and note.chain_id is not None:
                 continue
@@ -1084,7 +1085,8 @@ class Renderer(_base.Renderer):
         for note in notes:
             if note.kind != NoteKind.HANDS:
                 continue
-            note_color = self._hand_note_color(hand_ordinal)
+            ordinal = note.visual_ordinal if note.visual_ordinal is not None else hand_ordinal
+            note_color = self._hand_note_color(ordinal)
             hand_ordinal += 1
             if note.end_time is not None and note.chain_id is not None:
                 continue
@@ -1139,15 +1141,21 @@ class Renderer(_base.Renderer):
     @classmethod
     def _hand_chain_colors(
         cls,
+        chains: tuple[RuntimeChain, ...],
         notes: list[GameNote],
     ) -> dict[int, tuple[int, int, int]]:
         """Keep rendered hand chains in the authored event color sequence."""
-        colors: dict[int, tuple[int, int, int]] = {}
+        colors = {
+            chain.definition.id: cls._hand_note_color(chain.visual_ordinal)
+            for chain in chains
+            if chain.definition.kind == NoteKind.HANDS and chain.visual_ordinal is not None
+        }
         ordinal = 0
         for note in notes:
             if note.kind != NoteKind.HANDS:
                 continue
-            color = cls._hand_note_color(ordinal)
+            visual_ordinal = note.visual_ordinal if note.visual_ordinal is not None else ordinal
+            color = cls._hand_note_color(visual_ordinal)
             ordinal += 1
             if note.chain_id is not None and note.chain_index == 0:
                 colors.setdefault(note.chain_id, color)
@@ -1161,7 +1169,7 @@ class Renderer(_base.Renderer):
         song_beat: float,
         chain_mode: ChainMode,
     ) -> None:
-        if not chains or not notes:
+        if not chains:
             return
         for chain in chains:
             definition = chain.definition
@@ -1303,7 +1311,7 @@ class Renderer(_base.Renderer):
         beat_pulse: float = 0.0,
         downbeat: bool = False,
     ) -> None:
-        hand_chain_colors = self._hand_chain_colors(notes)
+        hand_chain_colors = self._hand_chain_colors(chains, notes)
         self._draw_chain_head_glows(
             chains,
             song_time,
@@ -1313,57 +1321,56 @@ class Renderer(_base.Renderer):
         )
         self._draw_foot_chains(chains, notes, song_time, song_beat, chain_mode)
 
-        if notes:
-            for chain in chains:
-                definition = chain.definition
-                if definition.kind != NoteKind.HANDS:
-                    continue
-                is_hold = definition.source == SustainSource.EXPLICIT_HOLD
-                if not is_hold and chain_mode == ChainMode.OFF:
-                    continue
-                if not timed_is_within_lookahead(
-                    definition.start_time,
-                    definition.start_beat,
-                    song_time,
-                    song_beat,
-                ):
-                    continue
-                if song_time > definition.end_time + _base.HIT_FLASH_SECONDS:
-                    continue
+        for chain in chains:
+            definition = chain.definition
+            if definition.kind != NoteKind.HANDS:
+                continue
+            is_hold = definition.source == SustainSource.EXPLICIT_HOLD
+            if not is_hold and chain_mode == ChainMode.OFF:
+                continue
+            if not timed_is_within_lookahead(
+                definition.start_time,
+                definition.start_beat,
+                song_time,
+                song_beat,
+            ):
+                continue
+            if song_time > definition.end_time + _base.HIT_FLASH_SECONDS:
+                continue
 
-                head = timed_progress(
-                    definition.start_time,
-                    definition.start_beat,
-                    song_time,
-                    song_beat,
-                )
-                tail = timed_progress(
-                    definition.end_time,
-                    definition.end_beat,
-                    song_time,
-                    song_beat,
-                )
-                lo, hi = min(head, tail), max(head, tail)
-                if hi <= 0.0:
-                    continue
-                base_color = hand_chain_colors.get(definition.id, MAGENTA)
-                if chain.state == ChainState.BROKEN:
-                    color = _blend(DIM, BG, 0.25)
-                elif chain.state == ChainState.ACTIVE:
-                    color = _blend(base_color, WHITE, 0.25)
-                else:
-                    color = _blend(BG, base_color, 0.55)
+            head = timed_progress(
+                definition.start_time,
+                definition.start_beat,
+                song_time,
+                song_beat,
+            )
+            tail = timed_progress(
+                definition.end_time,
+                definition.end_beat,
+                song_time,
+                song_beat,
+            )
+            lo, hi = min(head, tail), max(head, tail)
+            if hi <= 0.0:
+                continue
+            base_color = hand_chain_colors.get(definition.id, MAGENTA)
+            if chain.state == ChainState.BROKEN:
+                color = _blend(DIM, BG, 0.25)
+            elif chain.state == ChainState.ACTIVE:
+                color = _blend(base_color, WHITE, 0.25)
+            else:
+                color = _blend(BG, base_color, 0.55)
 
-                for lane in definition.lanes:
-                    p0 = self._hand_target_point(lane, lo)
-                    p1 = self._hand_target_point(lane, hi)
-                    pygame.draw.line(self.screen, _blend(BG, color, 0.45), p0, p1, 16)
-                    pygame.draw.line(self.screen, color, p0, p1, 6)
-                    self._draw_hand_note_arc(
-                        lane,
-                        max(0.0, min(1.0, head)),
-                        color,
-                    )
+            for lane in definition.lanes:
+                p0 = self._hand_target_point(lane, lo)
+                p1 = self._hand_target_point(lane, hi)
+                pygame.draw.line(self.screen, _blend(BG, color, 0.45), p0, p1, 16)
+                pygame.draw.line(self.screen, color, p0, p1, 6)
+                self._draw_hand_note_arc(
+                    lane,
+                    max(0.0, min(1.0, head)),
+                    color,
+                )
 
         for chain in chains:
             definition = chain.definition

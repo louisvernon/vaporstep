@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib
 import sys
 import types
+from types import SimpleNamespace
 
 
 # The container test environment intentionally does not install MediaPipe.  The
@@ -71,3 +72,42 @@ def test_pose_timestamps_remain_strictly_increasing_with_same_millisecond():
     assert timestamp == 1234
     assert duplicate_millisecond == 1235
     assert later == 1236
+
+
+def test_busy_inference_skips_frame_before_rgb_conversion(monkeypatch):
+    camera = PoseCameraInput("unused.task", camera_index=0)
+
+    class OneFrameCapture:
+        released = False
+
+        @staticmethod
+        def isOpened():
+            return True
+
+        def read(self):
+            camera._stop.set()
+            return True, object()
+
+    camera._capture = OneFrameCapture()
+    camera._inference_busy.set()
+    conversions = []
+    monkeypatch.setattr(pose_input.cv2, "cvtColor", lambda *args: conversions.append(args))
+
+    camera._capture_loop()
+
+    snapshot = camera.snapshot()
+    assert conversions == []
+    assert snapshot.frames_captured == 1
+    assert snapshot.frames_submitted == 0
+    assert snapshot.frames_dropped == 1
+
+
+def test_result_callback_releases_backpressure_gate():
+    camera = PoseCameraInput("unused.task", camera_index=0)
+    camera._inference_busy.set()
+    camera._inference_started_at = pose_input.time.monotonic()
+
+    camera._on_result(SimpleNamespace(pose_landmarks=[]), None, 0)
+
+    assert not camera._inference_busy.is_set()
+    assert camera.snapshot().inference_latency_ms >= 0.0

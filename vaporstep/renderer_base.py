@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 import random
+import time
 
 import cv2
 import numpy as np
@@ -75,6 +76,17 @@ class Renderer:
         self._banner_cache: dict[str, pygame.Surface | None] = {}
         self._song_metadata_fonts: dict[int, MetadataFont] = {}
         self.player_horizontal_zoom = 1.10
+        self._profiling_enabled = False
+        self._phase_times_ms: dict[str, float] = {}
+
+    def set_profiling_enabled(self, enabled: bool) -> None:
+        self._profiling_enabled = bool(enabled)
+        if not enabled:
+            self._phase_times_ms = {}
+
+    @property
+    def phase_times_ms(self) -> dict[str, float]:
+        return dict(self._phase_times_ms)
 
     def _song_metadata_font(self, size: int) -> MetadataFont:
         """Return a cached coverage-based font for user-supplied song text."""
@@ -139,15 +151,31 @@ class Renderer:
         chain_mode: ChainMode = ChainMode.OFF,
         show_lower_body_sources: bool = False,
         show_body_markers: bool = True,
+        profile_lines: tuple[str, ...] = (),
     ) -> None:
+        profiling = self._profiling_enabled
+        phase_times: dict[str, float] = {}
+        phase_started = time.perf_counter()
+
+        def finish_phase(name: str) -> None:
+            nonlocal phase_started
+            if not profiling:
+                return
+            now = time.perf_counter()
+            phase_times[name] = (now - phase_started) * 1000.0
+            phase_started = now
+
         self.screen.fill(BG)
         self._draw_background(song_time, beat_pulse, downbeat)
+        finish_phase("background")
 
         if mask is not None:
             self._draw_silhouette(mask)
+        finish_phase("silhouette")
 
         overdrive = stats is not None and stats.multiplier >= 5 and running
         self._draw_playfields(body, song_time, beat_pulse, downbeat, hand_enabled, foot_enabled, overdrive, animate_buzz=running)
+        finish_phase("playfields")
         # Do not preview the opening bars while the player is still positioning.
         # A failed run deliberately keeps the frozen chart visible during its hold.
         visible_notes = notes if (running or performance_state == "failed") else []
@@ -160,6 +188,7 @@ class Renderer:
             beat_pulse=beat_pulse,
             downbeat=downbeat,
         )
+        finish_phase("chains")
         self._draw_notes(
             visible_notes,
             song_time,
@@ -168,10 +197,13 @@ class Renderer:
             beat_pulse=beat_pulse,
             downbeat=downbeat,
         )
+        finish_phase("notes_glows")
         if running:
             self._spawn_note_effects(notes)
             self._draw_particles(song_time)
+        finish_phase("particles")
         self._draw_receptors(body, visible_notes, song_time, hand_enabled, foot_enabled, strike_events)
+        finish_phase("receptors")
         if show_body_markers:
             self._draw_body_markers(
                 body,
@@ -180,6 +212,7 @@ class Renderer:
                 foot_enabled=foot_enabled,
                 show_lower_body_sources=show_lower_body_sources,
             )
+        finish_phase("markers")
 
         if stats is not None and (running or performance_state == "failed"):
             self._draw_hud(
@@ -193,9 +226,14 @@ class Renderer:
                 self._draw_audio_error(audio_error)
         else:
             self._draw_status(status, input_name, song_title, chart_label, audio_error)
+        finish_phase("hud")
 
         if debug:
-            self._draw_debug(body, song_time, pose_fps)
+            self._draw_debug(body, song_time, pose_fps, profile_lines)
+        finish_phase("debug")
+        if profiling:
+            phase_times["total"] = sum(phase_times.values())
+            self._phase_times_ms = phase_times
 
     def draw_recording_indicator(self) -> None:
         w, _ = self.size
@@ -1100,7 +1138,13 @@ class Renderer:
             self.screen.blit(surf, (x, y))
             y += surf.get_height() + 8
 
-    def _draw_debug(self, body: BodyState, t: float, pose_fps: float) -> None:
+    def _draw_debug(
+        self,
+        body: BodyState,
+        t: float,
+        pose_fps: float,
+        profile_lines: tuple[str, ...] = (),
+    ) -> None:
         labels = [
             ("LW", body.left_wrist),
             ("RW", body.right_wrist),
@@ -1115,6 +1159,16 @@ class Renderer:
             vis = "ok" if p.visible else "lost"
             lines.append(f"{name}: lane {lane}   x={p.x:0.3f} y={p.y:0.3f} {vis}")
         lines.append(f"feet(control)={sorted(body.foot_lanes)} hands={sorted(body.hand_lanes)}")
+        lines.extend(profile_lines)
+        if self._phase_times_ms:
+            lines.append(
+                "render phases  "
+                + "  ".join(
+                    f"{name}={value:.1f}ms"
+                    for name, value in self._phase_times_ms.items()
+                    if name in ("silhouette", "playfields", "chains", "notes_glows", "particles", "receptors")
+                )
+            )
         x, y = 18, 92
         for line in lines:
             surf = self.small_font.render(line, True, WHITE)

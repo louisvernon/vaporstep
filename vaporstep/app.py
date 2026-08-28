@@ -31,6 +31,7 @@ from .keyboard_input import KeyboardBodyInput, add_keyboard_lanes
 from .library_index import LibraryIndexer, LibraryScanSnapshot
 from .menu import HeldMenuRepeater, MenuAction, SongMenu, action_for_event
 from .model_asset import ensure_pose_model
+from .performance import RuntimeProfiler
 from .preview import SongPreviewPlayer
 from .records import ChartRecord, RecordStore, chart_key, song_key
 from .readiness import camera_ready_prompt, readiness_for_session
@@ -103,6 +104,38 @@ def _finish_startup_splash(
             if event.type == pygame.QUIT:
                 raise _StartupCancelled
         _draw_startup_frame(renderer, clock, "READY")
+
+
+def _profile_lines(profile, pose_snapshot) -> tuple[str, ...]:
+    if profile.samples:
+        lines = [
+            (
+                f"frame work avg={profile.work_ms:.1f}ms p95={profile.work_p95_ms:.1f}ms  "
+                f"update={profile.update_ms:.2f} render={profile.render_ms:.1f} flip={profile.flip_ms:.2f}"
+            ),
+            (
+                f"deadlines >16.7ms={profile.missed_60hz}/{profile.samples}  "
+                f">33.3ms={profile.missed_30hz}/{profile.samples}"
+            ),
+        ]
+    else:
+        lines = ["frame profiler warming up"]
+
+    if pose_snapshot is not None:
+        captured = max(0, int(pose_snapshot.frames_captured))
+        dropped = max(0, int(pose_snapshot.frames_dropped))
+        drop_ratio = 100.0 * dropped / max(captured, 1)
+        lines.append(
+            (
+                f"camera={pose_snapshot.capture_fps:.1f}fps submit={pose_snapshot.submitted_fps:.1f}fps "
+                f"pose={pose_snapshot.pose_fps:.1f}fps latency={pose_snapshot.inference_latency_ms:.1f}ms"
+            )
+        )
+        lines.append(
+            f"inference frames captured={captured} submitted={pose_snapshot.frames_submitted} "
+            f"skipped={dropped} ({drop_ratio:.0f}%)"
+        )
+    return tuple(lines)
 
 
 def _load_pose_components():
@@ -581,6 +614,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     debug = False
+    runtime_profiler = RuntimeProfiler()
     running = True
     calibration_session = GameSession(demo_notes=make_demo_notes())
     calibration_last_beat: int | None = None
@@ -669,6 +703,7 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         while running:
+            loop_work_started = time.perf_counter()
             frame_dt = min(clock.get_time() / 1000.0, 0.10)
             now = time.monotonic()
             scan_snapshot = library_indexer.snapshot()
@@ -1040,6 +1075,8 @@ def main(argv: list[str] | None = None) -> int:
                             mode = "song_menu"
                     elif event.key == pygame.K_F3:
                         debug = not debug
+                        renderer.set_profiling_enabled(debug)
+                        runtime_profiler.clear()
                     elif event.key == pygame.K_r and session is not None:
                         finalize_activity_run("escaped")
                         if active_recording is not None:
@@ -1187,6 +1224,7 @@ def main(argv: list[str] | None = None) -> int:
 
             keyboard_body = keyboard.body_state()
             camera_ready = False
+            pose_snapshot = None
             if keyboard_only:
                 body = keyboard_body
                 mask = None
@@ -1213,6 +1251,7 @@ def main(argv: list[str] | None = None) -> int:
                 input_name = "keyboard fallback"
             else:
                 snap = camera.snapshot()
+                pose_snapshot = snap
                 body = add_keyboard_lanes(snap.body, keyboard_body)
                 mask = snap.mask
                 camera_status_text = (
@@ -1230,9 +1269,11 @@ def main(argv: list[str] | None = None) -> int:
                 input_name = "webcam + keyboard"
 
             if mode == "calibration":
+                update_started = time.perf_counter()
                 calibration_ready = keyboard_only or camera_ready
                 calibration_session.set_keyboard_mode(True)
                 calibration_session.update(body, ready_to_start=calibration_ready)
+                update_ms = (time.perf_counter() - update_started) * 1000.0
                 gameplay_sounds.play(calibration_session.drain_gameplay_events())
                 if calibration_session.finished or calibration_session.failed:
                     calibration_session.restart()
@@ -1249,12 +1290,18 @@ def main(argv: list[str] | None = None) -> int:
                         calibration_last_beat = beat_index
                 else:
                     calibration_last_beat = None
+                song_time = calibration_session.time
+                song_beat = calibration_session.beat_position
+                visible_notes = calibration_session.render_notes(song_time, song_beat)
+                profile = runtime_profiler.snapshot()
+                profile_lines = _profile_lines(profile, pose_snapshot)
+                render_started = time.perf_counter()
                 renderer.draw(
                     body=body,
                     mask=mask,
-                    notes=calibration_session.notes,
-                    song_time=calibration_session.time,
-                    song_beat=calibration_session.beat_position,
+                    notes=visible_notes,
+                    song_time=song_time,
+                    song_beat=song_beat,
                     status=status,
                     debug=debug,
                     pose_fps=pose_fps,
@@ -1272,6 +1319,7 @@ def main(argv: list[str] | None = None) -> int:
                     strike_events=tuple(calibration_session.recent_motion_events),
                     show_lower_body_sources=True,
                     show_body_markers=not keyboard_only and camera is not None,
+                    profile_lines=profile_lines,
                 )
                 renderer.draw_calibration_overlay(
                     displayed_camera_index(),
@@ -1279,11 +1327,21 @@ def main(argv: list[str] | None = None) -> int:
                     camera_status(),
                 )
                 draw_lower_body_tracking_overlay(renderer, body)
+                render_ms = (time.perf_counter() - render_started) * 1000.0
+                flip_started = time.perf_counter()
                 pygame.display.flip()
+                flip_ms = (time.perf_counter() - flip_started) * 1000.0
+                runtime_profiler.record(
+                    update_ms=update_ms,
+                    render_ms=render_ms,
+                    flip_ms=flip_ms,
+                    work_ms=(time.perf_counter() - loop_work_started) * 1000.0,
+                )
                 clock.tick(TARGET_FPS)
                 continue
 
             assert session is not None
+            update_started = time.perf_counter()
             session.set_keyboard_mode(True)
             was_running = session.running
             session.update(
@@ -1291,6 +1349,7 @@ def main(argv: list[str] | None = None) -> int:
                 ready_to_start=(keyboard_start_requested or camera_ready),
                 start_immediately=keyboard_start_requested,
             )
+            update_ms = (time.perf_counter() - update_started) * 1000.0
             if not was_running and session.running and activity_started_at is None and session.chart is not None:
                 activity_started_at = datetime.now(timezone.utc)
             if not was_running and session.running:
@@ -1365,12 +1424,18 @@ def main(argv: list[str] | None = None) -> int:
                 continue
 
             beat_pulse, downbeat = session.beat_pulse() if session.running else (0.0, False)
+            song_time = session.time
+            song_beat = session.beat_position
+            visible_notes = session.render_notes(song_time, song_beat)
+            profile = runtime_profiler.snapshot()
+            profile_lines = _profile_lines(profile, pose_snapshot)
+            render_started = time.perf_counter()
             renderer.draw(
                 body=body,
                 mask=mask,
-                notes=session.notes,
-                song_time=session.time,
-                song_beat=session.beat_position,
+                notes=visible_notes,
+                song_time=song_time,
+                song_beat=song_beat,
                 status=status,
                 debug=debug,
                 pose_fps=pose_fps,
@@ -1394,12 +1459,22 @@ def main(argv: list[str] | None = None) -> int:
                 chains=tuple(session.chains),
                 chain_mode=session.chain_mode,
                 show_body_markers=not keyboard_only and camera is not None,
+                profile_lines=profile_lines,
             )
             if active_recording is not None:
                 active_recording.capture(renderer.screen, time.monotonic())
             if record_play_enabled:
                 renderer.draw_recording_indicator()
+            render_ms = (time.perf_counter() - render_started) * 1000.0
+            flip_started = time.perf_counter()
             pygame.display.flip()
+            flip_ms = (time.perf_counter() - flip_started) * 1000.0
+            runtime_profiler.record(
+                update_ms=update_ms,
+                render_ms=render_ms,
+                flip_ms=flip_ms,
+                work_ms=(time.perf_counter() - loop_work_started) * 1000.0,
+            )
             clock.tick(TARGET_FPS)
     finally:
         if mode == "game":

@@ -40,6 +40,28 @@ python -m pip install -e ".[build]"
 python -m pytest -q
 ```
 
+## Performance benchmark
+
+Run the deterministic dense-gameplay benchmark on the same idle, plugged-in
+machine before and after a performance change:
+
+```bash
+python scripts/benchmark_gameplay.py --json before.json
+python scripts/benchmark_gameplay.py --compare before.json --json after.json
+```
+
+It reports renderer median/p95/p99 time, note-window and session-update time,
+CPU usage, and mean renderer phase costs including silhouette processing,
+playfields, note glows, particles, and receptors. A comparison includes the
+percentage change for each phase and verifies that the session benchmark's
+semantic checksum still matches. Results from different machines are not
+directly comparable.
+
+During calibration or gameplay, F3 enables the live profiling overlay. In
+addition to renderer phase timing, it shows rolling frame-work latency and
+camera capture, inference submission, pose-result, inference-latency, and
+skipped-frame counters.
+
 ## Pose model
 
 The canonical pose-model metadata lives in:

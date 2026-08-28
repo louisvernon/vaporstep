@@ -331,6 +331,45 @@ def test_renderer_connects_paired_hand_hold_head(monkeypatch, state) -> None:
     assert connectors[0][4:] == (0.75, True)
 
 
+def test_active_hand_hold_keeps_color_when_head_note_leaves_render_window(monkeypatch) -> None:
+    pygame.font.init()
+    screen = pygame.Surface((1280, 720))
+    renderer_module = importlib.import_module("vaporstep.renderer")
+    renderer = renderer_module.Renderer(screen)
+    connectors = []
+    monkeypatch.setattr(
+        renderer,
+        "_draw_hand_note_connector",
+        lambda *args: connectors.append(args),
+    )
+    chain = RuntimeChain(
+        definition=ImplicitChain(
+            id=9,
+            kind=NoteKind.HANDS,
+            lanes=(1, 4),
+            note_indices=(0,),
+            start_time=1.0,
+            end_time=10.0,
+            start_beat=2.0,
+            end_beat=20.0,
+            source=SustainSource.EXPLICIT_HOLD,
+        ),
+        state=ChainState.ACTIVE,
+        visual_ordinal=1,
+    )
+
+    renderer._draw_chains(
+        (chain,),
+        [],
+        song_time=5.0,
+        song_beat=10.0,
+        chain_mode=ChainMode.OFF,
+    )
+
+    assert connectors
+    assert connectors[0][2] == renderer_module.PURPLE
+
+
 def test_hand_note_connector_ignores_single_lane_notes() -> None:
     pygame.font.init()
     screen = pygame.Surface((1280, 720))
