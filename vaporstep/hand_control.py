@@ -15,8 +15,8 @@ HIGH_EXIT = 0.12
 # Keep low hands neutral across a slightly wider torso region. The exit
 # threshold remains comfortably inside the entry threshold so an intentional
 # outer reach still has useful hysteresis once acquired.
-OUT_ENTER = 0.82
-OUT_EXIT = 0.58
+OUT_ENTER = 0.95
+OUT_EXIT = 0.70
 HIGH_SIDE_HYSTERESIS = 0.10
 
 

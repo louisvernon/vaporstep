@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 
+import numpy as np
 import pygame
 
 from . import renderer_base as _base
@@ -50,17 +51,26 @@ _blend = _base._blend
 
 # Authored hand lanes retain their left-to-right semantic ordering along the
 # tunnel shell: 1 left/out, 2 left/high, 3 right/high, 4 right/out.
-_HAND_BOUNDARIES = (0.0, 0.25, 0.50, 0.75, 1.0)
-_HAND_CENTERS = (0.125, 0.375, 0.625, 0.875)
+# Give the two raised-hand segments more of the tunnel shell. Their note heads
+# sit slightly toward the lower edge of each segment so their source-to-target
+# travel is closer to the much longer outer-hand travel.
+_HAND_BOUNDARIES = (0.0, 0.20, 0.50, 0.80, 1.0)
+_HAND_CENTERS = (0.10, 0.31, 0.69, 0.90)
 _HAND_NOTE_ARC_FRACTION = 0.62
 _HAND_FOOT_GAP_PX = 7.0
 
 _HAND_SHOULDER_EXTENSION = 0.12
-_HAND_TUNNEL_VERTICAL_SCALE = 0.86
+_HAND_TUNNEL_VERTICAL_SCALE = 0.96
 _HAND_TRACKER_OFFSET_PX = 10.0
+_NOTE_GLOW_OFFSET_PROGRESS = 0.075
 _TARGET_PREENTRY_BEATS = 1.5
 _TARGET_PREENTRY_SECONDS = 0.75
 _NOTE_BREATHE_CYCLE_SECONDS = 1.6
+_PREENTRY_GLOW_RADIUS_X_PX = 48
+_PREENTRY_GLOW_RADIUS_Y_PX = 24
+_PREENTRY_GLOW_VERTICAL_SCALE = 2.0
+_PREENTRY_GLOW_SIGMA_PX = 18.0
+_PREENTRY_GLOW_PEAK = 0.41
 
 
 class Renderer(_base.Renderer):
@@ -675,19 +685,22 @@ class Renderer(_base.Renderer):
                 extra = distance - LOOKAHEAD_BEATS
                 if extra > _TARGET_PREENTRY_BEATS:
                     return None
-                strength = 1.0 - extra / _TARGET_PREENTRY_BEATS
-                return 0.0, 0.30 * strength, True
+                return 0.0, self._preentry_brightness(extra, _TARGET_PREENTRY_BEATS), True
         else:
             distance = event_time - song_time
             if distance > LOOKAHEAD_SECONDS:
                 extra = distance - LOOKAHEAD_SECONDS
                 if extra > _TARGET_PREENTRY_SECONDS:
                     return None
-                strength = 1.0 - extra / _TARGET_PREENTRY_SECONDS
-                return 0.0, 0.30 * strength, True
+                return 0.0, self._preentry_brightness(extra, _TARGET_PREENTRY_SECONDS), True
 
         progress = timed_progress(event_time, event_beat, song_time, song_beat)
         return progress, 0.24 + 0.48 * (progress ** 0.85), False
+
+    @staticmethod
+    def _preentry_brightness(distance: float, window: float) -> float:
+        proximity = 1.0 - max(0.0, min(1.0, distance / max(window, 1e-6)))
+        return proximity * proximity * (3.0 - 2.0 * proximity)
 
     @staticmethod
     def _note_breathe(note: GameNote, song_time: float) -> float:
@@ -741,26 +754,84 @@ class Renderer(_base.Renderer):
             max(4, int(4 + 12 * p)),
         )
 
-    @classmethod
+    def _preentry_glow_sprite(
+        self,
+        points: list[tuple[int, int]],
+        color,
+    ) -> tuple[pygame.Surface, tuple[int, int]]:
+        cache_state = getattr(self, "_preentry_glow_cache", None)
+        if cache_state is None or cache_state[0] != self.size:
+            cache_state = (self.size, {})
+            self._preentry_glow_cache = cache_state
+        cache = cache_state[1]
+        key = (tuple(points), tuple(color))
+        cached = cache.get(key)
+        if cached is not None:
+            return cached
+
+        pad_x = _PREENTRY_GLOW_RADIUS_X_PX
+        pad_y = _PREENTRY_GLOW_RADIUS_Y_PX
+        left = min(x for x, _ in points) - pad_x
+        top = min(y for _, y in points) - pad_y
+        width = max(x for x, _ in points) - left + pad_x + 1
+        height = max(y for _, y in points) - top + pad_y + 1
+
+        xs = np.arange(width, dtype=np.float32)[:, None]
+        ys = (
+            np.arange(height, dtype=np.float32)[None, :]
+            * _PREENTRY_GLOW_VERTICAL_SCALE
+        )
+        distance_sq = np.full((width, height), np.inf, dtype=np.float32)
+        local_points = [
+            (x - left, (y - top) * _PREENTRY_GLOW_VERTICAL_SCALE)
+            for x, y in points
+        ]
+        for (x0, y0), (x1, y1) in zip(local_points, local_points[1:]):
+            dx = float(x1 - x0)
+            dy = float(y1 - y0)
+            length_sq = max(dx * dx + dy * dy, 1.0)
+            along = np.clip(
+                ((xs - x0) * dx + (ys - y0) * dy) / length_sq,
+                0.0,
+                1.0,
+            )
+            segment_distance_sq = (xs - (x0 + along * dx)) ** 2 + (
+                ys - (y0 + along * dy)
+            ) ** 2
+            np.minimum(distance_sq, segment_distance_sq, out=distance_sq)
+
+        falloff = _PREENTRY_GLOW_PEAK * np.exp(
+            -0.5 * distance_sq / (_PREENTRY_GLOW_SIGMA_PX ** 2)
+        )
+        sprite = pygame.Surface((width, height))
+        pixels = pygame.surfarray.pixels3d(sprite)
+        for channel, value in enumerate(color):
+            pixels[:, :, channel] = np.clip(falloff * value, 0, 255).astype(np.uint8)
+        del pixels
+
+        result = (sprite, (left, top))
+        cache[key] = result
+        return result
+
     def _draw_preentry_glow(
-        cls,
+        self,
         surface: pygame.Surface,
         points: list[tuple[int, int]],
         color,
-        intensity: float,
-        core_width: int,
+        brightness: float,
     ) -> None:
-        if len(points) < 2 or intensity <= 0.0:
+        if len(points) < 2 or brightness <= 0.0:
             return
-        for extra, scale in ((20, 0.11), (9, 0.22)):
-            glow_color = cls._scaled_additive_color(color, intensity * scale)
-            pygame.draw.lines(
-                surface,
-                glow_color,
-                False,
-                points,
-                max(1, core_width + extra),
-            )
+        # A cached distance field gives the short arc one continuous Gaussian
+        # falloff: bright at the horizon and genuinely diffuse around it.
+        sprite, position = self._preentry_glow_sprite(points, color)
+        if brightness >= 1.0:
+            surface.blit(sprite, position, special_flags=pygame.BLEND_RGB_ADD)
+            return
+        scaled = sprite.copy()
+        level = max(0, min(255, round(brightness * 255)))
+        scaled.fill((level, level, level), special_flags=pygame.BLEND_RGB_MULT)
+        surface.blit(scaled, position, special_flags=pygame.BLEND_RGB_ADD)
 
     def _draw_outward_glow(
         self,
@@ -771,8 +842,7 @@ class Renderer(_base.Renderer):
         color,
         intensity: float,
     ) -> None:
-        p0 = max(0.0, min(1.0, progress))
-        p1 = min(1.0, p0 + 0.065)
+        p0, p1 = self._glow_projection_progress(progress)
         if p1 <= p0 + 1e-6:
             return
 
@@ -787,12 +857,22 @@ class Renderer(_base.Renderer):
         edge = self._scaled_additive_color(color, intensity * 0.18)
         pygame.draw.lines(surface, edge, False, projected, 2)
 
-    def _aperture_target_points(
+    @staticmethod
+    def _glow_projection_progress(progress: float) -> tuple[float, float]:
+        p0 = max(0.0, min(1.0, float(progress)))
+        # Treat the offset glow like a reflection/shadow cast toward the
+        # receptor. Its separation collapses continuously into the note body
+        # instead of remaining detached until the final few frames.
+        separation = _NOTE_GLOW_OFFSET_PROGRESS * ((1.0 - p0) ** 0.80)
+        p1 = min(1.0, p0 + separation)
+        return p0, p1
+
+    def _preentry_glow_arc(
         self,
         kind: NoteKind,
         lane: int,
-    ) -> tuple[list[tuple[int, int]], int]:
-        """Return a pre-entry cue that sits inside the tunnel opening."""
+    ) -> list[tuple[int, int]]:
+        """Return the part of the actual entry boundary illuminated by a cue."""
         inner, _, _ = self._hand_tunnel_geometry()
         cx, base_y, rx, ry = inner
 
@@ -800,30 +880,25 @@ class Renderer(_base.Renderer):
             start = _HAND_BOUNDARIES[lane - 1]
             end = _HAND_BOUNDARIES[lane]
             center = _HAND_CENTERS[lane - 1]
-            half = (end - start) * 0.5 * _HAND_NOTE_ARC_FRACTION
-            inset = 0.16
-            points = []
-            samples = 18
-            for i in range(samples + 1):
-                along = center - half + (2.0 * half) * i / samples
-                x, y = self._ellipse_upper_point(inner, along)
-                points.append((
-                    int(cx + (x - cx) * (1.0 - inset)),
-                    int(base_y + (y - base_y) * (1.0 - inset)),
-                ))
-            return points, 5
+            half = (end - start) * 0.30
+            geometry = inner
 
-        left = cx - rx * 0.84
-        right = cx + rx * 0.84
-        lane_width = (right - left) / 4.0
-        lane_left = left + (lane - 1) * lane_width
-        lane_right = lane_left + lane_width
-        pad = max(2.0, lane_width * 0.08)
-        y = base_y - max(5.0, ry * 0.12)
-        return (
-            [(int(lane_left + pad), int(y)), (int(lane_right - pad), int(y))],
-            5,
-        )
+            points = []
+            for index in range(13):
+                along = center - half + 2.0 * half * index / 12
+                x, y = self._ellipse_upper_point(geometry, along)
+                points.append((int(x), int(y)))
+            return points
+
+        left, right = self._lane_bounds(NoteKind.FOOT, lane, 0.0)
+        center_x = (left + right) * 0.5
+        half_width = (right - left) * 0.30
+        entry_y = int(self._field_y(NoteKind.FOOT, 0.0))
+        points = []
+        for index in range(13):
+            x = center_x - half_width + 2.0 * half_width * index / 12
+            points.append((int(x), entry_y))
+        return points
 
     def _draw_source_glow(
         self,
@@ -834,17 +909,15 @@ class Renderer(_base.Renderer):
         intensity: float,
         *,
         preentry: bool = False,
+        color=None,
     ) -> None:
-        theme = MAGENTA if kind == NoteKind.HANDS else CYAN
+        theme = color or (MAGENTA if kind == NoteKind.HANDS else CYAN)
         if preentry:
-            points, core_width = self._aperture_target_points(kind, lane)
-            boost = 1.15 if kind == NoteKind.FOOT else 0.92
             self._draw_preentry_glow(
                 surface,
-                points,
+                self._preentry_glow_arc(kind, lane),
                 theme,
-                intensity * boost,
-                core_width,
+                intensity,
             )
             return
 
@@ -867,7 +940,12 @@ class Renderer(_base.Renderer):
         glow_surface = self._scratch_surface("_additive_scratch")
         any_glow = False
 
+        hand_ordinal = 0
         for note in notes:
+            note_color = MAGENTA
+            if note.kind == NoteKind.HANDS:
+                note_color = self._hand_note_color(hand_ordinal)
+                hand_ordinal += 1
             if note.end_time is not None and note.chain_id is not None:
                 continue
             if note.chain_id is not None and chain_mode == ChainMode.BLOCKS:
@@ -885,6 +963,7 @@ class Renderer(_base.Renderer):
                     progress,
                     intensity,
                     preentry=preentry,
+                    color=note_color if note.kind == NoteKind.HANDS else CYAN,
                 )
                 any_glow = True
 
@@ -897,6 +976,7 @@ class Renderer(_base.Renderer):
         song_time: float,
         song_beat: float,
         chain_mode: ChainMode,
+        hand_chain_colors: dict[int, tuple[int, int, int]],
     ) -> None:
         glow_surface = self._scratch_surface("_additive_scratch")
         any_glow = False
@@ -918,6 +998,11 @@ class Renderer(_base.Renderer):
             if state is None:
                 continue
             progress, intensity, preentry = state
+            color = (
+                hand_chain_colors.get(definition.id, MAGENTA)
+                if definition.kind == NoteKind.HANDS
+                else CYAN
+            )
             for lane in definition.lanes:
                 self._draw_source_glow(
                     glow_surface,
@@ -926,6 +1011,7 @@ class Renderer(_base.Renderer):
                     progress,
                     intensity,
                     preentry=preentry,
+                    color=color,
                 )
                 any_glow = True
 
@@ -994,9 +1080,12 @@ class Renderer(_base.Renderer):
         self._draw_target_glows(notes, song_time, song_beat, chain_mode)
         self._draw_foot_notes(notes, song_time, song_beat, chain_mode)
 
+        hand_ordinal = 0
         for note in notes:
             if note.kind != NoteKind.HANDS:
                 continue
+            note_color = self._hand_note_color(hand_ordinal)
+            hand_ordinal += 1
             if note.end_time is not None and note.chain_id is not None:
                 continue
             if note.chain_id is not None and chain_mode == ChainMode.BLOCKS:
@@ -1028,8 +1117,8 @@ class Renderer(_base.Renderer):
                 connector_color = RED
             else:
                 breathe = self._note_breathe(note, song_time)
-                color = self._breathing_note_color(MAGENTA, breathe, progress)
-                connector_color = MAGENTA
+                color = self._breathing_note_color(note_color, breathe, progress)
+                connector_color = note_color
 
             self._draw_hand_note_connector(
                 note.lanes,
@@ -1041,6 +1130,28 @@ class Renderer(_base.Renderer):
             )
             for lane in note.lanes:
                 self._draw_hand_note_arc(lane, progress, color)
+
+    @staticmethod
+    def _hand_note_color(ordinal: int):
+        """Alternate authored hand events without splitting simultaneous lanes."""
+        return MAGENTA if int(ordinal) % 2 == 0 else PURPLE
+
+    @classmethod
+    def _hand_chain_colors(
+        cls,
+        notes: list[GameNote],
+    ) -> dict[int, tuple[int, int, int]]:
+        """Keep rendered hand chains in the authored event color sequence."""
+        colors: dict[int, tuple[int, int, int]] = {}
+        ordinal = 0
+        for note in notes:
+            if note.kind != NoteKind.HANDS:
+                continue
+            color = cls._hand_note_color(ordinal)
+            ordinal += 1
+            if note.chain_id is not None and note.chain_index == 0:
+                colors.setdefault(note.chain_id, color)
+        return colors
 
     def _draw_foot_chains(
         self,
@@ -1192,7 +1303,14 @@ class Renderer(_base.Renderer):
         beat_pulse: float = 0.0,
         downbeat: bool = False,
     ) -> None:
-        self._draw_chain_head_glows(chains, song_time, song_beat, chain_mode)
+        hand_chain_colors = self._hand_chain_colors(notes)
+        self._draw_chain_head_glows(
+            chains,
+            song_time,
+            song_beat,
+            chain_mode,
+            hand_chain_colors,
+        )
         self._draw_foot_chains(chains, notes, song_time, song_beat, chain_mode)
 
         if notes:
@@ -1228,12 +1346,13 @@ class Renderer(_base.Renderer):
                 lo, hi = min(head, tail), max(head, tail)
                 if hi <= 0.0:
                     continue
+                base_color = hand_chain_colors.get(definition.id, MAGENTA)
                 if chain.state == ChainState.BROKEN:
                     color = _blend(DIM, BG, 0.25)
                 elif chain.state == ChainState.ACTIVE:
-                    color = _blend(MAGENTA, WHITE, 0.25)
+                    color = _blend(base_color, WHITE, 0.25)
                 else:
-                    color = _blend(BG, MAGENTA, 0.55)
+                    color = _blend(BG, base_color, 0.55)
 
                 for lane in definition.lanes:
                     p0 = self._hand_target_point(lane, lo)
@@ -1274,7 +1393,7 @@ class Renderer(_base.Renderer):
             self._draw_hand_note_connector(
                 definition.lanes,
                 head,
-                MAGENTA,
+                hand_chain_colors.get(definition.id, MAGENTA),
                 song_time,
                 beat_pulse,
                 downbeat,
@@ -1283,7 +1402,7 @@ class Renderer(_base.Renderer):
                 self._draw_hand_note_arc(
                     lane,
                     head,
-                    MAGENTA,
+                    hand_chain_colors.get(definition.id, MAGENTA),
                     highlight=chain.state == ChainState.ACTIVE,
                 )
 

@@ -8,6 +8,7 @@ import pygame
 import pytest
 
 from vaporstep.domain import (
+    BodyState,
     ChainMode,
     ChainState,
     GameNote,
@@ -18,6 +19,7 @@ from vaporstep.domain import (
     SustainSource,
 )
 from vaporstep.font_support import MetadataFont
+from vaporstep.scoring import RunStats
 
 
 def test_renderer_module_imports() -> None:
@@ -135,6 +137,41 @@ def test_renderer_draws_gameplay_surfaces_smoke() -> None:
     )
 
     assert screen.get_size() == (1280, 720)
+
+
+def test_failed_hold_keeps_failed_hud_instead_of_intro_metadata(monkeypatch) -> None:
+    pygame.font.init()
+    screen = pygame.Surface((1280, 720))
+    renderer_module = importlib.import_module("vaporstep.renderer")
+    renderer = renderer_module.Renderer(screen)
+    hud_calls = []
+    status_calls = []
+    monkeypatch.setattr(renderer, "_draw_hud", lambda *args, **kwargs: hud_calls.append(args))
+    monkeypatch.setattr(
+        renderer,
+        "_draw_status",
+        lambda *args, **kwargs: status_calls.append(args),
+    )
+
+    renderer.draw(
+        body=BodyState(),
+        mask=None,
+        notes=[],
+        song_time=1.0,
+        song_beat=1.0,
+        status="READY",
+        debug=False,
+        pose_fps=0.0,
+        input_name="webcam",
+        song_title="SONG TITLE",
+        chart_label="HARD 9",
+        stats=RunStats(total_notes=10),
+        running=False,
+        performance_state="failed",
+    )
+
+    assert len(hud_calls) == 1
+    assert status_calls == []
 
 
 def test_renderer_draws_explicit_foot_notes_and_chains_smoke() -> None:
@@ -257,6 +294,12 @@ def test_renderer_connects_paired_hand_hold_head(monkeypatch, state) -> None:
         kind=NoteKind.HANDS,
         chain_id=7,
     )
+    preceding_note = GameNote(
+        time=0.5,
+        beat=0.5,
+        lanes=(2,),
+        kind=NoteKind.HANDS,
+    )
     chain = RuntimeChain(
         definition=ImplicitChain(
             id=7,
@@ -274,7 +317,7 @@ def test_renderer_connects_paired_hand_hold_head(monkeypatch, state) -> None:
 
     renderer._draw_chains(
         (chain,),
-        [hold],
+        [preceding_note, hold],
         song_time=1.0 if state == ChainState.ACTIVE else 0.5,
         song_beat=1.0 if state == ChainState.ACTIVE else 0.5,
         chain_mode=ChainMode.OFF,
@@ -284,6 +327,7 @@ def test_renderer_connects_paired_hand_hold_head(monkeypatch, state) -> None:
 
     assert len(connectors) == 1
     assert connectors[0][0] == (1, 3)
+    assert connectors[0][2] == renderer_module.PURPLE
     assert connectors[0][4:] == (0.75, True)
 
 
@@ -410,7 +454,7 @@ def test_hand_arc_reuses_cached_tunnel_geometry() -> None:
     assert calls == 1
 
 
-def test_preentry_cues_are_inside_tunnel_aperture() -> None:
+def test_preentry_glows_are_centered_on_the_entry_boundaries() -> None:
     pygame.font.init()
     screen = pygame.Surface((1280, 720))
     renderer_module = importlib.import_module("vaporstep.renderer")
@@ -420,9 +464,109 @@ def test_preentry_cues_are_inside_tunnel_aperture() -> None:
 
     for kind in (NoteKind.HANDS, NoteKind.FOOT):
         for lane in range(1, 5):
-            points, _ = renderer._aperture_target_points(kind, lane)
-            assert points
-            for x, y in points:
-                normalized = ((x - cx) / rx) ** 2 + ((y - base_y) / ry) ** 2
-                assert normalized < 0.95
-                assert y <= base_y
+            points = renderer._preentry_glow_arc(kind, lane)
+            assert len(points) == 13
+
+            if kind == NoteKind.HANDS:
+                assert len({y for _, y in points}) > 1
+                assert all(
+                    0.95
+                    < ((x - cx) / rx) ** 2 + ((y - base_y) / ry) ** 2
+                    < 1.05
+                    for x, y in points
+                )
+            else:
+                entry_y = int(renderer._field_y(NoteKind.FOOT, 0.0))
+                assert {y for _, y in points} == {entry_y}
+
+
+def test_preentry_glow_brightens_smoothly_toward_entry() -> None:
+    pygame.font.init()
+    screen = pygame.Surface((1280, 720))
+    renderer_module = importlib.import_module("vaporstep.renderer")
+    renderer = renderer_module.Renderer(screen)
+
+    brightness = [
+        renderer._preentry_brightness(distance, 1.0)
+        for distance in (1.0, 0.75, 0.50, 0.25, 0.0)
+    ]
+    assert brightness[0] == 0.0
+    assert brightness[-1] == 1.0
+    assert all(a < b for a, b in zip(brightness, brightness[1:]))
+
+
+def test_preentry_glow_is_a_broad_bright_bloom_without_a_hard_core() -> None:
+    pygame.font.init()
+    renderer_module = importlib.import_module("vaporstep.renderer")
+    surface = pygame.Surface((200, 200))
+    renderer = renderer_module.Renderer(surface)
+
+    renderer._draw_preentry_glow(
+        surface,
+        [(60, 100), (140, 100)],
+        renderer_module.MAGENTA,
+        1.0,
+    )
+
+    center = surface.get_at((100, 100)).r
+    inner_haze = surface.get_at((100, 107)).r
+    outer_haze = surface.get_at((100, 117)).r
+    beyond_glow = surface.get_at((100, 130)).r
+
+    assert center > 75
+    assert center > inner_haze > outer_haze > 0
+    assert beyond_glow == 0
+
+
+def test_hand_note_colors_alternate_by_event() -> None:
+    pygame.font.init()
+    screen = pygame.Surface((1280, 720))
+    renderer_module = importlib.import_module("vaporstep.renderer")
+    renderer = renderer_module.Renderer(screen)
+
+    assert renderer._hand_note_color(0) == renderer_module.MAGENTA
+    assert renderer._hand_note_color(1) == renderer_module.PURPLE
+    assert renderer._hand_note_color(2) == renderer_module.MAGENTA
+
+
+def test_note_glow_converges_smoothly_into_target() -> None:
+    pygame.font.init()
+    screen = pygame.Surface((1280, 720))
+    renderer_module = importlib.import_module("vaporstep.renderer")
+    renderer = renderer_module.Renderer(screen)
+
+    separations = []
+    for progress in (0.0, 0.25, 0.50, 0.75, 1.0):
+        body, reflection = renderer._glow_projection_progress(progress)
+        separations.append(reflection - body)
+
+    assert all(a > b for a, b in zip(separations, separations[1:]))
+    assert separations[-1] == 0.0
+
+
+def test_keyboard_mode_can_suppress_body_markers() -> None:
+    pygame.font.init()
+    screen = pygame.Surface((1280, 720))
+    renderer_module = importlib.import_module("vaporstep.renderer")
+    renderer = renderer_module.Renderer(screen)
+    marker_calls = 0
+
+    def counted_markers(*args, **kwargs):
+        nonlocal marker_calls
+        marker_calls += 1
+
+    renderer._draw_body_markers = counted_markers
+    renderer.draw(
+        body=BodyState(),
+        mask=None,
+        notes=[],
+        song_time=0.0,
+        song_beat=0.0,
+        status="KEYBOARD ONLY",
+        debug=False,
+        pose_fps=0.0,
+        input_name="keyboard",
+        show_body_markers=False,
+    )
+
+    assert marker_calls == 0

@@ -22,9 +22,9 @@ def test_any_wrist_can_select_either_outer_segment():
     left_shoulder, right_shoulder = shoulders()
     resolver = HandPoseResolver()
 
-    assert resolver.resolve(point(0.32, 0.46), left_shoulder, right_shoulder).lane == 1
+    assert resolver.resolve(point(0.30, 0.46), left_shoulder, right_shoulder).lane == 1
     resolver.reset()
-    assert resolver.resolve(point(0.68, 0.46), left_shoulder, right_shoulder).lane == 4
+    assert resolver.resolve(point(0.70, 0.46), left_shoulder, right_shoulder).lane == 4
 
 
 def test_any_wrist_can_select_either_high_segment():
@@ -41,8 +41,8 @@ def test_cross_body_reach_can_select_opposite_side_segments():
     left_wrist_resolver = HandPoseResolver()
     right_wrist_resolver = HandPoseResolver()
 
-    assert left_wrist_resolver.resolve(point(0.68, 0.46), left_shoulder, right_shoulder).lane == 4
-    assert right_wrist_resolver.resolve(point(0.32, 0.46), left_shoulder, right_shoulder).lane == 1
+    assert left_wrist_resolver.resolve(point(0.70, 0.46), left_shoulder, right_shoulder).lane == 4
+    assert right_wrist_resolver.resolve(point(0.30, 0.46), left_shoulder, right_shoulder).lane == 1
 
     left_wrist_resolver.reset()
     right_wrist_resolver.reset()
@@ -54,11 +54,22 @@ def test_outer_hysteresis_keeps_segment_until_exit_threshold_is_crossed():
     left_shoulder, right_shoulder = shoulders()
     resolver = HandPoseResolver()
 
-    assert resolver.resolve(point(0.32, 0.46), left_shoulder, right_shoulder).lane == 1
-    # dx=-0.60 remains beyond the widened exit threshold (-0.58).
-    assert resolver.resolve(point(0.38, 0.46), left_shoulder, right_shoulder).lane == 1
-    # dx=-0.50 has moved back into the neutral zone.
-    assert resolver.resolve(point(0.40, 0.46), left_shoulder, right_shoulder).lane is None
+    assert resolver.resolve(point(0.30, 0.46), left_shoulder, right_shoulder).lane == 1
+    # dx=-0.75 remains beyond the widened exit threshold (-0.70).
+    assert resolver.resolve(point(0.35, 0.46), left_shoulder, right_shoulder).lane == 1
+    # dx=-0.65 has moved back into the neutral zone.
+    assert resolver.resolve(point(0.37, 0.46), left_shoulder, right_shoulder).lane is None
+
+
+def test_low_hand_neutral_zone_is_symmetric() -> None:
+    left_shoulder, right_shoulder = shoulders()
+
+    assert HandPoseResolver().resolve(
+        point(0.32, 0.46), left_shoulder, right_shoulder
+    ).lane is None
+    assert HandPoseResolver().resolve(
+        point(0.68, 0.46), left_shoulder, right_shoulder
+    ).lane is None
 
 
 def test_high_hysteresis_keeps_raised_wrist_selected_during_small_drops():
@@ -83,7 +94,7 @@ def test_canonical_perimeter_mapping_tracks_the_same_gesture_space():
     left_shoulder, right_shoulder = shoulders()
     resolver = HandPoseResolver()
 
-    left_out = resolver.resolve(point(0.32, 0.46), left_shoulder, right_shoulder)
+    left_out = resolver.resolve(point(0.30, 0.46), left_shoulder, right_shoulder)
     assert left_out.lane == 1
     assert 0.0 <= hand_control_perimeter_along(left_out.control) < 0.25
 
@@ -98,6 +109,6 @@ def test_canonical_perimeter_mapping_tracks_the_same_gesture_space():
     assert 0.50 < hand_control_perimeter_along(right_high.control) < 0.75
 
     resolver.reset()
-    right_out = resolver.resolve(point(0.68, 0.46), left_shoulder, right_shoulder)
+    right_out = resolver.resolve(point(0.70, 0.46), left_shoulder, right_shoulder)
     assert right_out.lane == 4
     assert 0.75 < hand_control_perimeter_along(right_out.control) <= 1.0
