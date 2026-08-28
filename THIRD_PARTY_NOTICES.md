@@ -20,7 +20,7 @@ collects those files where they are provided by the packages.
 | NumPy | Numeric arrays | BSD-3-Clause and bundled notices |
 | simfile | SM/SSC parsing | MIT |
 | setuptools / pkg_resources | Compatibility dependency used by simfile | MIT and bundled notices |
-| imageio-ffmpeg | FFmpeg process discovery/wrapping for recording export | BSD-2-Clause; the bundled FFmpeg executable retains its own license |
+| PyAV | In-process video/audio encoding and muxing for recording export | BSD-3-Clause; bundled FFmpeg shared libraries and codecs retain their own licenses |
 | VaporStep Emoji Symbols (modified Noto Emoji subset) | Monochrome hand/foot capability glyphs | SIL Open Font License 1.1 |
 
 The opencv-python project documents additional licenses for native components
@@ -28,7 +28,11 @@ included in its wheels, including FFmpeg under LGPL-2.1; non-headless Linux
 wheels also include Qt under LGPL-3.0. Preserve `LICENSE-3RD-PARTY.txt` from the
 installed opencv-python distribution in binary releases.
 
-`imageio-ffmpeg==0.6.0` PyPI wheels include platform-specific FFmpeg executables. VaporStep release builds collect that executable so Record Play works without a separate system installation. FFmpeg remains a separate command-line program and retains the license of the exact supplied build. See `FFMPEG_PROVENANCE.md` for the filenames, version families, upstream source links, and the `imageio-ffmpeg` binary provenance chain.
+PyAV binary wheels include FFmpeg shared libraries and codec dependencies so
+Record Play works without a separate system installation. VaporStep calls those
+libraries in-process and does not ship or invoke an `ffmpeg` command-line
+executable. The exact native components and licenses remain those supplied by
+the pinned PyAV wheel; release builds preserve PyAV's packaged license material.
 
 PyInstaller is a build-time dependency. Its bootloader exception permits frozen
 applications to be distributed under the application's own license, subject to

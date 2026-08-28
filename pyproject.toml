@@ -19,7 +19,7 @@ dependencies = [
   "simfile==2.1.1",
   # Pygame 2.6.1 still imports pkg_resources, removed in setuptools 81.
   "setuptools==80.9.0",
-  "imageio-ffmpeg==0.6.0",
+  "av==17.0.1",
 ]
 
 [project.scripts]

@@ -299,8 +299,8 @@ class Renderer:
             ("LICENSES", CYAN, (
                 "VaporStep source code: MIT License.",
                 "MediaPipe/model: Apache-2.0  •  Pygame: LGPL-2.1  •  NumPy: BSD-3-Clause.",
-                "FFmpeg and other bundled components retain their own licenses.",
-                "License/notice files and FFmpeg provenance are bundled with release builds.",
+                "PyAV and other bundled components retain their own licenses.",
+                "Dependency license and notice files are bundled with release builds.",
             )),
         )
         y = int(h * 0.19)

@@ -34,7 +34,7 @@ from .model_asset import ensure_pose_model
 from .preview import SongPreviewPlayer
 from .records import ChartRecord, RecordStore, chart_key, song_key
 from .readiness import camera_ready_prompt, readiness_for_session
-from .recording import RunRecorder, recording_backend_status
+from .recording import RecordingBackendProbe, RunRecorder
 from .renderer import Renderer
 from .resources import resource_path
 from .session import GameSession
@@ -300,6 +300,7 @@ def main(argv: list[str] | None = None) -> int:
     played_only = False
     chain_mode = ChainMode.BLOCKS
     record_play_enabled = False
+    recording_backend_probe = RecordingBackendProbe()
     active_recording: RunRecorder | None = None
     result_recording: RunRecorder | None = None
     applied_scan_complete = False
@@ -959,7 +960,12 @@ def main(argv: list[str] | None = None) -> int:
                                 record_play_enabled = False
                                 load_error = None
                             else:
-                                backend_ok, backend_error = recording_backend_status()
+                                backend_status = recording_backend_probe.result()
+                                if backend_status is None:
+                                    load_error = "Recording support is still initializing. Try again shortly."
+                                    menu_sounds.tick()
+                                    continue
+                                backend_ok, backend_error = backend_status
                                 if backend_ok:
                                     record_play_enabled = True
                                     load_error = None
