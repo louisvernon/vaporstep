@@ -46,6 +46,26 @@ def recording_backend_status() -> tuple[bool, str]:
         return False, str(exc)
 
 
+class RecordingBackendProbe:
+    """Load PyAV and inspect codecs without blocking the menu event loop."""
+
+    def __init__(self) -> None:
+        self._result: tuple[bool, str] = (False, "recording support is still initializing")
+        self._ready = threading.Event()
+        threading.Thread(
+            target=self._run,
+            name="VaporStepRecordingProbe",
+            daemon=True,
+        ).start()
+
+    def _run(self) -> None:
+        self._result = recording_backend_status()
+        self._ready.set()
+
+    def result(self) -> tuple[bool, str] | None:
+        return self._result if self._ready.is_set() else None
+
+
 def _codec_is_available(av_module, name: str) -> bool:
     try:
         av_module.codec.Codec(name, "w")

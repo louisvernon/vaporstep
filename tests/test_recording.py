@@ -12,6 +12,7 @@ import pytest
 from vaporstep.domain import GameplayEvent, GameplayEventType, HitQuality, NoteKind
 from vaporstep.recording import (
     RECORD_SIZE,
+    RecordingBackendProbe,
     RecordingSnapshot,
     RunRecorder,
     recording_backend_status,
@@ -128,6 +129,27 @@ def test_recording_snapshot_surfaces_audio_fallback_error(tmp_path: Path):
     )
     assert "SAVED SILENT" in snap.message
     assert "AUDIO ERROR" in snap.message
+
+
+def test_recording_backend_probe_does_not_block_while_pyav_initializes(monkeypatch):
+    import vaporstep.recording as recording_module
+
+    entered = threading.Event()
+    release = threading.Event()
+
+    def slow_backend_status():
+        entered.set()
+        release.wait(2)
+        return True, ""
+
+    monkeypatch.setattr(recording_module, "recording_backend_status", slow_backend_status)
+    probe = RecordingBackendProbe()
+
+    assert entered.wait(1)
+    assert probe.result() is None
+    release.set()
+    assert probe._ready.wait(1)
+    assert probe.result() == (True, "")
 
 
 def test_threaded_pyav_recorder_produces_video_and_audio(tmp_path: Path):
