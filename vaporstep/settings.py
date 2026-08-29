@@ -13,7 +13,7 @@ MIN_HORIZONTAL_REACH = 1.00
 MAX_HORIZONTAL_REACH = 1.35
 HORIZONTAL_REACH_STEP = 0.05
 PRIVACY_NOTICE_VERSION = 2
-PLAYER_VISUALS = ("silhouette", "skeleton")
+PLAYER_VISUALS = ("silhouette", "skeleton", "character")
 
 
 def default_settings_path() -> Path:
