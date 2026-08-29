@@ -7,7 +7,7 @@ import os
 
 os.environ.setdefault("PYGAME_HIDE_SUPPORT_PROMPT", "1")
 
-from vaporstep.app import main
+from vaporstep.player_visual_runtime import main
 
 if __name__ == "__main__":
     raise SystemExit(main())
