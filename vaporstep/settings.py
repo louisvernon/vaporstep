@@ -13,6 +13,7 @@ MIN_HORIZONTAL_REACH = 1.00
 MAX_HORIZONTAL_REACH = 1.35
 HORIZONTAL_REACH_STEP = 0.05
 PRIVACY_NOTICE_VERSION = 2
+PLAYER_VISUALS = ("silhouette", "skeleton")
 
 
 def default_settings_path() -> Path:
@@ -29,12 +30,18 @@ def clamp_horizontal_reach(value: float) -> float:
     return round(value, 2)
 
 
+def normalize_player_visual(value: object) -> str:
+    visual = str(value or "").strip().casefold()
+    return visual if visual in PLAYER_VISUALS else "silhouette"
+
+
 @dataclass
 class AppSettings:
     song_folder: str = field(default_factory=default_song_folder)
     camera_index: int = 0
     camera_enabled: bool = True
     horizontal_reach: float = PLAYER_HORIZONTAL_ZOOM
+    player_visual: str = "silhouette"
     favorite_song_keys: list[str] = field(default_factory=list)
     played_song_keys: list[str] = field(default_factory=list)
     last_song_key: str = ""
@@ -58,6 +65,7 @@ class AppSettings:
             camera_index=max(0, int(self.camera_index)),
             camera_enabled=bool(self.camera_enabled),
             horizontal_reach=clamp_horizontal_reach(self.horizontal_reach),
+            player_visual=normalize_player_visual(self.player_visual),
             favorite_song_keys=clean_keys(self.favorite_song_keys),
             played_song_keys=clean_keys(self.played_song_keys),
             last_song_key=str(self.last_song_key or ""),
@@ -95,6 +103,7 @@ class SettingsStore:
                 camera_index=int(raw.get("camera_index", 0)),
                 camera_enabled=bool(raw.get("camera_enabled", True)),
                 horizontal_reach=float(raw.get("horizontal_reach", PLAYER_HORIZONTAL_ZOOM)),
+                player_visual=normalize_player_visual(raw.get("player_visual", "silhouette")),
                 favorite_song_keys=raw.get("favorite_song_keys", []),
                 played_song_keys=raw.get("played_song_keys", []),
                 last_song_key=str(raw.get("last_song_key", "") or ""),

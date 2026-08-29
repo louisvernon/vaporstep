@@ -15,6 +15,18 @@ class BodyPoint:
 
 
 @dataclass(frozen=True)
+class PoseFigure:
+    """Display-ready copy of MediaPipe's already-computed pose landmarks."""
+
+    landmarks: tuple[BodyPoint, ...] = ()
+
+    def point(self, index: int) -> BodyPoint:
+        if 0 <= index < len(self.landmarks):
+            return self.landmarks[index]
+        return BodyPoint()
+
+
+@dataclass(frozen=True)
 class BodyState:
     left_wrist: BodyPoint = field(default_factory=BodyPoint)
     right_wrist: BodyPoint = field(default_factory=BodyPoint)

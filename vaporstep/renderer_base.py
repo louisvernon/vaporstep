@@ -23,7 +23,7 @@ from .config import (
     VANISH_HALF_WIDTH,
     VANISH_Y,
 )
-from .domain import BodyPoint, BodyState, ChainMode, ChainState, GameNote, HitQuality, NoteKind, RuntimeChain, SustainSource
+from .domain import BodyPoint, BodyState, ChainMode, ChainState, GameNote, HitQuality, NoteKind, PoseFigure, RuntimeChain, SustainSource
 from .font_support import MetadataFont
 from .keyboard_input import label_for_lane
 from .menu import SongMenu
@@ -45,6 +45,20 @@ RED = (255, 75, 110)
 AMBER = (255, 190, 75)
 ELECTRIC_YELLOW = (255, 232, 70)
 HIT_BRICK_POP_SECONDS = 0.16
+POSE_FIGURE_CONNECTIONS = (
+    (11, 12),
+    (11, 13),
+    (13, 15),
+    (12, 14),
+    (14, 16),
+    (11, 23),
+    (12, 24),
+    (23, 24),
+    (23, 25),
+    (25, 27),
+    (24, 26),
+    (26, 28),
+)
 
 
 def _blend(a: tuple[int, int, int], b: tuple[int, int, int], amount: float) -> tuple[int, int, int]:
@@ -154,6 +168,7 @@ class Renderer:
         show_lower_body_sources: bool = False,
         show_body_markers: bool = True,
         profile_lines: tuple[str, ...] = (),
+        pose_figure: PoseFigure | None = None,
     ) -> None:
         profiling = self._profiling_enabled
         phase_times: dict[str, float] = {}
@@ -173,6 +188,8 @@ class Renderer:
 
         if mask is not None:
             self._draw_silhouette(mask)
+        elif pose_figure is not None:
+            self._draw_pose_figure(pose_figure)
         finish_phase("silhouette")
 
         overdrive = stats is not None and stats.multiplier >= 5 and running
@@ -454,6 +471,7 @@ class Renderer:
         camera_index: int | None,
         horizontal_reach: float,
         camera_status: str,
+        player_visual: str = "silhouette",
     ) -> None:
         w, h = self.size
         panel = pygame.Surface((min(660, w - 40), 108), pygame.SRCALPHA)
@@ -465,7 +483,9 @@ class Renderer:
         )
         self.screen.blit(line1, (38, h - 118))
         line2 = self.small_font.render(
-            "←/→ reach    ↑/↓ camera (below 0 = keyboard)    Esc save & return", True, CYAN
+            f"←/→ reach    ↑/↓ camera    V visual ({player_visual.upper()})    Esc save & return",
+            True,
+            CYAN,
         )
         self.screen.blit(line2, (38, h - 88))
         tracking = self.small_font.render(
@@ -1023,6 +1043,59 @@ class Renderer:
         if self._silhouette_surface is not None:
             self.screen.blit(self._silhouette_surface, viewport.topleft)
 
+    def _draw_pose_figure(self, figure: PoseFigure) -> None:
+        """Draw a cheap neon figure from MediaPipe's existing landmarks."""
+        viewport = self._camera_rect()
+        limb_width = max(8, int(round(viewport.width * 0.018)))
+        core_width = max(2, limb_width // 5)
+        body_color = _blend(BG, PURPLE, 0.62)
+        core_color = _blend(PURPLE, CYAN, 0.34)
+
+        torso = tuple(figure.point(index) for index in (11, 12, 24, 23))
+        if all(point.visible for point in torso):
+            polygon = [self._screen_point(point) for point in torso]
+            pygame.draw.polygon(self.screen, _blend(BG, PURPLE, 0.38), polygon)
+            pygame.draw.lines(self.screen, core_color, True, polygon, core_width)
+
+        visible_joints: set[int] = set()
+        for start_index, end_index in POSE_FIGURE_CONNECTIONS:
+            start = figure.point(start_index)
+            end = figure.point(end_index)
+            if not start.visible or not end.visible:
+                continue
+            p0 = self._screen_point(start)
+            p1 = self._screen_point(end)
+            pygame.draw.line(self.screen, body_color, p0, p1, limb_width)
+            pygame.draw.line(self.screen, core_color, p0, p1, core_width)
+            visible_joints.update((start_index, end_index))
+
+        joint_radius = max(3, limb_width // 3)
+        for index in visible_joints:
+            point = figure.point(index)
+            pygame.draw.circle(self.screen, body_color, self._screen_point(point), joint_radius)
+            pygame.draw.circle(
+                self.screen,
+                core_color,
+                self._screen_point(point),
+                max(1, core_width // 2),
+            )
+
+        left_ear = figure.point(7)
+        right_ear = figure.point(8)
+        nose = figure.point(0)
+        if left_ear.visible and right_ear.visible:
+            left = self._screen_point(left_ear)
+            right = self._screen_point(right_ear)
+            center = ((left[0] + right[0]) // 2, (left[1] + right[1]) // 2)
+            radius = max(limb_width, int(round(math.dist(left, right) * 0.62)))
+        elif nose.visible:
+            center = self._screen_point(nose)
+            radius = max(limb_width, int(round(viewport.width * 0.026)))
+        else:
+            return
+        pygame.draw.circle(self.screen, body_color, center, radius)
+        pygame.draw.circle(self.screen, core_color, center, radius, core_width)
+
     def _screen_point(self, p: BodyPoint) -> tuple[int, int]:
         viewport = self._camera_rect()
         return (int(viewport.left + p.x * viewport.width), int(viewport.top + p.y * viewport.height))
@@ -1182,7 +1255,7 @@ class Renderer:
                 (
                     (
                         f"RENDERER ROLLING (ms)  total={phases.get('total', 0.0):.1f}  "
-                        f"silhouette={phases.get('silhouette', 0.0):.1f}  "
+                        f"player visual={phases.get('silhouette', 0.0):.1f}  "
                         f"playfields={phases.get('playfields', 0.0):.1f}  "
                         f"chains={phases.get('chains', 0.0):.1f}"
                     ),

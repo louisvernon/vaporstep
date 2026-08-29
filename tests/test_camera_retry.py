@@ -111,3 +111,18 @@ def test_result_callback_releases_backpressure_gate():
 
     assert not camera._inference_busy.is_set()
     assert camera.snapshot().inference_latency_ms >= 0.0
+
+
+def test_pose_figure_reuses_landmarks_without_segmentation():
+    camera = PoseCameraInput("unused.task", output_segmentation_masks=False)
+    landmarks = [
+        SimpleNamespace(x=index / 100.0, y=index / 200.0, visibility=1.0, presence=1.0)
+        for index in range(33)
+    ]
+
+    figure = camera._pose_figure(landmarks)
+
+    assert camera.output_segmentation_masks is False
+    assert len(figure.landmarks) == 33
+    assert figure.point(13).visible
+    assert figure.point(13).y == landmarks[13].y

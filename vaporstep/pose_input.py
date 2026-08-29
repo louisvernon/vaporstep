@@ -29,7 +29,7 @@ from .config import (
     VANISH_HALF_WIDTH,
     VANISH_Y,
 )
-from .domain import BodyPoint, BodyState
+from .domain import BodyPoint, BodyState, PoseFigure
 from .hand_control import HandPoseResolver
 from .lanes import (
     HystereticLaneResolver,
@@ -97,6 +97,7 @@ def probe_camera(camera_index: int = 0) -> bool:
 @dataclass(frozen=True)
 class PoseSnapshot:
     body: BodyState
+    figure: PoseFigure | None = None
     mask: np.ndarray | None = None
     camera_ok: bool = False
     message: str = "Starting camera…"
@@ -133,10 +134,17 @@ class _LowerLegFilter:
 class PoseCameraInput:
     """OpenCV camera capture + asynchronous MediaPipe pose inference."""
 
-    def __init__(self, model_path: str, camera_index: int = 0, horizontal_zoom: float = 1.10) -> None:
+    def __init__(
+        self,
+        model_path: str,
+        camera_index: int = 0,
+        horizontal_zoom: float = 1.10,
+        output_segmentation_masks: bool = True,
+    ) -> None:
         self.model_path = model_path
         self.camera_index = camera_index
         self.horizontal_zoom = float(horizontal_zoom)
+        self.output_segmentation_masks = bool(output_segmentation_masks)
         self._lock = threading.Lock()
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -191,7 +199,7 @@ class PoseCameraInput:
             min_pose_detection_confidence=0.5,
             min_pose_presence_confidence=0.5,
             min_tracking_confidence=0.5,
-            output_segmentation_masks=True,
+            output_segmentation_masks=self.output_segmentation_masks,
             result_callback=self._on_result,
         )
         self._landmarker = mp.tasks.vision.PoseLandmarker.create_from_options(options)
@@ -349,6 +357,17 @@ class PoseCameraInput:
         x = zoom_normalized_x(1.0 - float(lm.x), self.horizontal_zoom)
         return BodyPoint(x=x, y=float(lm.y), visible=bool(visible))
 
+    def _pose_figure(
+        self,
+        landmarks,
+        overrides: dict[int, BodyPoint] | None = None,
+    ) -> PoseFigure:
+        points = [self._camera_point(lm) for lm in landmarks]
+        for index, point in (overrides or {}).items():
+            if 0 <= index < len(points):
+                points[index] = point
+        return PoseFigure(tuple(points))
+
     def _resolve_point(
         self,
         point: BodyPoint,
@@ -492,6 +511,19 @@ class PoseCameraInput:
         rk, ra, rfc = self._lower_body_points(
             lm[RIGHT_KNEE], lm[RIGHT_ANKLE], self._resolvers["rk"], leg="right"
         )
+        figure = self._pose_figure(
+            lm,
+            {
+                LEFT_SHOULDER: left_shoulder,
+                RIGHT_SHOULDER: right_shoulder,
+                LEFT_WRIST: raw_lw,
+                RIGHT_WRIST: raw_rw,
+                LEFT_KNEE: lk,
+                RIGHT_KNEE: rk,
+                LEFT_ANKLE: la,
+                RIGHT_ANKLE: ra,
+            },
+        )
 
         body = BodyState(
             left_wrist=lw,
@@ -524,6 +556,7 @@ class PoseCameraInput:
         with self._lock:
             self._snapshot = PoseSnapshot(
                 body=body,
+                figure=figure,
                 mask=mask,
                 camera_ok=True,
                 message=message,

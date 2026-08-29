@@ -48,9 +48,11 @@ from .resources import resource_path
 from .session import GameSession
 from .settings import (
     HORIZONTAL_REACH_STEP,
+    PLAYER_VISUALS,
     PRIVACY_NOTICE_VERSION,
     SettingsStore,
     clamp_horizontal_reach,
+    normalize_player_visual,
 )
 from .simfile_loader import load_chart
 from .tracking_overlay import draw_lower_body_tracking_overlay
@@ -157,6 +159,12 @@ def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="VaporStep webcam full-body rhythm game")
     p.add_argument("--camera", type=int, default=None, help="OpenCV camera index")
     p.add_argument("--reach", type=float, default=None, help="Horizontal tracking reach multiplier")
+    p.add_argument(
+        "--player-visual",
+        choices=PLAYER_VISUALS,
+        default=None,
+        help="Render the tracked player as a real silhouette or primitive skeleton",
+    )
     p.add_argument("--keyboard", action="store_true", help="Start in keyboard input mode")
     p.add_argument("--fullscreen", action="store_true", help="Start fullscreen")
     p.add_argument(
@@ -274,6 +282,8 @@ def main(argv: list[str] | None = None) -> int:
         settings_store.settings.camera_enabled = True
     if args.reach is not None:
         settings_store.settings.horizontal_reach = clamp_horizontal_reach(args.reach)
+    if args.player_visual is not None:
+        settings_store.settings.player_visual = normalize_player_visual(args.player_visual)
 
     # Configure the mixer before pygame.init() opens the audio device. A modest
     # 1024-sample buffer gives older CPUs more scheduling headroom without the
@@ -554,6 +564,7 @@ def main(argv: list[str] | None = None) -> int:
                 str(model_path),
                 camera_index=settings_store.settings.camera_index,
                 horizontal_zoom=settings_store.settings.horizontal_reach,
+                output_segmentation_masks=(settings_store.settings.player_visual == "silhouette"),
             )
             camera.start()
             keyboard_only = False
@@ -943,6 +954,19 @@ def main(argv: list[str] | None = None) -> int:
                             if camera is not None:
                                 camera.set_horizontal_zoom(settings_store.settings.horizontal_reach)
                             menu_sounds.tick()
+                        elif event.key == pygame.K_v:
+                            settings_store.settings.player_visual = (
+                                "skeleton"
+                                if settings_store.settings.player_visual == "silhouette"
+                                else "silhouette"
+                            )
+                            _safe_settings_save(settings_store)
+                            restart_camera()
+                            calibration_session.restart()
+                            calibration_session.set_keyboard_mode(True)
+                            keyboard.reset()
+                            renderer.reset_game_effects()
+                            menu_sounds.tick()
                         elif event.key == pygame.K_UP:
                             if not force_keyboard:
                                 next_index = (
@@ -1242,6 +1266,7 @@ def main(argv: list[str] | None = None) -> int:
             keyboard_body = keyboard.body_state()
             camera_ready = False
             pose_snapshot = None
+            pose_figure = None
             if keyboard_only:
                 body = keyboard_body
                 mask = None
@@ -1271,6 +1296,8 @@ def main(argv: list[str] | None = None) -> int:
                 pose_snapshot = snap
                 body = add_keyboard_lanes(snap.body, keyboard_body)
                 mask = snap.mask
+                if settings_store.settings.player_visual == "skeleton":
+                    pose_figure = snap.figure
                 camera_status_text = (
                     readiness_for_session(body, session)
                     if mode == "game" and session is not None
@@ -1337,11 +1364,13 @@ def main(argv: list[str] | None = None) -> int:
                     show_lower_body_sources=True,
                     show_body_markers=not keyboard_only and camera is not None,
                     profile_lines=profile_lines,
+                    pose_figure=pose_figure,
                 )
                 renderer.draw_calibration_overlay(
                     displayed_camera_index(),
                     settings_store.settings.horizontal_reach,
                     camera_status(),
+                    settings_store.settings.player_visual,
                 )
                 draw_lower_body_tracking_overlay(renderer, body)
                 render_ms = (time.perf_counter() - render_started) * 1000.0
@@ -1477,6 +1506,7 @@ def main(argv: list[str] | None = None) -> int:
                 chain_mode=session.chain_mode,
                 show_body_markers=not keyboard_only and camera is not None,
                 profile_lines=profile_lines,
+                pose_figure=pose_figure,
             )
             if active_recording is not None:
                 active_recording.capture(renderer.screen, time.monotonic())

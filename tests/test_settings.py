@@ -1,7 +1,12 @@
 import json
 from pathlib import Path
 
-from vaporstep.settings import AppSettings, SettingsStore, clamp_horizontal_reach
+from vaporstep.settings import (
+    AppSettings,
+    SettingsStore,
+    clamp_horizontal_reach,
+    normalize_player_visual,
+)
 
 
 def test_settings_round_trip(tmp_path: Path):
@@ -23,6 +28,16 @@ def test_keyboard_only_camera_choice_round_trips(tmp_path: Path):
     store.save()
 
     assert SettingsStore(path).settings.camera_enabled is False
+
+
+def test_player_visual_round_trips_and_invalid_values_fall_back(tmp_path: Path):
+    path = tmp_path / "settings.json"
+    store = SettingsStore(path)
+    store.settings.player_visual = "skeleton"
+    store.save()
+
+    assert SettingsStore(path).settings.player_visual == "skeleton"
+    assert normalize_player_visual("unknown") == "silhouette"
 
 
 def test_existing_settings_default_to_camera_enabled(tmp_path: Path):

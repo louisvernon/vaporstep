@@ -9,6 +9,7 @@ import pygame
 import pytest
 
 from vaporstep.domain import (
+    BodyPoint,
     BodyState,
     ChainMode,
     ChainState,
@@ -16,6 +17,7 @@ from vaporstep.domain import (
     HitQuality,
     ImplicitChain,
     NoteKind,
+    PoseFigure,
     RuntimeChain,
     SustainSource,
 )
@@ -549,6 +551,39 @@ def test_silhouette_processing_uses_cropped_mask_resolution(monkeypatch) -> None
     assert processed_shapes == [(480, expected_width)]
     assert renderer._silhouette_surface is not None
     assert renderer._silhouette_surface.get_size() == renderer._camera_rect().size
+
+
+def test_primitive_pose_figure_draws_from_landmarks_without_a_mask() -> None:
+    pygame.font.init()
+    renderer_module = importlib.import_module("vaporstep.renderer")
+    screen = pygame.Surface((1280, 720))
+    renderer = renderer_module.Renderer(screen)
+    screen.fill((2, 2, 8))
+    landmarks = [BodyPoint() for _ in range(33)]
+    coordinates = {
+        0: (0.50, 0.13),
+        7: (0.47, 0.15),
+        8: (0.53, 0.15),
+        11: (0.42, 0.27),
+        12: (0.58, 0.27),
+        13: (0.36, 0.42),
+        14: (0.64, 0.42),
+        15: (0.31, 0.57),
+        16: (0.69, 0.57),
+        23: (0.45, 0.53),
+        24: (0.55, 0.53),
+        25: (0.43, 0.72),
+        26: (0.57, 0.72),
+        27: (0.41, 0.91),
+        28: (0.59, 0.91),
+    }
+    for index, (x, y) in coordinates.items():
+        landmarks[index] = BodyPoint(x=x, y=y, visible=True)
+
+    renderer._draw_pose_figure(PoseFigure(tuple(landmarks)))
+
+    pixels = pygame.surfarray.array3d(screen)
+    assert np.any(pixels != np.array((2, 2, 8), dtype=np.uint8))
 
 
 def test_preentry_glows_are_centered_on_the_entry_boundaries() -> None:

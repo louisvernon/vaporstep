@@ -31,7 +31,7 @@ VaporStep has out of the box support for StepMania style step/sim files, so you 
 - Calibrate the camera and reach to suit your room and camera.
 - Browse songs by difficulty, BPM and hand/foot information.
 - Favorite songs, filter previously played songs and keep local high scores.
-- Record each run as a local shareable video with the rendered silhouette and game audio.
+- Record each run as a local shareable video with the rendered player visual and game audio.
 - Play on macOS, Windows and Linux.
 
 VaporStep does **not** include songs or song-pack artwork. You provide your own compatible song library.
@@ -44,7 +44,7 @@ The easiest way to use VaporStep is with a packaged build from the project relea
 
 1. Download the build for your platform and launch VaporStep.
 2. Put your compatible song library in `~/VaporStep/Songs`, or choose **Song Folder** to use another location.
-3. Open **Calibration** if you want to check camera position or adjust reach.
+3. Open **Calibration** if you want to check camera position or adjust reach. Press **V** there to choose the real silhouette or the lower-cost pose skeleton.
 4. Choose **Play**, pick a song and move into position.
 
 On first launch your operating system may ask for camera access. VaporStep releases the camera whenever you are browsing menus or results and acquires it only for calibration and gameplay. If you later choose a song folder in an operating-system protected location, the OS may separately ask for permission to access it.
@@ -73,7 +73,7 @@ If you have a medical condition or concern about physical activity, seek appropr
 
 ## Privacy
 
-Raw webcam frames are processed locally and are not saved or uploaded by VaporStep. The camera is used only during calibration and gameplay. If **Record Play** is enabled, VaporStep saves only the rendered game view — including your stylized silhouette — and reconstructed game audio to a local video file. VaporStep uses MediaPipe for on-device pose detection and tracking; camera/video input is processed on-device.
+Raw webcam frames are processed locally and are not saved or uploaded by VaporStep. The camera is used only during calibration and gameplay. If **Record Play** is enabled, VaporStep saves only the rendered game view — including your selected silhouette or pose figure — and reconstructed game audio to a local video file. VaporStep uses MediaPipe for on-device pose detection and tracking; camera/video input is processed on-device.
 
 Song libraries and high scores remain local to your computer. See [SECURITY.md](SECURITY.md) for security reporting and additional implementation notes.
 
