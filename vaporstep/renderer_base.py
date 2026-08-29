@@ -998,23 +998,25 @@ class Renderer:
                 crop_w = max(1, min(source_w, int(round(source_w / self.player_horizontal_zoom))))
                 x0 = max(0, (source_w - crop_w) // 2)
                 source = mask[:, x0 : x0 + crop_w]
-            resized = cv2.resize(source, size, interpolation=cv2.INTER_LINEAR)
-            clipped = np.clip((resized - 0.25) / 0.55, 0.0, 1.0)
+            source_size = (source.shape[1], source.shape[0])
+            clipped = np.clip((source - 0.25) / 0.55, 0.0, 1.0)
             alpha = (clipped * 75).astype(np.uint8)
-            surf = pygame.Surface(size, pygame.SRCALPHA)
+            surf = pygame.Surface(source_size, pygame.SRCALPHA)
             surf.fill((*PURPLE, 0))
             a = pygame.surfarray.pixels_alpha(surf)
             a[:, :] = alpha.T
             del a
 
-            binary = (resized > 0.50).astype(np.uint8) * 255
+            binary = (source > 0.50).astype(np.uint8) * 255
             edges = cv2.Canny(binary, 60, 120)
-            outline = pygame.Surface(size, pygame.SRCALPHA)
+            outline = pygame.Surface(source_size, pygame.SRCALPHA)
             outline.fill((*CYAN, 0))
             oa = pygame.surfarray.pixels_alpha(outline)
             oa[:, :] = (edges.T * 0.60).astype(np.uint8)
             del oa
             surf.blit(outline, (0, 0))
+            if source_size != size:
+                surf = pygame.transform.smoothscale(surf, size)
             self._silhouette_surface = surf
             self._last_mask = mask
             self._silhouette_size = size

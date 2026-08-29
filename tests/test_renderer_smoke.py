@@ -4,6 +4,7 @@ import importlib
 from pathlib import Path
 from types import SimpleNamespace
 
+import numpy as np
 import pygame
 import pytest
 
@@ -528,6 +529,26 @@ def test_playfield_key_labels_are_rendered_once() -> None:
     renderer._draw_key_labels(hand_enabled=True, foot_enabled=True)
 
     assert len(rendered) == 8
+
+
+def test_silhouette_processing_uses_cropped_mask_resolution(monkeypatch) -> None:
+    pygame.font.init()
+    renderer_module = importlib.import_module("vaporstep.renderer")
+    base_module = importlib.import_module("vaporstep.renderer_base")
+    renderer = renderer_module.Renderer(pygame.Surface((1280, 720)))
+    processed_shapes = []
+
+    def fake_canny(binary, _low, _high):
+        processed_shapes.append(binary.shape)
+        return np.zeros_like(binary)
+
+    monkeypatch.setattr(base_module.cv2, "Canny", fake_canny)
+    renderer._draw_silhouette(np.zeros((480, 640), dtype=np.float32))
+
+    expected_width = round(640 / renderer.player_horizontal_zoom)
+    assert processed_shapes == [(480, expected_width)]
+    assert renderer._silhouette_surface is not None
+    assert renderer._silhouette_surface.get_size() == renderer._camera_rect().size
 
 
 def test_preentry_glows_are_centered_on_the_entry_boundaries() -> None:
