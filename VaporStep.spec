@@ -46,8 +46,6 @@ datas = mp_datas + ffmpeg_datas + sim_datas + [
     (str(root / "MODEL_ASSETS.md"), "."),
     (str(root / "FFMPEG_PROVENANCE.md"), "."),
 ]
-for avatar_asset in (assets / "avatar").glob("*.png"):
-    datas.append((str(avatar_asset), "assets/avatar"))
 
 # Preserve license/notice files from the exact distributions installed in the
 # build environment. This keeps frozen releases aligned with dependency

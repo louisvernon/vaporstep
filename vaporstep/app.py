@@ -38,7 +38,7 @@ from .keyboard_input import KeyboardBodyInput, add_keyboard_lanes
 from .library_index import LibraryIndexer, LibraryScanSnapshot
 from .menu import HeldMenuRepeater, MenuAction, SongMenu, action_for_event
 from .model_asset import ensure_pose_model
-from .performance import RuntimeProfiler
+from .performance import AdaptiveFrameRate, RuntimeProfiler
 from .preview import SongPreviewPlayer
 from .records import ChartRecord, RecordStore, chart_key, song_key
 from .readiness import camera_ready_prompt, readiness_for_session
@@ -115,7 +115,13 @@ def _finish_startup_splash(
         _draw_startup_frame(renderer, clock, "READY")
 
 
-def _profile_lines(profile, pose_snapshot) -> tuple[str, ...]:
+def _profile_lines(
+    profile,
+    pose_snapshot,
+    *,
+    target_fps: int = TARGET_FPS,
+    actual_fps: float = 0.0,
+) -> tuple[str, ...]:
     if profile.samples:
         lines = [
             (
@@ -124,7 +130,8 @@ def _profile_lines(profile, pose_snapshot) -> tuple[str, ...]:
                 f"display flip={profile.flip_ms:.2f}"
             ),
             (
-                f"FRAME BUDGET  over 16.7ms={profile.missed_60hz}/{profile.samples}  "
+                f"FRAME RATE  target={target_fps}fps  actual={actual_fps:.1f}fps  "
+                f"over 16.7ms={profile.missed_60hz}/{profile.samples}  "
                 f"over 33.3ms={profile.missed_30hz}/{profile.samples}"
             ),
         ]
@@ -643,9 +650,27 @@ def main(argv: list[str] | None = None) -> int:
 
     debug = False
     runtime_profiler = RuntimeProfiler()
+    frame_rate = AdaptiveFrameRate(high_fps=TARGET_FPS, low_fps=30)
     running = True
     calibration_session = GameSession(demo_notes=make_demo_notes())
     calibration_last_beat: int | None = None
+
+    def record_runtime_frame(
+        *,
+        update_ms: float,
+        render_ms: float,
+        flip_ms: float,
+        started: float,
+    ) -> None:
+        work_ms = (time.perf_counter() - started) * 1000.0
+        runtime_profiler.record(
+            update_ms=update_ms,
+            render_ms=render_ms,
+            flip_ms=flip_ms,
+            work_ms=work_ms,
+        )
+        if frame_rate.observe(work_ms):
+            print(f"Render target adjusted to {frame_rate.target_fps} FPS")
 
     def toggle_fullscreen() -> None:
         nonlocal fullscreen, screen
@@ -1338,7 +1363,12 @@ def main(argv: list[str] | None = None) -> int:
                 song_beat = calibration_session.beat_position
                 visible_notes = calibration_session.render_notes(song_time, song_beat)
                 profile = runtime_profiler.snapshot()
-                profile_lines = _profile_lines(profile, pose_snapshot)
+                profile_lines = _profile_lines(
+                    profile,
+                    pose_snapshot,
+                    target_fps=frame_rate.target_fps,
+                    actual_fps=clock.get_fps(),
+                )
                 render_started = time.perf_counter()
                 renderer.draw(
                     body=body,
@@ -1377,13 +1407,13 @@ def main(argv: list[str] | None = None) -> int:
                 flip_started = time.perf_counter()
                 pygame.display.flip()
                 flip_ms = (time.perf_counter() - flip_started) * 1000.0
-                runtime_profiler.record(
+                record_runtime_frame(
                     update_ms=update_ms,
                     render_ms=render_ms,
                     flip_ms=flip_ms,
-                    work_ms=(time.perf_counter() - loop_work_started) * 1000.0,
+                    started=loop_work_started,
                 )
-                clock.tick(TARGET_FPS)
+                clock.tick(frame_rate.target_fps)
                 continue
 
             assert session is not None
@@ -1474,7 +1504,12 @@ def main(argv: list[str] | None = None) -> int:
             song_beat = session.beat_position
             visible_notes = session.render_notes(song_time, song_beat)
             profile = runtime_profiler.snapshot()
-            profile_lines = _profile_lines(profile, pose_snapshot)
+            profile_lines = _profile_lines(
+                profile,
+                pose_snapshot,
+                target_fps=frame_rate.target_fps,
+                actual_fps=clock.get_fps(),
+            )
             render_started = time.perf_counter()
             renderer.draw(
                 body=body,
@@ -1516,13 +1551,13 @@ def main(argv: list[str] | None = None) -> int:
             flip_started = time.perf_counter()
             pygame.display.flip()
             flip_ms = (time.perf_counter() - flip_started) * 1000.0
-            runtime_profiler.record(
+            record_runtime_frame(
                 update_ms=update_ms,
                 render_ms=render_ms,
                 flip_ms=flip_ms,
-                work_ms=(time.perf_counter() - loop_work_started) * 1000.0,
+                started=loop_work_started,
             )
-            clock.tick(TARGET_FPS)
+            clock.tick(frame_rate.target_fps)
     finally:
         if mode == "game":
             finalize_activity_run("escaped")
