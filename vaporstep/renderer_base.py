@@ -78,11 +78,13 @@ class Renderer:
         self.player_horizontal_zoom = 1.10
         self._profiling_enabled = False
         self._phase_times_ms: dict[str, float] = {}
+        self._phase_averages_ms: dict[str, float] = {}
 
     def set_profiling_enabled(self, enabled: bool) -> None:
         self._profiling_enabled = bool(enabled)
         if not enabled:
             self._phase_times_ms = {}
+            self._phase_averages_ms = {}
 
     @property
     def phase_times_ms(self) -> dict[str, float]:
@@ -234,6 +236,11 @@ class Renderer:
         if profiling:
             phase_times["total"] = sum(phase_times.values())
             self._phase_times_ms = phase_times
+            for name, value in phase_times.items():
+                previous = self._phase_averages_ms.get(name)
+                self._phase_averages_ms[name] = (
+                    value if previous is None else 0.9 * previous + 0.1 * value
+                )
 
     def draw_recording_indicator(self) -> None:
         w, _ = self.size
@@ -1154,8 +1161,8 @@ class Renderer:
             ("RF", body.right_foot_control),
         ]
         lines = list(profile_lines)
-        if self._phase_times_ms:
-            phases = self._phase_times_ms
+        if self._phase_averages_ms:
+            phases = self._phase_averages_ms
             primary_names = (
                 "silhouette",
                 "playfields",
@@ -1172,7 +1179,7 @@ class Renderer:
             lines.extend(
                 (
                     (
-                        f"RENDERER (ms)  total={phases.get('total', 0.0):.1f}  "
+                        f"RENDERER ROLLING (ms)  total={phases.get('total', 0.0):.1f}  "
                         f"silhouette={phases.get('silhouette', 0.0):.1f}  "
                         f"playfields={phases.get('playfields', 0.0):.1f}  "
                         f"chains={phases.get('chains', 0.0):.1f}"
