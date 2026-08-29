@@ -493,6 +493,43 @@ def test_hand_arc_reuses_cached_tunnel_geometry() -> None:
     assert calls == 1
 
 
+def test_static_playfield_caches_are_reused_and_size_scoped() -> None:
+    pygame.font.init()
+    renderer_module = importlib.import_module("vaporstep.renderer")
+    renderer = renderer_module.Renderer(pygame.Surface((1280, 720)))
+
+    band = renderer._hand_depth_band(0.0, 0.125)
+    depth_surface = renderer._hand_depth_surface()
+    gutter_surface = renderer._floor_gutter_fill_surface()
+    assert renderer._hand_depth_band(0.0, 0.125) is band
+    assert renderer._hand_depth_surface() is depth_surface
+    assert renderer._floor_gutter_fill_surface() is gutter_surface
+
+    renderer.replace_screen(pygame.Surface((1024, 600)))
+    assert renderer._hand_depth_band(0.0, 0.125) is not band
+    assert renderer._hand_depth_surface() is not depth_surface
+    assert renderer._floor_gutter_fill_surface() is not gutter_surface
+
+
+def test_playfield_key_labels_are_rendered_once() -> None:
+    pygame.font.init()
+    renderer_module = importlib.import_module("vaporstep.renderer")
+    renderer = renderer_module.Renderer(pygame.Surface((1280, 720)))
+    base_font = renderer.small_font
+    rendered = []
+
+    class CountingFont:
+        def render(self, *args, **kwargs):
+            rendered.append(args[0])
+            return base_font.render(*args, **kwargs)
+
+    renderer.small_font = CountingFont()
+    renderer._draw_key_labels(hand_enabled=True, foot_enabled=True)
+    renderer._draw_key_labels(hand_enabled=True, foot_enabled=True)
+
+    assert len(rendered) == 8
+
+
 def test_preentry_glows_are_centered_on_the_entry_boundaries() -> None:
     pygame.font.init()
     screen = pygame.Surface((1280, 720))
