@@ -21,7 +21,14 @@ from .activity_ui import (
     draw_profile_badge,
     draw_profile_picker,
 )
-from .audio_fx import GameplaySounds, MenuAmbience, MenuSounds
+from .audio_fx import (
+    MIXER_BUFFER_SAMPLES,
+    SFX_CHANNELS,
+    SFX_SAMPLE_RATE,
+    GameplaySounds,
+    MenuAmbience,
+    MenuSounds,
+)
 from .config import TARGET_FPS, WINDOW_HEIGHT, WINDOW_WIDTH
 from .demo import make_demo_notes
 from .directory_browser import DirectoryBrowser
@@ -268,6 +275,15 @@ def main(argv: list[str] | None = None) -> int:
     if args.reach is not None:
         settings_store.settings.horizontal_reach = clamp_horizontal_reach(args.reach)
 
+    # Configure the mixer before pygame.init() opens the audio device. A modest
+    # 1024-sample buffer gives older CPUs more scheduling headroom without the
+    # much larger rhythm-game latency of a 2048-sample buffer.
+    pygame.mixer.pre_init(
+        frequency=SFX_SAMPLE_RATE,
+        size=-16,
+        channels=SFX_CHANNELS,
+        buffer=MIXER_BUFFER_SAMPLES,
+    )
     pygame.init()
     pygame.display.set_caption(f"VaporStep V{APP_VERSION}")
     try:

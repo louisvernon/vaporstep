@@ -308,16 +308,25 @@ class GameSession:
         """Begin chart time zero and start audio if the chart has music."""
         self.started = now
         self.audio_started = True
+        if self.audio_loaded:
+            try:
+                pygame.mixer.music.play()
+            except pygame.error as exc:
+                self.audio_loaded = False
+                self.audio_error = str(exc)
+
+    def _preload_audio(self) -> None:
+        """Prepare streamed music before the timing-critical chart-zero frame."""
         self.audio_loaded = False
         music_path = self._music_path()
-        if music_path is not None:
-            try:
-                pygame.mixer.music.load(str(music_path))
-                pygame.mixer.music.set_volume(GAMEPLAY_MUSIC_VOLUME)
-                pygame.mixer.music.play()
-                self.audio_loaded = True
-            except pygame.error as exc:
-                self.audio_error = str(exc)
+        if music_path is None:
+            return
+        try:
+            pygame.mixer.music.load(str(music_path))
+            pygame.mixer.music.set_volume(GAMEPLAY_MUSIC_VOLUME)
+            self.audio_loaded = True
+        except pygame.error as exc:
+            self.audio_error = str(exc)
 
     def _start(self, now: float) -> None:
         self.running = True
@@ -326,6 +335,7 @@ class GameSession:
         self.audio_started = False
         self.audio_error = None
         self.lead_in_start_time = self._compute_lead_in_start_time()
+        self._preload_audio()
         if self.lead_in_start_time >= -1e-6:
             self._start_audio_clock(now)
 

@@ -8,6 +8,7 @@ from .domain import GameplayEvent, GameplayEventType, HitQuality
 
 SFX_SAMPLE_RATE = 44_100
 SFX_CHANNELS = 2
+MIXER_BUFFER_SAMPLES = 1_024
 
 # Leave musical headroom so a short percussive input transient can be heard
 # clearly without forcing the player to turn the song down dramatically.
@@ -114,6 +115,11 @@ def _pcm(mono: np.ndarray, channels: int) -> np.ndarray:
     return pcm
 
 
+def _synthesize_gameplay_hit(*, sample_rate: int, channels: int) -> np.ndarray:
+    """Build the shared GREAT/PERFECT cue without requiring a live event."""
+    return _pcm(_timing_synth_hit(0.095, 0.52, sample_rate), channels)
+
+
 def synthesize_gameplay_event(
     event: GameplayEvent,
     *,
@@ -132,10 +138,9 @@ def synthesize_gameplay_event(
         and event.hit
         and event.quality in (HitQuality.GREAT, HitQuality.PERFECT)
     ):
-        mono = _timing_synth_hit(0.095, 0.52, sample_rate)
-    else:
-        mono = np.zeros(max(1, int(round(sample_rate * 0.01))), dtype=np.float64)
+        return _synthesize_gameplay_hit(sample_rate=sample_rate, channels=channels)
 
+    mono = np.zeros(max(1, int(round(sample_rate * 0.01))), dtype=np.float64)
     return _pcm(mono, channels)
 
 
@@ -229,7 +234,7 @@ class GameplaySounds:
         self._pygame = None
         self._sample_rate = SFX_SAMPLE_RATE
         self._channels = SFX_CHANNELS
-        self._cache: dict[tuple[str, str, str, bool], object] = {}
+        self._hit_sound = None
         self._beat_cache: dict[bool, object] = {}
         try:
             import pygame
@@ -241,20 +246,17 @@ class GameplaySounds:
                 self._sample_rate = int(init[0])
                 self._channels = int(init[2])
             self._pygame = pygame
+            pcm = _synthesize_gameplay_hit(
+                sample_rate=self._sample_rate,
+                channels=self._channels,
+            )
+            self._hit_sound = pygame.sndarray.make_sound(pcm)
         except Exception:
             self._pygame = None
-
-    @staticmethod
-    def _event_key(event: GameplayEvent) -> tuple[str, str, str, bool]:
-        return (
-            event.event_type.value,
-            event.kind.value,
-            (event.quality.value if event.quality is not None else "none"),
-            bool(event.hit),
-        )
+            self._hit_sound = None
 
     def play(self, events: tuple[GameplayEvent, ...] | list[GameplayEvent]) -> None:
-        if self._pygame is None:
+        if self._pygame is None or self._hit_sound is None:
             return
         for event in events:
             if not (
@@ -263,21 +265,8 @@ class GameplaySounds:
                 and event.quality in (HitQuality.GREAT, HitQuality.PERFECT)
             ):
                 continue
-            key = self._event_key(event)
-            sound = self._cache.get(key)
-            if sound is None:
-                try:
-                    pcm = synthesize_gameplay_event(
-                        event,
-                        sample_rate=self._sample_rate,
-                        channels=self._channels,
-                    )
-                    sound = self._pygame.sndarray.make_sound(pcm)
-                    self._cache[key] = sound
-                except Exception:
-                    continue
             try:
-                sound.play()
+                self._hit_sound.play()
             except Exception:
                 pass
 

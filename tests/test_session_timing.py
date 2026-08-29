@@ -186,6 +186,67 @@ def test_session_pre_roll_delays_chart_zero_until_lead_in_finishes(monkeypatch):
     assert session.time == 0.0
 
 
+def test_session_loads_music_at_pre_roll_start_and_only_plays_at_chart_zero(monkeypatch):
+    from pathlib import Path
+
+    import vaporstep.session as session_module
+    from vaporstep.song import ChartInfo, LoadedChart, SongInfo
+
+    calls: list[tuple[str, object]] = []
+
+    class _Music:
+        @staticmethod
+        def load(path):
+            calls.append(("load", path))
+
+        @staticmethod
+        def set_volume(volume):
+            calls.append(("volume", volume))
+
+        @staticmethod
+        def play():
+            calls.append(("play", None))
+
+    monkeypatch.setattr(session_module.pygame.mixer, "music", _Music())
+    note = GameNote(time=2.0, lanes=(2,), kind=NoteKind.FOOT)
+    info = ChartInfo(index=0, difficulty="Medium", meter=5)
+    song = SongInfo(
+        simfile_path=Path("/tmp/preload.sm"),
+        song_dir=Path("/tmp"),
+        title="Preload",
+        subtitle="",
+        artist="",
+        music_path=Path("/tmp/preload.ogg"),
+        banner_path=None,
+        background_path=None,
+        charts=(info,),
+    )
+    session = GameSession(
+        chart=LoadedChart(
+            song=song,
+            chart=info,
+            notes=(note,),
+            initial_bpm=120.0,
+            last_note_time=2.0,
+        )
+    )
+
+    session._start(100.0)
+
+    assert calls == [
+        ("load", "/tmp/preload.ogg"),
+        ("volume", session_module.GAMEPLAY_MUSIC_VOLUME),
+    ]
+    assert session.audio_loaded
+    assert not session.audio_started
+
+    session._start_audio_clock(102.0)
+
+    assert calls[-1] == ("play", None)
+    assert [name for name, _value in calls].count("load") == 1
+    assert session.audio_started
+
+
 def test_session_updates_only_notes_near_current_time(monkeypatch):
     notes = [
         GameNote(time=index * 0.05, lanes=(2,), kind=NoteKind.FOOT)
