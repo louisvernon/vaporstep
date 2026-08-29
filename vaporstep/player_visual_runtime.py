@@ -26,7 +26,7 @@ class _VisualValue(str):
 
     def __eq__(self, other: object) -> bool:
         # app.py currently forwards PoseFigure only for the skeleton path.
-        # Character consumes that exact same cheap landmark payload.
+        # Both low-cost character visuals consume that same landmark payload.
         if str(self) == "character" and other == "skeleton":
             return True
         return str.__eq__(self, other)
@@ -109,9 +109,9 @@ class SettingsStore:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Run the existing app with the character renderer and 3-state visual adapter."""
+    """Run the app with procedural and hybrid pose-driven player visuals."""
     from . import app
-    from .character_renderer import Renderer
+    from .hybrid_character_renderer import Renderer
 
     app.Renderer = Renderer
     app.SettingsStore = SettingsStore
