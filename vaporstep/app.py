@@ -110,16 +110,17 @@ def _profile_lines(profile, pose_snapshot) -> tuple[str, ...]:
     if profile.samples:
         lines = [
             (
-                f"frame work avg={profile.work_ms:.1f}ms p95={profile.work_p95_ms:.1f}ms  "
-                f"update={profile.update_ms:.2f} render={profile.render_ms:.1f} flip={profile.flip_ms:.2f}"
+                f"MAIN THREAD (ms)  work avg={profile.work_ms:.1f}  p95={profile.work_p95_ms:.1f}  "
+                f"update={profile.update_ms:.2f}  render={profile.render_ms:.1f}  "
+                f"display flip={profile.flip_ms:.2f}"
             ),
             (
-                f"deadlines >16.7ms={profile.missed_60hz}/{profile.samples}  "
-                f">33.3ms={profile.missed_30hz}/{profile.samples}"
+                f"FRAME BUDGET  over 16.7ms={profile.missed_60hz}/{profile.samples}  "
+                f"over 33.3ms={profile.missed_30hz}/{profile.samples}"
             ),
         ]
     else:
-        lines = ["frame profiler warming up"]
+        lines = ["MAIN THREAD  profiler warming up"]
 
     if pose_snapshot is not None:
         captured = max(0, int(pose_snapshot.frames_captured))
@@ -127,13 +128,13 @@ def _profile_lines(profile, pose_snapshot) -> tuple[str, ...]:
         drop_ratio = 100.0 * dropped / max(captured, 1)
         lines.append(
             (
-                f"camera={pose_snapshot.capture_fps:.1f}fps submit={pose_snapshot.submitted_fps:.1f}fps "
-                f"pose={pose_snapshot.pose_fps:.1f}fps latency={pose_snapshot.inference_latency_ms:.1f}ms"
+                f"CAMERA / INFERENCE (fps)  captured={pose_snapshot.capture_fps:.1f}  "
+                f"submitted={pose_snapshot.submitted_fps:.1f}  results={pose_snapshot.pose_fps:.1f}"
             )
         )
         lines.append(
-            f"inference frames captured={captured} submitted={pose_snapshot.frames_submitted} "
-            f"skipped={dropped} ({drop_ratio:.0f}%)"
+            f"INFERENCE  latency={pose_snapshot.inference_latency_ms:.1f}ms  frames captured={captured}  "
+            f"submitted={pose_snapshot.frames_submitted}  skipped={dropped} ({drop_ratio:.0f}%)"
         )
     return tuple(lines)
 

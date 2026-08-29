@@ -1153,22 +1153,47 @@ class Renderer:
             ("LF", body.left_foot_control),
             ("RF", body.right_foot_control),
         ]
-        lines = [f"song {t:5.2f}s    pose {pose_fps:4.1f} fps"]
+        lines = list(profile_lines)
+        if self._phase_times_ms:
+            phases = self._phase_times_ms
+            primary_names = (
+                "silhouette",
+                "playfields",
+                "chains",
+                "notes_glows",
+                "particles",
+                "receptors",
+            )
+            other = max(
+                0.0,
+                phases.get("total", 0.0)
+                - sum(phases.get(name, 0.0) for name in primary_names),
+            )
+            lines.extend(
+                (
+                    (
+                        f"RENDERER (ms)  total={phases.get('total', 0.0):.1f}  "
+                        f"silhouette={phases.get('silhouette', 0.0):.1f}  "
+                        f"playfields={phases.get('playfields', 0.0):.1f}  "
+                        f"chains={phases.get('chains', 0.0):.1f}"
+                    ),
+                    (
+                        f"EFFECTS (ms)  notes+glows={phases.get('notes_glows', 0.0):.1f}  "
+                        f"particles={phases.get('particles', 0.0):.1f}  "
+                        f"receptors={phases.get('receptors', 0.0):.1f}  other={other:.1f}"
+                    ),
+                )
+            )
+
+        lines.append(
+            f"POSE DEBUG  song={t:5.2f}s  result rate={pose_fps:4.1f}fps  "
+            "x/y=normalized camera coordinates"
+        )
         for name, p in labels:
             lane = "-" if p.lane is None else str(p.lane)
             vis = "ok" if p.visible else "lost"
             lines.append(f"{name}: lane {lane}   x={p.x:0.3f} y={p.y:0.3f} {vis}")
         lines.append(f"feet(control)={sorted(body.foot_lanes)} hands={sorted(body.hand_lanes)}")
-        lines.extend(profile_lines)
-        if self._phase_times_ms:
-            lines.append(
-                "render phases  "
-                + "  ".join(
-                    f"{name}={value:.1f}ms"
-                    for name, value in self._phase_times_ms.items()
-                    if name in ("silhouette", "playfields", "chains", "notes_glows", "particles", "receptors")
-                )
-            )
         x, y = 18, 92
         for line in lines:
             surf = self.small_font.render(line, True, WHITE)
