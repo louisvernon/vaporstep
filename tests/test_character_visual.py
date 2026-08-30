@@ -69,6 +69,16 @@ def test_character_visual_draws_from_pose_landmarks() -> None:
     assert after != before
 
 
+def test_character_palette_stays_below_full_note_brightness() -> None:
+    pygame.font.init()
+    screen = pygame.Surface((1280, 720))
+    renderer = Renderer(screen)
+
+    renderer._draw_pose_figure(_pose())
+
+    assert pygame.surfarray.array3d(screen).max() <= 210
+
+
 def test_character_torso_is_narrower_and_uses_four_sided_depth_face(monkeypatch) -> None:
     pygame.font.init()
     renderer = Renderer(pygame.Surface((1280, 720)))

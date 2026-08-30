@@ -8,6 +8,13 @@ from .domain import PoseFigure
 from .renderer import BG, CYAN, MAGENTA, PURPLE, WHITE, Renderer as GameplayRenderer, _blend
 
 
+CHARACTER_CYAN = _blend(BG, CYAN, 0.66)
+CHARACTER_MAGENTA = _blend(BG, MAGENTA, 0.66)
+CHARACTER_CYAN_EDGE = _blend(BG, CYAN, 0.80)
+CHARACTER_MAGENTA_EDGE = _blend(BG, MAGENTA, 0.80)
+CHARACTER_WHITE = _blend(BG, WHITE, 0.70)
+
+
 class Renderer(GameplayRenderer):
     """Gameplay renderer with an optional cheap pose-driven character skin."""
 
@@ -115,8 +122,8 @@ class Renderer(GameplayRenderer):
             return
         center, radius = geometry
         sway = self._update_hair_sway(center, radius)
-        face_fill = _blend(BG, PURPLE, 0.13)
-        face_outline = _blend(PURPLE, CYAN, 0.42)
+        face_fill = _blend(BG, PURPLE, 0.10)
+        face_outline = _blend(BG, _blend(PURPLE, CYAN, 0.42), 0.72)
 
         pygame.draw.circle(self.screen, face_fill, center, radius)
         pygame.draw.circle(self.screen, face_outline, center, radius, 2)
@@ -135,9 +142,9 @@ class Renderer(GameplayRenderer):
             (cx + int(radius * 0.02), cy + int(radius * 0.10)),
             (cx - int(radius * 0.48), cy + int(radius * 0.02)),
         ]
-        pygame.draw.polygon(self.screen, _blend(BG, PURPLE, 0.22), hair)
-        pygame.draw.lines(self.screen, MAGENTA, False, hair[:8], 2)
-        pygame.draw.lines(self.screen, CYAN, False, hair[7:] + hair[:2], 2)
+        pygame.draw.polygon(self.screen, _blend(BG, PURPLE, 0.17), hair)
+        pygame.draw.lines(self.screen, CHARACTER_MAGENTA_EDGE, False, hair[:8], 2)
+        pygame.draw.lines(self.screen, CHARACTER_CYAN_EDGE, False, hair[7:] + hair[:2], 2)
 
         eye_y = cy + int(radius * 0.10)
         eye_dx = int(radius * 0.34)
@@ -145,7 +152,7 @@ class Renderer(GameplayRenderer):
         for ex in (cx - eye_dx, cx + eye_dx):
             pygame.draw.line(
                 self.screen,
-                _blend(CYAN, WHITE, 0.18),
+                _blend(CHARACTER_CYAN_EDGE, CHARACTER_WHITE, 0.14),
                 (ex, eye_y - eye_h // 2),
                 (ex, eye_y + eye_h // 2),
                 max(2, radius // 8),
@@ -173,10 +180,16 @@ class Renderer(GameplayRenderer):
             (int(rh[0] + hip_pad), int(rh[1] + scale * 0.010)),
             (int(lh[0] - hip_pad), int(lh[1] + scale * 0.010)),
         ]
-        jacket = _blend(BG, PURPLE, 0.24)
+        jacket = _blend(BG, PURPLE, 0.18)
         pygame.draw.polygon(self.screen, jacket, polygon)
-        pygame.draw.lines(self.screen, _blend(PURPLE, MAGENTA, 0.48), True, polygon, 3)
-        pygame.draw.line(self.screen, CYAN, polygon[0], polygon[3], 2)
+        pygame.draw.lines(
+            self.screen,
+            _blend(BG, _blend(PURPLE, MAGENTA, 0.48), 0.72),
+            True,
+            polygon,
+            3,
+        )
+        pygame.draw.line(self.screen, CHARACTER_CYAN, polygon[0], polygon[3], 2)
 
         # A narrow brighter side face gives the torso the same faux depth as
         # the tapered limbs without adding image transforms or cached surfaces.
@@ -189,21 +202,21 @@ class Renderer(GameplayRenderer):
             int(polygon[2][1] * 0.88 + polygon[3][1] * 0.12),
         )
         side_face = [polygon[1], polygon[2], side_bottom, side_top]
-        pygame.draw.polygon(self.screen, _blend(BG, PURPLE, 0.38), side_face)
+        pygame.draw.polygon(self.screen, _blend(BG, PURPLE, 0.29), side_face)
         pygame.draw.line(
             self.screen,
-            _blend(MAGENTA, WHITE, 0.18),
+            _blend(CHARACTER_MAGENTA_EDGE, CHARACTER_WHITE, 0.14),
             side_top,
             side_bottom,
             2,
         )
-        pygame.draw.line(self.screen, MAGENTA, polygon[1], polygon[2], 2)
+        pygame.draw.line(self.screen, CHARACTER_MAGENTA, polygon[1], polygon[2], 2)
 
         shoulder_mid = ((ls[0] + rs[0]) // 2, (ls[1] + rs[1]) // 2)
         hood_radius = max(8, int(math.dist(ls, rs) * 0.28))
         pygame.draw.arc(
             self.screen,
-            _blend(CYAN, PURPLE, 0.45),
+            _blend(CHARACTER_CYAN, _blend(BG, PURPLE, 0.66), 0.45),
             pygame.Rect(
                 shoulder_mid[0] - hood_radius,
                 shoulder_mid[1] - hood_radius // 2,
@@ -218,7 +231,7 @@ class Renderer(GameplayRenderer):
     def _draw_hand(self, point: tuple[int, int] | None, radius: int, color, *, right: bool) -> None:
         if point is None:
             return
-        fill = _blend(BG, PURPLE, 0.18)
+        fill = _blend(BG, PURPLE, 0.14)
         pygame.draw.circle(self.screen, fill, point, radius)
         pygame.draw.circle(self.screen, color, point, radius, 2)
         thumb = (point[0] + (radius // 2 if right else -radius // 2), point[1] + radius // 3)
@@ -254,18 +267,24 @@ class Renderer(GameplayRenderer):
             (int(tip[0] - nx * width * 0.75), int(tip[1] - ny * width * 0.75)),
             (int(heel[0] - nx * width * 0.65), int(heel[1] - ny * width * 0.65)),
         ]
-        pygame.draw.polygon(self.screen, _blend(BG, PURPLE, 0.20), polygon)
+        pygame.draw.polygon(self.screen, _blend(BG, PURPLE, 0.16), polygon)
         pygame.draw.lines(self.screen, color, True, polygon, 2)
-        pygame.draw.line(self.screen, _blend(color, WHITE, 0.24), polygon[2], polygon[3], 2)
+        pygame.draw.line(
+            self.screen,
+            _blend(color, CHARACTER_WHITE, 0.16),
+            polygon[2],
+            polygon[3],
+            2,
+        )
 
     def _draw_character_figure(self, figure: PoseFigure) -> None:
         viewport = self._camera_rect()
         scale = float(viewport.width)
-        body_fill = _blend(BG, PURPLE, 0.18)
+        body_fill = _blend(BG, PURPLE, 0.14)
 
-        for hip_i, knee_i, ankle_i, color in (
-            (23, 25, 27, CYAN),
-            (24, 26, 28, MAGENTA),
+        for hip_i, knee_i, ankle_i, outline, accent in (
+            (23, 25, 27, CHARACTER_CYAN, CHARACTER_CYAN_EDGE),
+            (24, 26, 28, CHARACTER_MAGENTA, CHARACTER_MAGENTA_EDGE),
         ):
             hip = self._visible_screen_point(figure, hip_i)
             knee = self._visible_screen_point(figure, knee_i)
@@ -273,19 +292,19 @@ class Renderer(GameplayRenderer):
             if hip is not None and knee is not None:
                 self._draw_tapered_segment(
                     hip, knee, scale * 0.037, scale * 0.031,
-                    fill=body_fill, outline=color, accent=color,
+                    fill=body_fill, outline=outline, accent=accent,
                 )
             if knee is not None and ankle is not None:
                 self._draw_tapered_segment(
                     knee, ankle, scale * 0.031, scale * 0.024,
-                    fill=body_fill, outline=color, accent=color,
+                    fill=body_fill, outline=outline, accent=accent,
                 )
 
         self._draw_torso(figure, scale)
 
-        for shoulder_i, elbow_i, wrist_i, color in (
-            (11, 13, 15, CYAN),
-            (12, 14, 16, MAGENTA),
+        for shoulder_i, elbow_i, wrist_i, outline, accent in (
+            (11, 13, 15, CHARACTER_CYAN, CHARACTER_CYAN_EDGE),
+            (12, 14, 16, CHARACTER_MAGENTA, CHARACTER_MAGENTA_EDGE),
         ):
             shoulder = self._visible_screen_point(figure, shoulder_i)
             elbow = self._visible_screen_point(figure, elbow_i)
@@ -293,24 +312,28 @@ class Renderer(GameplayRenderer):
             if shoulder is not None and elbow is not None:
                 self._draw_tapered_segment(
                     shoulder, elbow, scale * 0.030, scale * 0.025,
-                    fill=body_fill, outline=color, accent=color,
+                    fill=body_fill, outline=outline, accent=accent,
                 )
             if elbow is not None and wrist is not None:
                 self._draw_tapered_segment(
                     elbow, wrist, scale * 0.025, scale * 0.020,
-                    fill=body_fill, outline=color, accent=color,
+                    fill=body_fill, outline=outline, accent=accent,
                 )
 
         self._draw_head_and_hair(figure)
 
         hand_radius = max(5, int(scale * 0.014))
-        self._draw_hand(self._visible_screen_point(figure, 15), hand_radius, CYAN, right=False)
-        self._draw_hand(self._visible_screen_point(figure, 16), hand_radius, MAGENTA, right=True)
+        self._draw_hand(
+            self._visible_screen_point(figure, 15), hand_radius, CHARACTER_CYAN_EDGE, right=False
+        )
+        self._draw_hand(
+            self._visible_screen_point(figure, 16), hand_radius, CHARACTER_MAGENTA_EDGE, right=True
+        )
         self._draw_shoe(
             self._visible_screen_point(figure, 27), self._visible_screen_point(figure, 31),
-            scale, CYAN, right=False,
+            scale, CHARACTER_CYAN_EDGE, right=False,
         )
         self._draw_shoe(
             self._visible_screen_point(figure, 28), self._visible_screen_point(figure, 32),
-            scale, MAGENTA, right=True,
+            scale, CHARACTER_MAGENTA_EDGE, right=True,
         )
