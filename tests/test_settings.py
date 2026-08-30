@@ -30,13 +30,15 @@ def test_keyboard_only_camera_choice_round_trips(tmp_path: Path):
     assert SettingsStore(path).settings.camera_enabled is False
 
 
-def test_player_visual_round_trips_and_invalid_values_fall_back(tmp_path: Path):
+def test_player_visual_round_trips_and_legacy_skeleton_migrates(tmp_path: Path):
     path = tmp_path / "settings.json"
     store = SettingsStore(path)
-    store.settings.player_visual = "skeleton"
+    store.settings.player_visual = "character"
     store.save()
 
-    assert SettingsStore(path).settings.player_visual == "skeleton"
+    assert SettingsStore(path).settings.player_visual == "character"
+    path.write_text(json.dumps({"player_visual": "skeleton"}), encoding="utf-8")
+    assert SettingsStore(path).settings.player_visual == "character"
     assert normalize_player_visual("unknown") == "silhouette"
 
 

@@ -6,7 +6,6 @@ import pygame
 
 from .domain import PoseFigure
 from .renderer import BG, CYAN, MAGENTA, PURPLE, WHITE, Renderer as GameplayRenderer, _blend
-from .player_visual_runtime import current_player_visual
 
 
 class Renderer(GameplayRenderer):
@@ -27,9 +26,6 @@ class Renderer(GameplayRenderer):
         self._character_hair_velocity = 0.0
 
     def _draw_pose_figure(self, figure: PoseFigure) -> None:
-        if current_player_visual() != "character":
-            super()._draw_pose_figure(figure)
-            return
         self._draw_character_figure(figure)
 
     @staticmethod

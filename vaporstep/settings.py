@@ -13,7 +13,7 @@ MIN_HORIZONTAL_REACH = 1.00
 MAX_HORIZONTAL_REACH = 1.35
 HORIZONTAL_REACH_STEP = 0.05
 PRIVACY_NOTICE_VERSION = 2
-PLAYER_VISUALS = ("silhouette", "skeleton", "character")
+PLAYER_VISUALS = ("silhouette", "character")
 
 
 def default_settings_path() -> Path:
@@ -32,6 +32,8 @@ def clamp_horizontal_reach(value: float) -> float:
 
 def normalize_player_visual(value: object) -> str:
     visual = str(value or "").strip().casefold()
+    if visual == "skeleton":
+        return "character"
     return visual if visual in PLAYER_VISUALS else "silhouette"
 
 

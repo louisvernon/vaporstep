@@ -1,3 +1,8 @@
+from types import SimpleNamespace
+
+import pygame
+
+from vaporstep.app import _next_profile_level, _profile_lines, _profile_toggle_requested
 from vaporstep.performance import AdaptiveFrameRate, RuntimeProfiler
 
 
@@ -50,3 +55,39 @@ def test_adaptive_frame_rate_ignores_occasional_60_fps_spike() -> None:
         controller.observe(22.0 if index == 0 else 10.0)
 
     assert controller.target_fps == 60
+
+
+def test_f3_cycles_off_basic_detailed_and_applies_in_calibration() -> None:
+    assert [_next_profile_level(level) for level in (0, 1, 2)] == [1, 2, 0]
+    event = SimpleNamespace(type=pygame.KEYDOWN, key=pygame.K_F3)
+    assert _profile_toggle_requested("game", event)
+    assert _profile_toggle_requested("calibration", event)
+    assert not _profile_toggle_requested("home", event)
+
+
+def test_basic_profile_lines_show_only_requested_live_counters() -> None:
+    profiler = RuntimeProfiler()
+    profiler.record(update_ms=1.0, render_ms=20.0, flip_ms=1.0, work_ms=22.0)
+    pose = SimpleNamespace(
+        frames_captured=100,
+        frames_dropped=25,
+        frames_submitted=75,
+        capture_fps=30.0,
+        submitted_fps=15.0,
+        pose_fps=10.5,
+        inference_latency_ms=67.7,
+    )
+
+    basic = _profile_lines(
+        profiler.snapshot(), pose, target_fps=30, actual_fps=29.8, detailed=False
+    )
+    detailed = _profile_lines(
+        profiler.snapshot(), pose, target_fps=30, actual_fps=29.8, detailed=True
+    )
+
+    assert basic == (
+        "FRAME RATE  actual=29.8fps  target=30fps",
+        "INFERENCE  results=10.5fps  latency=67.7ms  skipped=25 (25%)",
+    )
+    assert any("MAIN THREAD" in line for line in detailed)
+    assert any("CAMERA / INFERENCE" in line for line in detailed)

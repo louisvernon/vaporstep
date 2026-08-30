@@ -57,10 +57,10 @@ percentage change for each phase and verifies that the session benchmark's
 semantic checksum still matches. Results from different machines are not
 directly comparable.
 
-During calibration or gameplay, F3 enables the live profiling overlay. In
-addition to renderer phase timing, it shows rolling frame-work latency and
-camera capture, inference submission, pose-result, inference-latency, and
-skipped-frame counters.
+During calibration or gameplay, F3 cycles the live overlay through off, basic,
+and detailed modes. Basic mode shows actual/target frame rate plus inference
+result rate, latency, and skipped frames. Detailed mode adds rolling frame-work
+latency, renderer phases, camera capture/submission rates, and pose diagnostics.
 
 ## Pose model
 

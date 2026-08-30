@@ -169,6 +169,7 @@ class Renderer:
         show_body_markers: bool = True,
         profile_lines: tuple[str, ...] = (),
         pose_figure: PoseFigure | None = None,
+        detailed_debug: bool = False,
     ) -> None:
         profiling = self._profiling_enabled
         phase_times: dict[str, float] = {}
@@ -226,7 +227,7 @@ class Renderer:
         if show_body_markers:
             self._draw_body_markers(
                 body,
-                show_labels=debug,
+                show_labels=detailed_debug,
                 hand_enabled=hand_enabled,
                 foot_enabled=foot_enabled,
                 show_lower_body_sources=show_lower_body_sources,
@@ -248,7 +249,13 @@ class Renderer:
         finish_phase("hud")
 
         if debug:
-            self._draw_debug(body, song_time, pose_fps, profile_lines)
+            self._draw_debug(
+                body,
+                song_time,
+                pose_fps,
+                profile_lines,
+                detailed=detailed_debug,
+            )
         finish_phase("debug")
         if profiling:
             phase_times["total"] = sum(phase_times.values())
@@ -1226,6 +1233,8 @@ class Renderer:
         t: float,
         pose_fps: float,
         profile_lines: tuple[str, ...] = (),
+        *,
+        detailed: bool = True,
     ) -> None:
         labels = [
             ("LW", body.left_wrist),
@@ -1236,6 +1245,10 @@ class Renderer:
             ("RF", body.right_foot_control),
         ]
         lines = list(profile_lines)
+        if not detailed:
+            self._draw_debug_lines(lines)
+            return
+
         if self._phase_averages_ms:
             phases = self._phase_averages_ms
             primary_names = (
@@ -1276,6 +1289,9 @@ class Renderer:
             vis = "ok" if p.visible else "lost"
             lines.append(f"{name}: lane {lane}   x={p.x:0.3f} y={p.y:0.3f} {vis}")
         lines.append(f"feet(control)={sorted(body.foot_lanes)} hands={sorted(body.hand_lanes)}")
+        self._draw_debug_lines(lines)
+
+    def _draw_debug_lines(self, lines: list[str]) -> None:
         x, y = 18, 92
         for line in lines:
             surf = self.small_font.render(line, True, WHITE)

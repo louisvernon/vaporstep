@@ -5,13 +5,10 @@ from pathlib import Path
 
 import pygame
 
+from vaporstep.app import _next_player_visual
 from vaporstep.character_renderer import Renderer
 from vaporstep.domain import BodyPoint, PoseFigure
-from vaporstep.player_visual_runtime import (
-    SettingsStore,
-    _set_active_player_visual,
-    current_player_visual,
-)
+from vaporstep.settings import SettingsStore
 
 
 def _pose() -> PoseFigure:
@@ -47,35 +44,23 @@ def test_character_setting_round_trips(tmp_path: Path) -> None:
     store.save()
 
     reloaded = SettingsStore(path)
-    assert str(reloaded.settings.player_visual) == "character"
-    assert current_player_visual() == "character"
+    assert reloaded.settings.player_visual == "character"
 
 
-def test_existing_v_toggle_cycles_silhouette_skeleton_character(tmp_path: Path) -> None:
+def test_visual_toggle_cycles_silhouette_and_character(tmp_path: Path) -> None:
     store = SettingsStore(tmp_path / "settings.json")
 
-    assert str(store.settings.player_visual) == "silhouette"
-    store.settings.player_visual = (
-        "skeleton" if store.settings.player_visual == "silhouette" else "silhouette"
-    )
-    assert str(store.settings.player_visual) == "skeleton"
-
-    store.settings.player_visual = (
-        "skeleton" if store.settings.player_visual == "silhouette" else "silhouette"
-    )
-    assert str(store.settings.player_visual) == "character"
-
-    store.settings.player_visual = (
-        "skeleton" if store.settings.player_visual == "silhouette" else "silhouette"
-    )
-    assert str(store.settings.player_visual) == "silhouette"
+    assert store.settings.player_visual == "silhouette"
+    store.settings.player_visual = _next_player_visual(store.settings.player_visual)
+    assert store.settings.player_visual == "character"
+    store.settings.player_visual = _next_player_visual(store.settings.player_visual)
+    assert store.settings.player_visual == "silhouette"
 
 
 def test_character_visual_draws_from_pose_landmarks() -> None:
     pygame.font.init()
     screen = pygame.Surface((1280, 720))
     renderer = Renderer(screen)
-    _set_active_player_visual("character")
 
     before = pygame.image.tostring(screen, "RGBA")
     renderer._draw_pose_figure(_pose())
@@ -114,17 +99,3 @@ def test_character_torso_is_narrower_and_uses_four_sided_depth_face(monkeypatch)
     assert len(polygons) == 2
     assert len(polygons[1]) == 4
     assert not any(closed and len(points) == 3 for closed, points in line_loops)
-
-
-def test_skeleton_visual_still_uses_base_pose_renderer(monkeypatch) -> None:
-    pygame.font.init()
-    screen = pygame.Surface((1280, 720))
-    renderer = Renderer(screen)
-    called = []
-    _set_active_player_visual("skeleton")
-
-    base = Renderer.__mro__[1]
-    monkeypatch.setattr(base, "_draw_pose_figure", lambda self, figure: called.append(figure))
-    renderer._draw_pose_figure(_pose())
-
-    assert len(called) == 1

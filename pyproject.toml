@@ -23,7 +23,7 @@ dependencies = [
 ]
 
 [project.scripts]
-vaporstep = "vaporstep.player_visual_runtime:main"
+vaporstep = "vaporstep.app:main"
 
 [tool.setuptools.packages.find]
 include = ["vaporstep*"]

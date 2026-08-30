@@ -44,7 +44,7 @@ The easiest way to use VaporStep is with a packaged build from the project relea
 
 1. Download the build for your platform and launch VaporStep.
 2. Put your compatible song library in `~/VaporStep/Songs`, or choose **Song Folder** to use another location.
-3. Open **Calibration** if you want to check camera position or adjust reach. Press **V** there to choose the real silhouette or the lower-cost pose skeleton.
+3. Open **Calibration** if you want to check camera position or adjust reach. Press **V** there to choose the real silhouette or the lower-cost procedural character.
 4. Choose **Play**, pick a song and move into position.
 
 On first launch your operating system may ask for camera access. VaporStep releases the camera whenever you are browsing menus or results and acquires it only for calibration and gameplay. If you later choose a song folder in an operating-system protected location, the OS may separately ask for permission to access it.
