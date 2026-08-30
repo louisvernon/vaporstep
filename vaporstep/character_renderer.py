@@ -160,11 +160,20 @@ class Renderer(GameplayRenderer):
         if any(point is None for point in points):
             return
         ls, rs, rh, lh = points
-        shoulder_pad = scale * 0.012
+        shoulder_width = max(1.0, math.dist(ls, rs))
+        shoulder_dx = (rs[0] - ls[0]) / shoulder_width
+        shoulder_dy = (rs[1] - ls[1]) / shoulder_width
+        shoulder_inset = max(scale * 0.006, shoulder_width * 0.08)
         hip_pad = scale * 0.007
         polygon = [
-            (int(ls[0] - shoulder_pad), ls[1]),
-            (int(rs[0] + shoulder_pad), rs[1]),
+            (
+                int(ls[0] + shoulder_dx * shoulder_inset),
+                int(ls[1] + shoulder_dy * shoulder_inset),
+            ),
+            (
+                int(rs[0] - shoulder_dx * shoulder_inset),
+                int(rs[1] - shoulder_dy * shoulder_inset),
+            ),
             (int(rh[0] + hip_pad), int(rh[1] + scale * 0.010)),
             (int(lh[0] - hip_pad), int(lh[1] + scale * 0.010)),
         ]
@@ -173,18 +182,28 @@ class Renderer(GameplayRenderer):
         pygame.draw.lines(self.screen, _blend(PURPLE, MAGENTA, 0.48), True, polygon, 3)
         pygame.draw.line(self.screen, CYAN, polygon[0], polygon[3], 2)
 
-        shoulder_mid = ((ls[0] + rs[0]) // 2, (ls[1] + rs[1]) // 2)
-        hip_mid = ((lh[0] + rh[0]) // 2, (lh[1] + rh[1]) // 2)
-        chest_y = int(shoulder_mid[1] * 0.58 + hip_mid[1] * 0.42)
-        chest = (shoulder_mid[0], chest_y)
-        emblem_r = max(4, int(scale * 0.010))
-        emblem = [
-            (chest[0], chest[1] + emblem_r),
-            (chest[0] - emblem_r, chest[1] - emblem_r),
-            (chest[0] + emblem_r, chest[1] - emblem_r),
-        ]
-        pygame.draw.lines(self.screen, MAGENTA, True, emblem, 2)
+        # A narrow brighter side face gives the torso the same faux depth as
+        # the tapered limbs without adding image transforms or cached surfaces.
+        side_top = (
+            int(polygon[1][0] * 0.86 + polygon[0][0] * 0.14),
+            int(polygon[1][1] * 0.86 + polygon[0][1] * 0.14),
+        )
+        side_bottom = (
+            int(polygon[2][0] * 0.88 + polygon[3][0] * 0.12),
+            int(polygon[2][1] * 0.88 + polygon[3][1] * 0.12),
+        )
+        side_face = [polygon[1], polygon[2], side_bottom, side_top]
+        pygame.draw.polygon(self.screen, _blend(BG, PURPLE, 0.38), side_face)
+        pygame.draw.line(
+            self.screen,
+            _blend(MAGENTA, WHITE, 0.18),
+            side_top,
+            side_bottom,
+            2,
+        )
+        pygame.draw.line(self.screen, MAGENTA, polygon[1], polygon[2], 2)
 
+        shoulder_mid = ((ls[0] + rs[0]) // 2, (ls[1] + rs[1]) // 2)
         hood_radius = max(8, int(math.dist(ls, rs) * 0.28))
         pygame.draw.arc(
             self.screen,

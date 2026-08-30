@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from pathlib import Path
 
 import pygame
@@ -81,6 +82,38 @@ def test_character_visual_draws_from_pose_landmarks() -> None:
     after = pygame.image.tostring(screen, "RGBA")
 
     assert after != before
+
+
+def test_character_torso_is_narrower_and_uses_four_sided_depth_face(monkeypatch) -> None:
+    pygame.font.init()
+    renderer = Renderer(pygame.Surface((1280, 720)))
+    polygons = []
+    line_loops = []
+    monkeypatch.setattr(
+        pygame.draw,
+        "polygon",
+        lambda surface, color, points, *args, **kwargs: polygons.append(tuple(points)),
+    )
+    monkeypatch.setattr(
+        pygame.draw,
+        "lines",
+        lambda surface, color, closed, points, *args, **kwargs: line_loops.append(
+            (closed, tuple(points))
+        ),
+    )
+    monkeypatch.setattr(pygame.draw, "line", lambda *args, **kwargs: None)
+    monkeypatch.setattr(pygame.draw, "arc", lambda *args, **kwargs: None)
+
+    figure = _pose()
+    renderer._draw_torso(figure, float(renderer._camera_rect().width))
+
+    left_shoulder = renderer._screen_point(figure.point(11))
+    right_shoulder = renderer._screen_point(figure.point(12))
+    torso = polygons[0]
+    assert math.dist(torso[0], torso[1]) < math.dist(left_shoulder, right_shoulder)
+    assert len(polygons) == 2
+    assert len(polygons[1]) == 4
+    assert not any(closed and len(points) == 3 for closed, points in line_loops)
 
 
 def test_skeleton_visual_still_uses_base_pose_renderer(monkeypatch) -> None:
