@@ -234,7 +234,7 @@ def test_session_loads_music_at_pre_roll_start_and_only_plays_at_chart_zero(monk
     session._start(100.0)
 
     assert calls == [
-        ("load", "/tmp/preload.ogg"),
+        ("load", str(song.music_path)),
         ("volume", session_module.GAMEPLAY_MUSIC_VOLUME),
     ]
     assert session.audio_loaded
