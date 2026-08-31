@@ -21,7 +21,14 @@ from .activity_ui import (
     draw_profile_badge,
     draw_profile_picker,
 )
-from .audio_fx import GameplaySounds, MenuAmbience, MenuSounds
+from .audio_fx import (
+    MIXER_BUFFER_SAMPLES,
+    SFX_CHANNELS,
+    SFX_SAMPLE_RATE,
+    GameplaySounds,
+    MenuAmbience,
+    MenuSounds,
+)
 from .config import TARGET_FPS, WINDOW_HEIGHT, WINDOW_WIDTH
 from .demo import make_demo_notes
 from .directory_browser import DirectoryBrowser
@@ -31,18 +38,21 @@ from .keyboard_input import KeyboardBodyInput, add_keyboard_lanes
 from .library_index import LibraryIndexer, LibraryScanSnapshot
 from .menu import HeldMenuRepeater, MenuAction, SongMenu, action_for_event
 from .model_asset import ensure_pose_model
+from .performance import AdaptiveFrameRate, RuntimeProfiler
 from .preview import SongPreviewPlayer
 from .records import ChartRecord, RecordStore, chart_key, song_key
 from .readiness import camera_ready_prompt, readiness_for_session
 from .recording import RunRecorder, recording_backend_status
-from .renderer import Renderer
+from .character_renderer import Renderer
 from .resources import resource_path
 from .session import GameSession
 from .settings import (
     HORIZONTAL_REACH_STEP,
+    PLAYER_VISUALS,
     PRIVACY_NOTICE_VERSION,
     SettingsStore,
     clamp_horizontal_reach,
+    normalize_player_visual,
 )
 from .simfile_loader import load_chart
 from .tracking_overlay import draw_lower_body_tracking_overlay
@@ -105,6 +115,79 @@ def _finish_startup_splash(
         _draw_startup_frame(renderer, clock, "READY")
 
 
+def _profile_lines(
+    profile,
+    pose_snapshot,
+    *,
+    target_fps: int = TARGET_FPS,
+    actual_fps: float = 0.0,
+    detailed: bool = False,
+) -> tuple[str, ...]:
+    lines = [f"FRAME RATE  actual={actual_fps:.1f}fps  target={target_fps}fps"]
+
+    if pose_snapshot is not None:
+        captured = max(0, int(pose_snapshot.frames_captured))
+        dropped = max(0, int(pose_snapshot.frames_dropped))
+        drop_ratio = 100.0 * dropped / max(captured, 1)
+        lines.append(
+            f"INFERENCE  results={pose_snapshot.pose_fps:.1f}fps  "
+            f"latency={pose_snapshot.inference_latency_ms:.1f}ms  "
+            f"skipped={dropped} ({drop_ratio:.0f}%)"
+        )
+    else:
+        lines.append("INFERENCE  unavailable (keyboard input)")
+
+    if not detailed:
+        return tuple(lines)
+
+    if profile.samples:
+        lines.extend(
+            (
+                (
+                    f"MAIN THREAD (ms)  work avg={profile.work_ms:.1f}  "
+                    f"p95={profile.work_p95_ms:.1f}  update={profile.update_ms:.2f}  "
+                    f"render={profile.render_ms:.1f}  display flip={profile.flip_ms:.2f}"
+                ),
+                (
+                    f"FRAME BUDGET  over 16.7ms={profile.missed_60hz}/{profile.samples}  "
+                    f"over 33.3ms={profile.missed_30hz}/{profile.samples}"
+                ),
+            )
+        )
+    else:
+        lines.append("MAIN THREAD  profiler warming up")
+
+    if pose_snapshot is not None:
+        lines.append(
+            (
+                f"CAMERA / INFERENCE (fps)  captured={pose_snapshot.capture_fps:.1f}  "
+                f"submitted={pose_snapshot.submitted_fps:.1f}  results={pose_snapshot.pose_fps:.1f}"
+            )
+        )
+        lines.append(
+            f"INFERENCE COUNTS  frames captured={captured}  "
+            f"submitted={pose_snapshot.frames_submitted}  skipped={dropped} ({drop_ratio:.0f}%)"
+        )
+    return tuple(lines)
+
+
+def _next_profile_level(level: int) -> int:
+    """Cycle F3 through off, basic counters, and detailed profiling."""
+    return (int(level) + 1) % 3
+
+
+def _profile_toggle_requested(mode: str, event) -> bool:
+    return (
+        mode in ("game", "calibration")
+        and event.type == pygame.KEYDOWN
+        and event.key == pygame.K_F3
+    )
+
+
+def _next_player_visual(value: object) -> str:
+    return "character" if normalize_player_visual(value) == "silhouette" else "silhouette"
+
+
 def _load_pose_components():
     """Defer the expensive MediaPipe import until the splash is visible."""
     from .pose_input import PoseCameraInput, probe_camera
@@ -116,6 +199,12 @@ def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="VaporStep webcam full-body rhythm game")
     p.add_argument("--camera", type=int, default=None, help="OpenCV camera index")
     p.add_argument("--reach", type=float, default=None, help="Horizontal tracking reach multiplier")
+    p.add_argument(
+        "--player-visual",
+        choices=PLAYER_VISUALS,
+        default=None,
+        help="Render the tracked player as a real silhouette or procedural character",
+    )
     p.add_argument("--keyboard", action="store_true", help="Start in keyboard input mode")
     p.add_argument("--fullscreen", action="store_true", help="Start fullscreen")
     p.add_argument(
@@ -233,7 +322,18 @@ def main(argv: list[str] | None = None) -> int:
         settings_store.settings.camera_enabled = True
     if args.reach is not None:
         settings_store.settings.horizontal_reach = clamp_horizontal_reach(args.reach)
+    if args.player_visual is not None:
+        settings_store.settings.player_visual = normalize_player_visual(args.player_visual)
 
+    # Configure the mixer before pygame.init() opens the audio device. A modest
+    # 1024-sample buffer gives older CPUs more scheduling headroom without the
+    # much larger rhythm-game latency of a 2048-sample buffer.
+    pygame.mixer.pre_init(
+        frequency=SFX_SAMPLE_RATE,
+        size=-16,
+        channels=SFX_CHANNELS,
+        buffer=MIXER_BUFFER_SAMPLES,
+    )
     pygame.init()
     pygame.display.set_caption(f"VaporStep V{APP_VERSION}")
     try:
@@ -504,6 +604,7 @@ def main(argv: list[str] | None = None) -> int:
                 str(model_path),
                 camera_index=settings_store.settings.camera_index,
                 horizontal_zoom=settings_store.settings.horizontal_reach,
+                output_segmentation_masks=(settings_store.settings.player_visual == "silhouette"),
             )
             camera.start()
             keyboard_only = False
@@ -580,10 +681,29 @@ def main(argv: list[str] | None = None) -> int:
         pygame.quit()
         return 0
 
-    debug = False
+    profile_level = 0
+    runtime_profiler = RuntimeProfiler()
+    frame_rate = AdaptiveFrameRate(high_fps=TARGET_FPS, low_fps=30)
     running = True
     calibration_session = GameSession(demo_notes=make_demo_notes())
     calibration_last_beat: int | None = None
+
+    def record_runtime_frame(
+        *,
+        update_ms: float,
+        render_ms: float,
+        flip_ms: float,
+        started: float,
+    ) -> None:
+        work_ms = (time.perf_counter() - started) * 1000.0
+        runtime_profiler.record(
+            update_ms=update_ms,
+            render_ms=render_ms,
+            flip_ms=flip_ms,
+            work_ms=work_ms,
+        )
+        if frame_rate.observe(work_ms):
+            print(f"Render target adjusted to {frame_rate.target_fps} FPS")
 
     def toggle_fullscreen() -> None:
         nonlocal fullscreen, screen
@@ -669,6 +789,7 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         while running:
+            loop_work_started = time.perf_counter()
             frame_dt = min(clock.get_time() / 1000.0, 0.10)
             now = time.monotonic()
             scan_snapshot = library_indexer.snapshot()
@@ -697,6 +818,12 @@ def main(argv: list[str] | None = None) -> int:
 
                 if event.type == pygame.KEYDOWN and event.key == pygame.K_F11:
                     toggle_fullscreen()
+                    continue
+
+                if _profile_toggle_requested(mode, event):
+                    profile_level = _next_profile_level(profile_level)
+                    renderer.set_profiling_enabled(profile_level == 2)
+                    runtime_profiler.clear()
                     continue
 
                 if mode in ("home", "song_menu", "results", "stats", "about"):
@@ -891,6 +1018,17 @@ def main(argv: list[str] | None = None) -> int:
                             if camera is not None:
                                 camera.set_horizontal_zoom(settings_store.settings.horizontal_reach)
                             menu_sounds.tick()
+                        elif event.key == pygame.K_v:
+                            settings_store.settings.player_visual = _next_player_visual(
+                                settings_store.settings.player_visual
+                            )
+                            _safe_settings_save(settings_store)
+                            restart_camera()
+                            calibration_session.restart()
+                            calibration_session.set_keyboard_mode(True)
+                            keyboard.reset()
+                            renderer.reset_game_effects()
+                            menu_sounds.tick()
                         elif event.key == pygame.K_UP:
                             if not force_keyboard:
                                 next_index = (
@@ -1038,8 +1176,6 @@ def main(argv: list[str] | None = None) -> int:
                             stop_camera()
                             repeater.clear()
                             mode = "song_menu"
-                    elif event.key == pygame.K_F3:
-                        debug = not debug
                     elif event.key == pygame.K_r and session is not None:
                         finalize_activity_run("escaped")
                         if active_recording is not None:
@@ -1187,6 +1323,8 @@ def main(argv: list[str] | None = None) -> int:
 
             keyboard_body = keyboard.body_state()
             camera_ready = False
+            pose_snapshot = None
+            pose_figure = None
             if keyboard_only:
                 body = keyboard_body
                 mask = None
@@ -1213,8 +1351,11 @@ def main(argv: list[str] | None = None) -> int:
                 input_name = "keyboard fallback"
             else:
                 snap = camera.snapshot()
+                pose_snapshot = snap
                 body = add_keyboard_lanes(snap.body, keyboard_body)
                 mask = snap.mask
+                if settings_store.settings.player_visual == "character":
+                    pose_figure = snap.figure
                 camera_status_text = (
                     readiness_for_session(body, session)
                     if mode == "game" and session is not None
@@ -1230,9 +1371,11 @@ def main(argv: list[str] | None = None) -> int:
                 input_name = "webcam + keyboard"
 
             if mode == "calibration":
+                update_started = time.perf_counter()
                 calibration_ready = keyboard_only or camera_ready
                 calibration_session.set_keyboard_mode(True)
                 calibration_session.update(body, ready_to_start=calibration_ready)
+                update_ms = (time.perf_counter() - update_started) * 1000.0
                 gameplay_sounds.play(calibration_session.drain_gameplay_events())
                 if calibration_session.finished or calibration_session.failed:
                     calibration_session.restart()
@@ -1249,14 +1392,30 @@ def main(argv: list[str] | None = None) -> int:
                         calibration_last_beat = beat_index
                 else:
                     calibration_last_beat = None
+                song_time = calibration_session.time
+                song_beat = calibration_session.beat_position
+                visible_notes = calibration_session.render_notes(song_time, song_beat)
+                profile = runtime_profiler.snapshot()
+                profile_lines = (
+                    _profile_lines(
+                        profile,
+                        pose_snapshot,
+                        target_fps=frame_rate.target_fps,
+                        actual_fps=clock.get_fps(),
+                        detailed=profile_level == 2,
+                    )
+                    if profile_level
+                    else ()
+                )
+                render_started = time.perf_counter()
                 renderer.draw(
                     body=body,
                     mask=mask,
-                    notes=calibration_session.notes,
-                    song_time=calibration_session.time,
-                    song_beat=calibration_session.beat_position,
+                    notes=visible_notes,
+                    song_time=song_time,
+                    song_beat=song_beat,
                     status=status,
-                    debug=debug,
+                    debug=profile_level > 0,
                     pose_fps=pose_fps,
                     input_name=input_name,
                     song_title="CALIBRATION",
@@ -1272,18 +1431,32 @@ def main(argv: list[str] | None = None) -> int:
                     strike_events=tuple(calibration_session.recent_motion_events),
                     show_lower_body_sources=True,
                     show_body_markers=not keyboard_only and camera is not None,
+                    profile_lines=profile_lines,
+                    pose_figure=pose_figure,
+                    detailed_debug=profile_level == 2,
                 )
                 renderer.draw_calibration_overlay(
                     displayed_camera_index(),
                     settings_store.settings.horizontal_reach,
                     camera_status(),
+                    settings_store.settings.player_visual,
                 )
                 draw_lower_body_tracking_overlay(renderer, body)
+                render_ms = (time.perf_counter() - render_started) * 1000.0
+                flip_started = time.perf_counter()
                 pygame.display.flip()
-                clock.tick(TARGET_FPS)
+                flip_ms = (time.perf_counter() - flip_started) * 1000.0
+                record_runtime_frame(
+                    update_ms=update_ms,
+                    render_ms=render_ms,
+                    flip_ms=flip_ms,
+                    started=loop_work_started,
+                )
+                clock.tick(frame_rate.target_fps)
                 continue
 
             assert session is not None
+            update_started = time.perf_counter()
             session.set_keyboard_mode(True)
             was_running = session.running
             session.update(
@@ -1291,6 +1464,7 @@ def main(argv: list[str] | None = None) -> int:
                 ready_to_start=(keyboard_start_requested or camera_ready),
                 start_immediately=keyboard_start_requested,
             )
+            update_ms = (time.perf_counter() - update_started) * 1000.0
             if not was_running and session.running and activity_started_at is None and session.chart is not None:
                 activity_started_at = datetime.now(timezone.utc)
             if not was_running and session.running:
@@ -1365,14 +1539,30 @@ def main(argv: list[str] | None = None) -> int:
                 continue
 
             beat_pulse, downbeat = session.beat_pulse() if session.running else (0.0, False)
+            song_time = session.time
+            song_beat = session.beat_position
+            visible_notes = session.render_notes(song_time, song_beat)
+            profile = runtime_profiler.snapshot()
+            profile_lines = (
+                _profile_lines(
+                    profile,
+                    pose_snapshot,
+                    target_fps=frame_rate.target_fps,
+                    actual_fps=clock.get_fps(),
+                    detailed=profile_level == 2,
+                )
+                if profile_level
+                else ()
+            )
+            render_started = time.perf_counter()
             renderer.draw(
                 body=body,
                 mask=mask,
-                notes=session.notes,
-                song_time=session.time,
-                song_beat=session.beat_position,
+                notes=visible_notes,
+                song_time=song_time,
+                song_beat=song_beat,
                 status=status,
-                debug=debug,
+                debug=profile_level > 0,
                 pose_fps=pose_fps,
                 input_name=input_name,
                 song_title=(session.chart.song.display_title if session.chart else "VaporStep Demo"),
@@ -1394,13 +1584,25 @@ def main(argv: list[str] | None = None) -> int:
                 chains=tuple(session.chains),
                 chain_mode=session.chain_mode,
                 show_body_markers=not keyboard_only and camera is not None,
+                profile_lines=profile_lines,
+                pose_figure=pose_figure,
+                detailed_debug=profile_level == 2,
             )
             if active_recording is not None:
                 active_recording.capture(renderer.screen, time.monotonic())
             if record_play_enabled:
                 renderer.draw_recording_indicator()
+            render_ms = (time.perf_counter() - render_started) * 1000.0
+            flip_started = time.perf_counter()
             pygame.display.flip()
-            clock.tick(TARGET_FPS)
+            flip_ms = (time.perf_counter() - flip_started) * 1000.0
+            record_runtime_frame(
+                update_ms=update_ms,
+                render_ms=render_ms,
+                flip_ms=flip_ms,
+                started=loop_work_started,
+            )
+            clock.tick(frame_rate.target_fps)
     finally:
         if mode == "game":
             finalize_activity_run("escaped")

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from bisect import bisect_right
+from bisect import bisect_left, bisect_right
 from fractions import Fraction
 import math
 import time
@@ -10,7 +10,15 @@ import pygame
 
 from .audio_fx import GAMEPLAY_MUSIC_VOLUME
 from .chains import HOLD_OCCUPANCY_GRACE_SECONDS
-from .config import HIT_WINDOW_SECONDS, LOOKAHEAD_BEATS, LOOKAHEAD_SECONDS, OCCUPANCY_GRACE_SECONDS
+from .config import (
+    HIT_FLASH_SECONDS,
+    HIT_WINDOW_SECONDS,
+    LOOKAHEAD_BEATS,
+    LOOKAHEAD_SECONDS,
+    OCCUPANCY_GRACE_SECONDS,
+    TARGET_PREENTRY_BEATS,
+    TARGET_PREENTRY_SECONDS,
+)
 from .domain import (
     BodyState,
     ChainMode,
@@ -46,6 +54,7 @@ def fresh_notes(notes: Iterable[GameNote]) -> list[GameNote]:
             chain_id=n.chain_id,
             chain_index=n.chain_index,
             chain_length=n.chain_length,
+            visual_ordinal=n.visual_ordinal,
         )
         for n in notes
     ]
@@ -70,6 +79,11 @@ class GameSession:
         self.chart = chart
         source = chart.notes if chart is not None else tuple(demo_notes)
         self._source_notes = tuple(source)
+        self._last_note_time = (
+            float(chart.last_note_time)
+            if chart is not None
+            else max((note.time for note in self._source_notes), default=0.0)
+        )
         self.best_score = int(best_score)
         self.chain_mode = ChainMode(chain_mode)
         self._beat_times = tuple(marker.time for marker in chart.beat_markers) if chart is not None else ()
@@ -77,6 +91,10 @@ class GameSession:
         self.notes: list[GameNote] = []
         self.chains: list[RuntimeChain] = []
         self._chain_by_id: dict[int, RuntimeChain] = {}
+        self._gameplay_notes: list[GameNote] = []
+        self._pending_note_cursor = 0
+        self._note_times: tuple[float, ...] = ()
+        self._uses_beat_rendering = False
         self.stats = RunStats(total_notes=len(self._source_notes))
         self.running = False
         self.ready_since: float | None = None
@@ -178,6 +196,23 @@ class GameSession:
             definitions = self.chart.sustains or self.chart.chains
         self.chains = [RuntimeChain(definition=chain) for chain in definitions]
         self._chain_by_id = {chain.definition.id: chain for chain in self.chains}
+        hand_ordinal = 0
+        for note in self.notes:
+            if note.kind == NoteKind.HANDS:
+                note.visual_ordinal = hand_ordinal
+                hand_ordinal += 1
+        for chain in self.chains:
+            indices = chain.definition.note_indices
+            if indices:
+                chain.visual_ordinal = self.notes[indices[0]].visual_ordinal
+        self._gameplay_notes = []
+        for note in self.notes:
+            chain = self._chain_by_id.get(note.chain_id) if note.chain_id is not None else None
+            if chain is None or not self._sustain_enabled(chain) or note.chain_index == 0:
+                self._gameplay_notes.append(note)
+        self._pending_note_cursor = 0
+        self._note_times = tuple(note.time for note in self.notes)
+        self._uses_beat_rendering = any(note.beat is not None for note in self.notes)
         score_weights = self._effective_score_weights()
         self.stats = RunStats(total_notes=len(score_weights), score_weights=score_weights)
         self.running = False
@@ -195,6 +230,31 @@ class GameSession:
         self.motion.reset()
         self.recent_motion_events = []
         self._gameplay_events = []
+
+    def render_notes(self, song_time: float, song_beat: float) -> list[GameNote]:
+        """Return only notes that can contribute to the current rendered frame."""
+        if not self.notes:
+            return []
+
+        lower_time = (
+            float(song_time)
+            - HIT_FLASH_SECONDS
+            - max(HIT_WINDOW_SECONDS, GREAT_WINDOW_SECONDS)
+            - 0.05
+        )
+        upper_time = float(song_time) + LOOKAHEAD_SECONDS + TARGET_PREENTRY_SECONDS
+        timing_engine = self.chart.timing_engine if self.chart is not None else None
+        if timing_engine is not None and self._uses_beat_rendering:
+            target_beat = float(song_beat) + LOOKAHEAD_BEATS + TARGET_PREENTRY_BEATS
+            try:
+                beat = Fraction(target_beat).limit_denominator(192)
+                upper_time = max(float(song_time), float(timing_engine.time_at(beat)))
+            except Exception:
+                pass
+
+        start = bisect_left(self._note_times, lower_time)
+        end = bisect_right(self._note_times, upper_time)
+        return self.notes[start:end]
 
     def drain_gameplay_events(self) -> tuple[GameplayEvent, ...]:
         events = tuple(self._gameplay_events)
@@ -248,16 +308,25 @@ class GameSession:
         """Begin chart time zero and start audio if the chart has music."""
         self.started = now
         self.audio_started = True
+        if self.audio_loaded:
+            try:
+                pygame.mixer.music.play()
+            except pygame.error as exc:
+                self.audio_loaded = False
+                self.audio_error = str(exc)
+
+    def _preload_audio(self) -> None:
+        """Prepare streamed music before the timing-critical chart-zero frame."""
         self.audio_loaded = False
         music_path = self._music_path()
-        if music_path is not None:
-            try:
-                pygame.mixer.music.load(str(music_path))
-                pygame.mixer.music.set_volume(GAMEPLAY_MUSIC_VOLUME)
-                pygame.mixer.music.play()
-                self.audio_loaded = True
-            except pygame.error as exc:
-                self.audio_error = str(exc)
+        if music_path is None:
+            return
+        try:
+            pygame.mixer.music.load(str(music_path))
+            pygame.mixer.music.set_volume(GAMEPLAY_MUSIC_VOLUME)
+            self.audio_loaded = True
+        except pygame.error as exc:
+            self.audio_error = str(exc)
 
     def _start(self, now: float) -> None:
         self.running = True
@@ -266,6 +335,7 @@ class GameSession:
         self.audio_started = False
         self.audio_error = None
         self.lead_in_start_time = self._compute_lead_in_start_time()
+        self._preload_audio()
         if self.lead_in_start_time >= -1e-6:
             self._start_audio_clock(now)
 
@@ -525,7 +595,14 @@ class GameSession:
         ]
         self._update_active_chains(body, t)
 
-        for note in self.notes:
+        due_end = self._pending_note_cursor
+        while (
+            due_end < len(self._gameplay_notes)
+            and self._gameplay_notes[due_end].time <= t + OCCUPANCY_GRACE_SECONDS
+        ):
+            due_end += 1
+
+        for note in self._gameplay_notes[self._pending_note_cursor : due_end]:
             if note.judged:
                 continue
             chain = self._chain_by_id.get(note.chain_id) if note.chain_id is not None else None
@@ -548,10 +625,11 @@ class GameSession:
                         chain.broken_at = t
                 continue
 
-            # Generated-chain intermediate notes remain available to DEBUG
-            # rendering but are not gameplay judgements while chaining is on.
-            # The shared sustain owns the single weighted tail judgement.
-            continue
+        while (
+            self._pending_note_cursor < len(self._gameplay_notes)
+            and self._gameplay_notes[self._pending_note_cursor].judged
+        ):
+            self._pending_note_cursor += 1
 
         raw_performance = self.stats.performance_state
         if raw_performance in ("warning", "danger", "failed"):
@@ -570,6 +648,5 @@ class GameSession:
                 self.running = False
                 return
 
-        last = self.chart.last_note_time if self.chart is not None else max((n.time for n in self.notes), default=0.0)
-        if t > last + 2.0 and (not self.audio_loaded or not pygame.mixer.music.get_busy()):
+        if t > self._last_note_time + 2.0 and (not self.audio_loaded or not pygame.mixer.music.get_busy()):
             self.finished = True

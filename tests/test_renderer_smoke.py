@@ -4,10 +4,12 @@ import importlib
 from pathlib import Path
 from types import SimpleNamespace
 
+import numpy as np
 import pygame
 import pytest
 
 from vaporstep.domain import (
+    BodyPoint,
     BodyState,
     ChainMode,
     ChainState,
@@ -15,6 +17,7 @@ from vaporstep.domain import (
     HitQuality,
     ImplicitChain,
     NoteKind,
+    PoseFigure,
     RuntimeChain,
     SustainSource,
 )
@@ -331,6 +334,45 @@ def test_renderer_connects_paired_hand_hold_head(monkeypatch, state) -> None:
     assert connectors[0][4:] == (0.75, True)
 
 
+def test_active_hand_hold_keeps_color_when_head_note_leaves_render_window(monkeypatch) -> None:
+    pygame.font.init()
+    screen = pygame.Surface((1280, 720))
+    renderer_module = importlib.import_module("vaporstep.renderer")
+    renderer = renderer_module.Renderer(screen)
+    connectors = []
+    monkeypatch.setattr(
+        renderer,
+        "_draw_hand_note_connector",
+        lambda *args: connectors.append(args),
+    )
+    chain = RuntimeChain(
+        definition=ImplicitChain(
+            id=9,
+            kind=NoteKind.HANDS,
+            lanes=(1, 4),
+            note_indices=(0,),
+            start_time=1.0,
+            end_time=10.0,
+            start_beat=2.0,
+            end_beat=20.0,
+            source=SustainSource.EXPLICIT_HOLD,
+        ),
+        state=ChainState.ACTIVE,
+        visual_ordinal=1,
+    )
+
+    renderer._draw_chains(
+        (chain,),
+        [],
+        song_time=5.0,
+        song_beat=10.0,
+        chain_mode=ChainMode.OFF,
+    )
+
+    assert connectors
+    assert connectors[0][2] == renderer_module.PURPLE
+
+
 def test_hand_note_connector_ignores_single_lane_notes() -> None:
     pygame.font.init()
     screen = pygame.Surface((1280, 720))
@@ -452,6 +494,96 @@ def test_hand_arc_reuses_cached_tunnel_geometry() -> None:
     renderer._hand_arc_points(0.0, 1.0, 0.75, samples=64)
 
     assert calls == 1
+
+
+def test_static_playfield_caches_are_reused_and_size_scoped() -> None:
+    pygame.font.init()
+    renderer_module = importlib.import_module("vaporstep.renderer")
+    renderer = renderer_module.Renderer(pygame.Surface((1280, 720)))
+
+    band = renderer._hand_depth_band(0.0, 0.125)
+    depth_surface = renderer._hand_depth_surface()
+    gutter_surface = renderer._floor_gutter_fill_surface()
+    assert renderer._hand_depth_band(0.0, 0.125) is band
+    assert renderer._hand_depth_surface() is depth_surface
+    assert renderer._floor_gutter_fill_surface() is gutter_surface
+
+    renderer.replace_screen(pygame.Surface((1024, 600)))
+    assert renderer._hand_depth_band(0.0, 0.125) is not band
+    assert renderer._hand_depth_surface() is not depth_surface
+    assert renderer._floor_gutter_fill_surface() is not gutter_surface
+
+
+def test_playfield_key_labels_are_rendered_once() -> None:
+    pygame.font.init()
+    renderer_module = importlib.import_module("vaporstep.renderer")
+    renderer = renderer_module.Renderer(pygame.Surface((1280, 720)))
+    base_font = renderer.small_font
+    rendered = []
+
+    class CountingFont:
+        def render(self, *args, **kwargs):
+            rendered.append(args[0])
+            return base_font.render(*args, **kwargs)
+
+    renderer.small_font = CountingFont()
+    renderer._draw_key_labels(hand_enabled=True, foot_enabled=True)
+    renderer._draw_key_labels(hand_enabled=True, foot_enabled=True)
+
+    assert len(rendered) == 8
+
+
+def test_silhouette_processing_uses_cropped_mask_resolution(monkeypatch) -> None:
+    pygame.font.init()
+    renderer_module = importlib.import_module("vaporstep.renderer")
+    base_module = importlib.import_module("vaporstep.renderer_base")
+    renderer = renderer_module.Renderer(pygame.Surface((1280, 720)))
+    processed_shapes = []
+
+    def fake_canny(binary, _low, _high):
+        processed_shapes.append(binary.shape)
+        return np.zeros_like(binary)
+
+    monkeypatch.setattr(base_module.cv2, "Canny", fake_canny)
+    renderer._draw_silhouette(np.zeros((480, 640), dtype=np.float32))
+
+    expected_width = round(640 / renderer.player_horizontal_zoom)
+    assert processed_shapes == [(480, expected_width)]
+    assert renderer._silhouette_surface is not None
+    assert renderer._silhouette_surface.get_size() == renderer._camera_rect().size
+
+
+def test_primitive_pose_figure_draws_from_landmarks_without_a_mask() -> None:
+    pygame.font.init()
+    renderer_module = importlib.import_module("vaporstep.renderer")
+    screen = pygame.Surface((1280, 720))
+    renderer = renderer_module.Renderer(screen)
+    screen.fill((2, 2, 8))
+    landmarks = [BodyPoint() for _ in range(33)]
+    coordinates = {
+        0: (0.50, 0.13),
+        7: (0.47, 0.15),
+        8: (0.53, 0.15),
+        11: (0.42, 0.27),
+        12: (0.58, 0.27),
+        13: (0.36, 0.42),
+        14: (0.64, 0.42),
+        15: (0.31, 0.57),
+        16: (0.69, 0.57),
+        23: (0.45, 0.53),
+        24: (0.55, 0.53),
+        25: (0.43, 0.72),
+        26: (0.57, 0.72),
+        27: (0.41, 0.91),
+        28: (0.59, 0.91),
+    }
+    for index, (x, y) in coordinates.items():
+        landmarks[index] = BodyPoint(x=x, y=y, visible=True)
+
+    renderer._draw_pose_figure(PoseFigure(tuple(landmarks)))
+
+    pixels = pygame.surfarray.array3d(screen)
+    assert np.any(pixels != np.array((2, 2, 8), dtype=np.uint8))
 
 
 def test_preentry_glows_are_centered_on_the_entry_boundaries() -> None:

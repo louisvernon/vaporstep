@@ -15,6 +15,18 @@ class BodyPoint:
 
 
 @dataclass(frozen=True)
+class PoseFigure:
+    """Display-ready copy of MediaPipe's already-computed pose landmarks."""
+
+    landmarks: tuple[BodyPoint, ...] = ()
+
+    def point(self, index: int) -> BodyPoint:
+        if 0 <= index < len(self.landmarks):
+            return self.landmarks[index]
+        return BodyPoint()
+
+
+@dataclass(frozen=True)
 class BodyState:
     left_wrist: BodyPoint = field(default_factory=BodyPoint)
     right_wrist: BodyPoint = field(default_factory=BodyPoint)
@@ -141,6 +153,7 @@ class RuntimeChain:
     broken_at: float | None = None
     quality: HitQuality = HitQuality.HIT
     completion_judged: bool = False
+    visual_ordinal: int | None = None
 
 
 @dataclass
@@ -160,6 +173,9 @@ class GameNote:
     chain_id: int | None = None
     chain_index: int = 0
     chain_length: int = 1
+    # Assigned by GameSession so a renderer receiving only the current time
+    # window can preserve authored alternating hand colors.
+    visual_ordinal: int | None = None
 
     def is_satisfied(self, body: BodyState) -> bool:
         required = set(self.lanes)

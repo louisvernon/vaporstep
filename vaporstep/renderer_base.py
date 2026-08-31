@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 import random
+import time
 
 import cv2
 import numpy as np
@@ -22,7 +23,7 @@ from .config import (
     VANISH_HALF_WIDTH,
     VANISH_Y,
 )
-from .domain import BodyPoint, BodyState, ChainMode, ChainState, GameNote, HitQuality, NoteKind, RuntimeChain, SustainSource
+from .domain import BodyPoint, BodyState, ChainMode, ChainState, GameNote, HitQuality, NoteKind, PoseFigure, RuntimeChain, SustainSource
 from .font_support import MetadataFont
 from .keyboard_input import label_for_lane
 from .menu import SongMenu
@@ -44,6 +45,20 @@ RED = (255, 75, 110)
 AMBER = (255, 190, 75)
 ELECTRIC_YELLOW = (255, 232, 70)
 HIT_BRICK_POP_SECONDS = 0.16
+POSE_FIGURE_CONNECTIONS = (
+    (11, 12),
+    (11, 13),
+    (13, 15),
+    (12, 14),
+    (14, 16),
+    (11, 23),
+    (12, 24),
+    (23, 24),
+    (23, 25),
+    (25, 27),
+    (24, 26),
+    (26, 28),
+)
 
 
 def _blend(a: tuple[int, int, int], b: tuple[int, int, int], amount: float) -> tuple[int, int, int]:
@@ -75,6 +90,19 @@ class Renderer:
         self._banner_cache: dict[str, pygame.Surface | None] = {}
         self._song_metadata_fonts: dict[int, MetadataFont] = {}
         self.player_horizontal_zoom = 1.10
+        self._profiling_enabled = False
+        self._phase_times_ms: dict[str, float] = {}
+        self._phase_averages_ms: dict[str, float] = {}
+
+    def set_profiling_enabled(self, enabled: bool) -> None:
+        self._profiling_enabled = bool(enabled)
+        if not enabled:
+            self._phase_times_ms = {}
+            self._phase_averages_ms = {}
+
+    @property
+    def phase_times_ms(self) -> dict[str, float]:
+        return dict(self._phase_times_ms)
 
     def _song_metadata_font(self, size: int) -> MetadataFont:
         """Return a cached coverage-based font for user-supplied song text."""
@@ -139,15 +167,35 @@ class Renderer:
         chain_mode: ChainMode = ChainMode.OFF,
         show_lower_body_sources: bool = False,
         show_body_markers: bool = True,
+        profile_lines: tuple[str, ...] = (),
+        pose_figure: PoseFigure | None = None,
+        detailed_debug: bool = False,
     ) -> None:
+        profiling = self._profiling_enabled
+        phase_times: dict[str, float] = {}
+        phase_started = time.perf_counter()
+
+        def finish_phase(name: str) -> None:
+            nonlocal phase_started
+            if not profiling:
+                return
+            now = time.perf_counter()
+            phase_times[name] = (now - phase_started) * 1000.0
+            phase_started = now
+
         self.screen.fill(BG)
         self._draw_background(song_time, beat_pulse, downbeat)
+        finish_phase("background")
 
         if mask is not None:
             self._draw_silhouette(mask)
+        elif pose_figure is not None:
+            self._draw_pose_figure(pose_figure)
+        finish_phase("silhouette")
 
         overdrive = stats is not None and stats.multiplier >= 5 and running
         self._draw_playfields(body, song_time, beat_pulse, downbeat, hand_enabled, foot_enabled, overdrive, animate_buzz=running)
+        finish_phase("playfields")
         # Do not preview the opening bars while the player is still positioning.
         # A failed run deliberately keeps the frozen chart visible during its hold.
         visible_notes = notes if (running or performance_state == "failed") else []
@@ -160,6 +208,7 @@ class Renderer:
             beat_pulse=beat_pulse,
             downbeat=downbeat,
         )
+        finish_phase("chains")
         self._draw_notes(
             visible_notes,
             song_time,
@@ -168,18 +217,22 @@ class Renderer:
             beat_pulse=beat_pulse,
             downbeat=downbeat,
         )
+        finish_phase("notes_glows")
         if running:
             self._spawn_note_effects(notes)
             self._draw_particles(song_time)
+        finish_phase("particles")
         self._draw_receptors(body, visible_notes, song_time, hand_enabled, foot_enabled, strike_events)
+        finish_phase("receptors")
         if show_body_markers:
             self._draw_body_markers(
                 body,
-                show_labels=debug,
+                show_labels=detailed_debug,
                 hand_enabled=hand_enabled,
                 foot_enabled=foot_enabled,
                 show_lower_body_sources=show_lower_body_sources,
             )
+        finish_phase("markers")
 
         if stats is not None and (running or performance_state == "failed"):
             self._draw_hud(
@@ -193,9 +246,25 @@ class Renderer:
                 self._draw_audio_error(audio_error)
         else:
             self._draw_status(status, input_name, song_title, chart_label, audio_error)
+        finish_phase("hud")
 
         if debug:
-            self._draw_debug(body, song_time, pose_fps)
+            self._draw_debug(
+                body,
+                song_time,
+                pose_fps,
+                profile_lines,
+                detailed=detailed_debug,
+            )
+        finish_phase("debug")
+        if profiling:
+            phase_times["total"] = sum(phase_times.values())
+            self._phase_times_ms = phase_times
+            for name, value in phase_times.items():
+                previous = self._phase_averages_ms.get(name)
+                self._phase_averages_ms[name] = (
+                    value if previous is None else 0.9 * previous + 0.1 * value
+                )
 
     def draw_recording_indicator(self) -> None:
         w, _ = self.size
@@ -409,6 +478,7 @@ class Renderer:
         camera_index: int | None,
         horizontal_reach: float,
         camera_status: str,
+        player_visual: str = "silhouette",
     ) -> None:
         w, h = self.size
         panel = pygame.Surface((min(660, w - 40), 108), pygame.SRCALPHA)
@@ -420,7 +490,9 @@ class Renderer:
         )
         self.screen.blit(line1, (38, h - 118))
         line2 = self.small_font.render(
-            "←/→ reach    ↑/↓ camera (below 0 = keyboard)    Esc save & return", True, CYAN
+            f"←/→ reach    ↑/↓ camera    V visual ({player_visual.upper()})    Esc save & return",
+            True,
+            CYAN,
         )
         self.screen.blit(line2, (38, h - 88))
         tracking = self.small_font.render(
@@ -953,28 +1025,83 @@ class Renderer:
                 crop_w = max(1, min(source_w, int(round(source_w / self.player_horizontal_zoom))))
                 x0 = max(0, (source_w - crop_w) // 2)
                 source = mask[:, x0 : x0 + crop_w]
-            resized = cv2.resize(source, size, interpolation=cv2.INTER_LINEAR)
-            clipped = np.clip((resized - 0.25) / 0.55, 0.0, 1.0)
+            source_size = (source.shape[1], source.shape[0])
+            clipped = np.clip((source - 0.25) / 0.55, 0.0, 1.0)
             alpha = (clipped * 75).astype(np.uint8)
-            surf = pygame.Surface(size, pygame.SRCALPHA)
+            surf = pygame.Surface(source_size, pygame.SRCALPHA)
             surf.fill((*PURPLE, 0))
             a = pygame.surfarray.pixels_alpha(surf)
             a[:, :] = alpha.T
             del a
 
-            binary = (resized > 0.50).astype(np.uint8) * 255
+            binary = (source > 0.50).astype(np.uint8) * 255
             edges = cv2.Canny(binary, 60, 120)
-            outline = pygame.Surface(size, pygame.SRCALPHA)
+            outline = pygame.Surface(source_size, pygame.SRCALPHA)
             outline.fill((*CYAN, 0))
             oa = pygame.surfarray.pixels_alpha(outline)
             oa[:, :] = (edges.T * 0.60).astype(np.uint8)
             del oa
             surf.blit(outline, (0, 0))
+            if source_size != size:
+                surf = pygame.transform.smoothscale(surf, size)
             self._silhouette_surface = surf
             self._last_mask = mask
             self._silhouette_size = size
         if self._silhouette_surface is not None:
             self.screen.blit(self._silhouette_surface, viewport.topleft)
+
+    def _draw_pose_figure(self, figure: PoseFigure) -> None:
+        """Draw a cheap neon figure from MediaPipe's existing landmarks."""
+        viewport = self._camera_rect()
+        limb_width = max(8, int(round(viewport.width * 0.018)))
+        core_width = max(2, limb_width // 5)
+        body_color = _blend(BG, PURPLE, 0.62)
+        core_color = _blend(PURPLE, CYAN, 0.34)
+
+        torso = tuple(figure.point(index) for index in (11, 12, 24, 23))
+        if all(point.visible for point in torso):
+            polygon = [self._screen_point(point) for point in torso]
+            pygame.draw.polygon(self.screen, _blend(BG, PURPLE, 0.38), polygon)
+            pygame.draw.lines(self.screen, core_color, True, polygon, core_width)
+
+        visible_joints: set[int] = set()
+        for start_index, end_index in POSE_FIGURE_CONNECTIONS:
+            start = figure.point(start_index)
+            end = figure.point(end_index)
+            if not start.visible or not end.visible:
+                continue
+            p0 = self._screen_point(start)
+            p1 = self._screen_point(end)
+            pygame.draw.line(self.screen, body_color, p0, p1, limb_width)
+            pygame.draw.line(self.screen, core_color, p0, p1, core_width)
+            visible_joints.update((start_index, end_index))
+
+        joint_radius = max(3, limb_width // 3)
+        for index in visible_joints:
+            point = figure.point(index)
+            pygame.draw.circle(self.screen, body_color, self._screen_point(point), joint_radius)
+            pygame.draw.circle(
+                self.screen,
+                core_color,
+                self._screen_point(point),
+                max(1, core_width // 2),
+            )
+
+        left_ear = figure.point(7)
+        right_ear = figure.point(8)
+        nose = figure.point(0)
+        if left_ear.visible and right_ear.visible:
+            left = self._screen_point(left_ear)
+            right = self._screen_point(right_ear)
+            center = ((left[0] + right[0]) // 2, (left[1] + right[1]) // 2)
+            radius = max(limb_width, int(round(math.dist(left, right) * 0.62)))
+        elif nose.visible:
+            center = self._screen_point(nose)
+            radius = max(limb_width, int(round(viewport.width * 0.026)))
+        else:
+            return
+        pygame.draw.circle(self.screen, body_color, center, radius)
+        pygame.draw.circle(self.screen, core_color, center, radius, core_width)
 
     def _screen_point(self, p: BodyPoint) -> tuple[int, int]:
         viewport = self._camera_rect()
@@ -1100,7 +1227,15 @@ class Renderer:
             self.screen.blit(surf, (x, y))
             y += surf.get_height() + 8
 
-    def _draw_debug(self, body: BodyState, t: float, pose_fps: float) -> None:
+    def _draw_debug(
+        self,
+        body: BodyState,
+        t: float,
+        pose_fps: float,
+        profile_lines: tuple[str, ...] = (),
+        *,
+        detailed: bool = True,
+    ) -> None:
         labels = [
             ("LW", body.left_wrist),
             ("RW", body.right_wrist),
@@ -1109,12 +1244,54 @@ class Renderer:
             ("LF", body.left_foot_control),
             ("RF", body.right_foot_control),
         ]
-        lines = [f"song {t:5.2f}s    pose {pose_fps:4.1f} fps"]
+        lines = list(profile_lines)
+        if not detailed:
+            self._draw_debug_lines(lines)
+            return
+
+        if self._phase_averages_ms:
+            phases = self._phase_averages_ms
+            primary_names = (
+                "silhouette",
+                "playfields",
+                "chains",
+                "notes_glows",
+                "particles",
+                "receptors",
+            )
+            other = max(
+                0.0,
+                phases.get("total", 0.0)
+                - sum(phases.get(name, 0.0) for name in primary_names),
+            )
+            lines.extend(
+                (
+                    (
+                        f"RENDERER ROLLING (ms)  total={phases.get('total', 0.0):.1f}  "
+                        f"player visual={phases.get('silhouette', 0.0):.1f}  "
+                        f"playfields={phases.get('playfields', 0.0):.1f}  "
+                        f"chains={phases.get('chains', 0.0):.1f}"
+                    ),
+                    (
+                        f"EFFECTS (ms)  notes+glows={phases.get('notes_glows', 0.0):.1f}  "
+                        f"particles={phases.get('particles', 0.0):.1f}  "
+                        f"receptors={phases.get('receptors', 0.0):.1f}  other={other:.1f}"
+                    ),
+                )
+            )
+
+        lines.append(
+            f"POSE DEBUG  song={t:5.2f}s  result rate={pose_fps:4.1f}fps  "
+            "x/y=normalized camera coordinates"
+        )
         for name, p in labels:
             lane = "-" if p.lane is None else str(p.lane)
             vis = "ok" if p.visible else "lost"
             lines.append(f"{name}: lane {lane}   x={p.x:0.3f} y={p.y:0.3f} {vis}")
         lines.append(f"feet(control)={sorted(body.foot_lanes)} hands={sorted(body.hand_lanes)}")
+        self._draw_debug_lines(lines)
+
+    def _draw_debug_lines(self, lines: list[str]) -> None:
         x, y = 18, 92
         for line in lines:
             surf = self.small_font.render(line, True, WHITE)

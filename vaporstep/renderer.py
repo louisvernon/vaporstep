@@ -14,6 +14,8 @@ from .config import (
     LOOKAHEAD_BEATS,
     LOOKAHEAD_SECONDS,
     OUTER_LANE_EDGE_EXTENSION,
+    TARGET_PREENTRY_BEATS,
+    TARGET_PREENTRY_SECONDS,
     VANISH_HALF_WIDTH,
     VANISH_Y,
 )
@@ -63,8 +65,6 @@ _HAND_SHOULDER_EXTENSION = 0.12
 _HAND_TUNNEL_VERTICAL_SCALE = 0.96
 _HAND_TRACKER_OFFSET_PX = 10.0
 _NOTE_GLOW_OFFSET_PROGRESS = 0.075
-_TARGET_PREENTRY_BEATS = 1.5
-_TARGET_PREENTRY_SECONDS = 0.75
 _NOTE_BREATHE_CYCLE_SECONDS = 1.6
 _PREENTRY_GLOW_RADIUS_X_PX = 48
 _PREENTRY_GLOW_RADIUS_Y_PX = 24
@@ -75,6 +75,30 @@ _PREENTRY_GLOW_PEAK = 0.41
 
 class Renderer(_base.Renderer):
     """Authoritative gameplay renderer for the projected hand tunnel and foot field."""
+
+    def _playfield_geometry(self) -> dict[tuple[object, ...], object]:
+        """Return a size-scoped cache for immutable playfield point arrays."""
+        cached = getattr(self, "_playfield_geometry_cache", None)
+        if cached is None or cached[0] != self.size:
+            cached = (self.size, {})
+            self._playfield_geometry_cache = cached
+        return cached[1]
+
+    def _static_hand_arc_points(
+        self,
+        start: float,
+        end: float,
+        progress: float,
+        *,
+        samples: int,
+    ) -> list[tuple[int, int]]:
+        cache = self._playfield_geometry()
+        key = ("hand_arc", start, end, progress, samples)
+        points = cache.get(key)
+        if points is None:
+            points = self._hand_arc_points(start, end, progress, samples=samples)
+            cache[key] = points
+        return points
 
     @staticmethod
     def _offset_rail(
@@ -239,14 +263,25 @@ class Renderer(_base.Renderer):
         end = _HAND_BOUNDARIES[lane]
         center = (start + end) * 0.5
         half = (end - start) * 0.5 * max(0.05, min(1.0, fraction))
-        return self._hand_arc_points(center - half, center + half, progress, samples=14)
+        start = center - half
+        end = center + half
+        if progress == 1.0 and fraction == 1.0:
+            return self._static_hand_arc_points(start, end, progress, samples=14)
+        return self._hand_arc_points(start, end, progress, samples=14)
 
     def _hand_sector_polygon(self, lane: int) -> list[tuple[int, int]]:
+        cache = self._playfield_geometry()
+        key = ("hand_sector", lane)
+        polygon = cache.get(key)
+        if polygon is not None:
+            return polygon
         start = _HAND_BOUNDARIES[lane - 1]
         end = _HAND_BOUNDARIES[lane]
-        outer = self._hand_arc_points(start, end, 1.0, samples=18)
-        inner = self._hand_arc_points(end, start, 0.0, samples=18)
-        return [*outer, *inner]
+        outer = self._static_hand_arc_points(start, end, 1.0, samples=18)
+        inner = self._static_hand_arc_points(end, start, 0.0, samples=18)
+        polygon = [*outer, *inner]
+        cache[key] = polygon
+        return polygon
 
     def _hand_lane_direction(self, lane: int) -> tuple[float, float]:
         inner = self._hand_target_point(lane, 0.0)
@@ -375,9 +410,15 @@ class Renderer(_base.Renderer):
             pygame.draw.lines(self.screen, _blend(color, WHITE, 0.68 * fade), False, arc, 2)
 
     def _hand_depth_band(self, p0: float, p1: float) -> list[tuple[int, int]]:
-        outer = self._hand_arc_points(0.0, 1.0, p1, samples=64)
-        inner = self._hand_arc_points(1.0, 0.0, p0, samples=64)
-        return [*outer, *inner]
+        cache = self._playfield_geometry()
+        key = ("hand_depth", p0, p1)
+        polygon = cache.get(key)
+        if polygon is None:
+            outer = self._static_hand_arc_points(0.0, 1.0, p1, samples=64)
+            inner = self._static_hand_arc_points(1.0, 0.0, p0, samples=64)
+            polygon = [*outer, *inner]
+            cache[key] = polygon
+        return polygon
 
     def _floor_gutter_outer_point(self, side: str, progress: float) -> tuple[float, float]:
         along = 0.0 if side == "left" else 1.0
@@ -385,6 +426,11 @@ class Renderer(_base.Renderer):
         return wall_x, self._field_y(NoteKind.FOOT, progress)
 
     def _floor_gutter_polygon(self, side: str, samples: int = 20) -> list[tuple[int, int]]:
+        cache = self._playfield_geometry()
+        key = ("floor_gutter", side, samples)
+        polygon = cache.get(key)
+        if polygon is not None:
+            return polygon
         boundary = 0 if side == "left" else 4
         outer = [
             tuple(int(v) for v in self._floor_gutter_outer_point(side, i / samples))
@@ -397,17 +443,42 @@ class Renderer(_base.Renderer):
             )
             for i in range(samples, -1, -1)
         ]
-        return [*outer, *foot]
+        polygon = [*outer, *foot]
+        cache[key] = polygon
+        return polygon
 
-    def _draw_floor_gutter_structure(self, rail_color) -> None:
-        floor_surface = self._scratch_surface("_alpha_scratch", alpha=True)
+    def _floor_gutter_fill_surface(self) -> pygame.Surface:
+        cached = getattr(self, "_floor_gutter_fill_cache", None)
+        if cached is not None and cached[0] == self.size:
+            return cached[1]
+        surface = pygame.Surface(self.size, pygame.SRCALPHA)
+        surface.fill((0, 0, 0, 0))
         for side in ("left", "right"):
             pygame.draw.polygon(
-                floor_surface,
+                surface,
                 (*GRID, 10),
                 self._floor_gutter_polygon(side),
             )
-        self.screen.blit(floor_surface, (0, 0))
+        self._floor_gutter_fill_cache = (self.size, surface)
+        return surface
+
+    def _hand_depth_surface(self) -> pygame.Surface:
+        cached = getattr(self, "_hand_depth_surface_cache", None)
+        if cached is not None and cached[0] == self.size:
+            return cached[1]
+        surface = pygame.Surface(self.size, pygame.SRCALPHA)
+        surface.fill((0, 0, 0, 0))
+        for band in range(8):
+            p0 = band / 8.0
+            p1 = (band + 1) / 8.0
+            mid = (p0 + p1) * 0.5
+            alpha = int(6 + 22 * (1.0 - mid))
+            pygame.draw.polygon(surface, (*BG, alpha), self._hand_depth_band(p0, p1))
+        self._hand_depth_surface_cache = (self.size, surface)
+        return surface
+
+    def _draw_floor_gutter_structure(self, rail_color) -> None:
+        self.screen.blit(self._floor_gutter_fill_surface(), (0, 0))
 
         for side in ("left", "right"):
             boundary = 0 if side == "left" else 4
@@ -435,14 +506,7 @@ class Renderer(_base.Renderer):
         occupied = body.hand_lanes if enabled else frozenset()
         disabled = _blend(DIM, BG, 0.58)
 
-        depth_surface = self._scratch_surface("_alpha_scratch", alpha=True)
-        for band in range(8):
-            p0 = band / 8.0
-            p1 = (band + 1) / 8.0
-            mid = (p0 + p1) * 0.5
-            alpha = int(6 + 22 * (1.0 - mid))
-            pygame.draw.polygon(depth_surface, (*BG, alpha), self._hand_depth_band(p0, p1))
-        self.screen.blit(depth_surface, (0, 0))
+        self.screen.blit(self._hand_depth_surface(), (0, 0))
 
         fill_surface = self._scratch_surface("_alpha_scratch", alpha=True)
         for lane in range(1, 5):
@@ -470,7 +534,7 @@ class Renderer(_base.Renderer):
                 color, width = rail_color, 1
             pygame.draw.line(self.screen, color, p0, p1, width)
 
-        inner_arc = self._hand_arc_points(0.0, 1.0, 0.0, samples=64)
+        inner_arc = self._static_hand_arc_points(0.0, 1.0, 0.0, samples=64)
         pygame.draw.lines(self.screen, _blend(rail_color, WHITE, 0.10), False, inner_arc, 2)
 
         pulse = max(0.0, min(1.0, beat_pulse))
@@ -485,7 +549,7 @@ class Renderer(_base.Renderer):
                     amount = proximity * (0.14 + 0.26 * (pulse ** 0.5))
                     ring_color = _blend(rail_color, MAGENTA, amount)
                     width = 2 if amount > 0.18 else 1
-            arc = self._hand_arc_points(0.0, 1.0, progress, samples=64)
+            arc = self._static_hand_arc_points(0.0, 1.0, progress, samples=64)
             pygame.draw.lines(self.screen, ring_color, False, arc, width)
 
         for lane in range(1, 5):
@@ -625,14 +689,23 @@ class Renderer(_base.Renderer):
         self.screen.blit(glow, (0, 0), special_flags=pygame.BLEND_RGB_ADD)
 
     def _draw_key_labels(self, hand_enabled: bool, foot_enabled: bool) -> None:
+        label_cache = getattr(self, "_playfield_label_cache", None)
+        if label_cache is None:
+            label_cache = {}
+            self._playfield_label_cache = label_cache
+
+        def label_surface(kind: NoteKind, lane: int) -> pygame.Surface:
+            key = (kind, lane)
+            surface = label_cache.get(key)
+            if surface is None:
+                surface = self.small_font.render(label_for_lane(kind, lane), True, DIM)
+                label_cache[key] = surface
+            return surface
+
         if hand_enabled:
             for lane in range(1, 5):
                 x, y = self._hand_target_point(lane, 0.955)
-                label = self.small_font.render(
-                    label_for_lane(NoteKind.HANDS, lane),
-                    True,
-                    DIM,
-                )
+                label = label_surface(NoteKind.HANDS, lane)
                 self.screen.blit(label, label.get_rect(center=(int(x), int(y))))
 
         if foot_enabled:
@@ -640,11 +713,7 @@ class Renderer(_base.Renderer):
             for lane in range(1, 5):
                 left, right = self._lane_bounds(NoteKind.FOOT, lane, 1.0)
                 center_x = (left + right) * 0.5
-                label = self.small_font.render(
-                    label_for_lane(NoteKind.FOOT, lane),
-                    True,
-                    DIM,
-                )
+                label = label_surface(NoteKind.FOOT, lane)
                 self.screen.blit(label, label.get_rect(center=(int(center_x), int(y))))
 
     def _draw_playfields(
@@ -683,16 +752,16 @@ class Renderer(_base.Renderer):
             distance = float(event_beat) - song_beat
             if distance > LOOKAHEAD_BEATS:
                 extra = distance - LOOKAHEAD_BEATS
-                if extra > _TARGET_PREENTRY_BEATS:
+                if extra > TARGET_PREENTRY_BEATS:
                     return None
-                return 0.0, self._preentry_brightness(extra, _TARGET_PREENTRY_BEATS), True
+                return 0.0, self._preentry_brightness(extra, TARGET_PREENTRY_BEATS), True
         else:
             distance = event_time - song_time
             if distance > LOOKAHEAD_SECONDS:
                 extra = distance - LOOKAHEAD_SECONDS
-                if extra > _TARGET_PREENTRY_SECONDS:
+                if extra > TARGET_PREENTRY_SECONDS:
                     return None
-                return 0.0, self._preentry_brightness(extra, _TARGET_PREENTRY_SECONDS), True
+                return 0.0, self._preentry_brightness(extra, TARGET_PREENTRY_SECONDS), True
 
         progress = timed_progress(event_time, event_beat, song_time, song_beat)
         return progress, 0.24 + 0.48 * (progress ** 0.85), False
@@ -944,7 +1013,8 @@ class Renderer(_base.Renderer):
         for note in notes:
             note_color = MAGENTA
             if note.kind == NoteKind.HANDS:
-                note_color = self._hand_note_color(hand_ordinal)
+                ordinal = note.visual_ordinal if note.visual_ordinal is not None else hand_ordinal
+                note_color = self._hand_note_color(ordinal)
                 hand_ordinal += 1
             if note.end_time is not None and note.chain_id is not None:
                 continue
@@ -1084,7 +1154,8 @@ class Renderer(_base.Renderer):
         for note in notes:
             if note.kind != NoteKind.HANDS:
                 continue
-            note_color = self._hand_note_color(hand_ordinal)
+            ordinal = note.visual_ordinal if note.visual_ordinal is not None else hand_ordinal
+            note_color = self._hand_note_color(ordinal)
             hand_ordinal += 1
             if note.end_time is not None and note.chain_id is not None:
                 continue
@@ -1139,15 +1210,21 @@ class Renderer(_base.Renderer):
     @classmethod
     def _hand_chain_colors(
         cls,
+        chains: tuple[RuntimeChain, ...],
         notes: list[GameNote],
     ) -> dict[int, tuple[int, int, int]]:
         """Keep rendered hand chains in the authored event color sequence."""
-        colors: dict[int, tuple[int, int, int]] = {}
+        colors = {
+            chain.definition.id: cls._hand_note_color(chain.visual_ordinal)
+            for chain in chains
+            if chain.definition.kind == NoteKind.HANDS and chain.visual_ordinal is not None
+        }
         ordinal = 0
         for note in notes:
             if note.kind != NoteKind.HANDS:
                 continue
-            color = cls._hand_note_color(ordinal)
+            visual_ordinal = note.visual_ordinal if note.visual_ordinal is not None else ordinal
+            color = cls._hand_note_color(visual_ordinal)
             ordinal += 1
             if note.chain_id is not None and note.chain_index == 0:
                 colors.setdefault(note.chain_id, color)
@@ -1161,7 +1238,7 @@ class Renderer(_base.Renderer):
         song_beat: float,
         chain_mode: ChainMode,
     ) -> None:
-        if not chains or not notes:
+        if not chains:
             return
         for chain in chains:
             definition = chain.definition
@@ -1303,7 +1380,7 @@ class Renderer(_base.Renderer):
         beat_pulse: float = 0.0,
         downbeat: bool = False,
     ) -> None:
-        hand_chain_colors = self._hand_chain_colors(notes)
+        hand_chain_colors = self._hand_chain_colors(chains, notes)
         self._draw_chain_head_glows(
             chains,
             song_time,
@@ -1313,57 +1390,56 @@ class Renderer(_base.Renderer):
         )
         self._draw_foot_chains(chains, notes, song_time, song_beat, chain_mode)
 
-        if notes:
-            for chain in chains:
-                definition = chain.definition
-                if definition.kind != NoteKind.HANDS:
-                    continue
-                is_hold = definition.source == SustainSource.EXPLICIT_HOLD
-                if not is_hold and chain_mode == ChainMode.OFF:
-                    continue
-                if not timed_is_within_lookahead(
-                    definition.start_time,
-                    definition.start_beat,
-                    song_time,
-                    song_beat,
-                ):
-                    continue
-                if song_time > definition.end_time + _base.HIT_FLASH_SECONDS:
-                    continue
+        for chain in chains:
+            definition = chain.definition
+            if definition.kind != NoteKind.HANDS:
+                continue
+            is_hold = definition.source == SustainSource.EXPLICIT_HOLD
+            if not is_hold and chain_mode == ChainMode.OFF:
+                continue
+            if not timed_is_within_lookahead(
+                definition.start_time,
+                definition.start_beat,
+                song_time,
+                song_beat,
+            ):
+                continue
+            if song_time > definition.end_time + _base.HIT_FLASH_SECONDS:
+                continue
 
-                head = timed_progress(
-                    definition.start_time,
-                    definition.start_beat,
-                    song_time,
-                    song_beat,
-                )
-                tail = timed_progress(
-                    definition.end_time,
-                    definition.end_beat,
-                    song_time,
-                    song_beat,
-                )
-                lo, hi = min(head, tail), max(head, tail)
-                if hi <= 0.0:
-                    continue
-                base_color = hand_chain_colors.get(definition.id, MAGENTA)
-                if chain.state == ChainState.BROKEN:
-                    color = _blend(DIM, BG, 0.25)
-                elif chain.state == ChainState.ACTIVE:
-                    color = _blend(base_color, WHITE, 0.25)
-                else:
-                    color = _blend(BG, base_color, 0.55)
+            head = timed_progress(
+                definition.start_time,
+                definition.start_beat,
+                song_time,
+                song_beat,
+            )
+            tail = timed_progress(
+                definition.end_time,
+                definition.end_beat,
+                song_time,
+                song_beat,
+            )
+            lo, hi = min(head, tail), max(head, tail)
+            if hi <= 0.0:
+                continue
+            base_color = hand_chain_colors.get(definition.id, MAGENTA)
+            if chain.state == ChainState.BROKEN:
+                color = _blend(DIM, BG, 0.25)
+            elif chain.state == ChainState.ACTIVE:
+                color = _blend(base_color, WHITE, 0.25)
+            else:
+                color = _blend(BG, base_color, 0.55)
 
-                for lane in definition.lanes:
-                    p0 = self._hand_target_point(lane, lo)
-                    p1 = self._hand_target_point(lane, hi)
-                    pygame.draw.line(self.screen, _blend(BG, color, 0.45), p0, p1, 16)
-                    pygame.draw.line(self.screen, color, p0, p1, 6)
-                    self._draw_hand_note_arc(
-                        lane,
-                        max(0.0, min(1.0, head)),
-                        color,
-                    )
+            for lane in definition.lanes:
+                p0 = self._hand_target_point(lane, lo)
+                p1 = self._hand_target_point(lane, hi)
+                pygame.draw.line(self.screen, _blend(BG, color, 0.45), p0, p1, 16)
+                pygame.draw.line(self.screen, color, p0, p1, 6)
+                self._draw_hand_note_arc(
+                    lane,
+                    max(0.0, min(1.0, head)),
+                    color,
+                )
 
         for chain in chains:
             definition = chain.definition

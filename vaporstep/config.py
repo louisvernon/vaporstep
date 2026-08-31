@@ -62,9 +62,11 @@ TARGET_FPS = 60
 # higher-BPM
 # sections traverse the field faster, matching beat-relative scrolling.
 LOOKAHEAD_BEATS = 8.0
+TARGET_PREENTRY_BEATS = 1.5
 
 # Fallback only for synthetic/demo notes that do not carry a source beat.
 LOOKAHEAD_SECONDS = 4.0
+TARGET_PREENTRY_SECONDS = 0.75
 # Basic occupancy hits are deliberately much tighter than timing-bonus motion.
 # The player must still occupy the lane at the beat (or within a very short
 # recent/late grace), preventing a quick sweep through several lanes from

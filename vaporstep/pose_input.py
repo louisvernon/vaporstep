@@ -3,7 +3,7 @@ from __future__ import annotations
 import platform
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import cv2
 import mediapipe as mp
@@ -29,7 +29,7 @@ from .config import (
     VANISH_HALF_WIDTH,
     VANISH_Y,
 )
-from .domain import BodyPoint, BodyState
+from .domain import BodyPoint, BodyState, PoseFigure
 from .hand_control import HandPoseResolver
 from .lanes import (
     HystereticLaneResolver,
@@ -97,10 +97,17 @@ def probe_camera(camera_index: int = 0) -> bool:
 @dataclass(frozen=True)
 class PoseSnapshot:
     body: BodyState
+    figure: PoseFigure | None = None
     mask: np.ndarray | None = None
     camera_ok: bool = False
     message: str = "Starting camera…"
     pose_fps: float = 0.0
+    capture_fps: float = 0.0
+    submitted_fps: float = 0.0
+    inference_latency_ms: float = 0.0
+    frames_captured: int = 0
+    frames_submitted: int = 0
+    frames_dropped: int = 0
 
 
 @dataclass
@@ -127,10 +134,17 @@ class _LowerLegFilter:
 class PoseCameraInput:
     """OpenCV camera capture + asynchronous MediaPipe pose inference."""
 
-    def __init__(self, model_path: str, camera_index: int = 0, horizontal_zoom: float = 1.10) -> None:
+    def __init__(
+        self,
+        model_path: str,
+        camera_index: int = 0,
+        horizontal_zoom: float = 1.10,
+        output_segmentation_masks: bool = True,
+    ) -> None:
         self.model_path = model_path
         self.camera_index = camera_index
         self.horizontal_zoom = float(horizontal_zoom)
+        self.output_segmentation_masks = bool(output_segmentation_masks)
         self._lock = threading.Lock()
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -138,6 +152,16 @@ class PoseCameraInput:
         self._capture = None
         self._last_result_time = 0.0
         self._pose_fps_ema = 0.0
+        self._last_capture_time = 0.0
+        self._capture_fps_ema = 0.0
+        self._last_submit_time = 0.0
+        self._submitted_fps_ema = 0.0
+        self._inference_started_at = 0.0
+        self._inference_latency_ms = 0.0
+        self._frames_captured = 0
+        self._frames_submitted = 0
+        self._frames_dropped = 0
+        self._inference_busy = threading.Event()
         self._snapshot = PoseSnapshot(body=BodyState())
         self._lower_leg_filters = {
             "left": _LowerLegFilter(),
@@ -175,10 +199,11 @@ class PoseCameraInput:
             min_pose_detection_confidence=0.5,
             min_pose_presence_confidence=0.5,
             min_tracking_confidence=0.5,
-            output_segmentation_masks=True,
+            output_segmentation_masks=self.output_segmentation_masks,
             result_callback=self._on_result,
         )
         self._landmarker = mp.tasks.vision.PoseLandmarker.create_from_options(options)
+        self._inference_busy.clear()
         self._stop.clear()
         self._thread = threading.Thread(target=self._capture_loop, name="pose-camera", daemon=True)
         self._thread.start()
@@ -193,10 +218,19 @@ class PoseCameraInput:
         if self._landmarker is not None:
             self._landmarker.close()
             self._landmarker = None
+        self._inference_busy.clear()
 
     def snapshot(self) -> PoseSnapshot:
         with self._lock:
-            return self._snapshot
+            return replace(
+                self._snapshot,
+                capture_fps=self._capture_fps_ema,
+                submitted_fps=self._submitted_fps_ema,
+                inference_latency_ms=self._inference_latency_ms,
+                frames_captured=self._frames_captured,
+                frames_submitted=self._frames_submitted,
+                frames_dropped=self._frames_dropped,
+            )
 
     def _open_camera(self):
         return _open_camera_capture(self.camera_index)
@@ -258,11 +292,45 @@ class PoseCameraInput:
                 continue
 
             failed_reads = 0
+            captured_at = time.monotonic()
+            if self._last_capture_time:
+                instant_capture_fps = 1.0 / max(captured_at - self._last_capture_time, 1e-6)
+                self._capture_fps_ema = (
+                    instant_capture_fps
+                    if not self._capture_fps_ema
+                    else 0.9 * self._capture_fps_ema + 0.1 * instant_capture_fps
+                )
+            self._last_capture_time = captured_at
+            self._frames_captured += 1
+
+            # MediaPipe LIVE_STREAM ignores detect_async calls while inference
+            # is occupied. Gate before color conversion and mp.Image creation so
+            # skipped camera frames are cheap and explicitly measurable.
+            if self._inference_busy.is_set():
+                self._frames_dropped += 1
+                continue
+
             rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
             mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
             timestamp_ms = _strict_timestamp_ms(time.monotonic() - t0, last_timestamp_ms)
             last_timestamp_ms = timestamp_ms
-            self._landmarker.detect_async(mp_image, timestamp_ms)
+            submitted_at = time.monotonic()
+            if self._last_submit_time:
+                instant_submitted_fps = 1.0 / max(submitted_at - self._last_submit_time, 1e-6)
+                self._submitted_fps_ema = (
+                    instant_submitted_fps
+                    if not self._submitted_fps_ema
+                    else 0.9 * self._submitted_fps_ema + 0.1 * instant_submitted_fps
+                )
+            self._last_submit_time = submitted_at
+            self._inference_started_at = submitted_at
+            self._frames_submitted += 1
+            self._inference_busy.set()
+            try:
+                self._landmarker.detect_async(mp_image, timestamp_ms)
+            except Exception:
+                self._inference_busy.clear()
+                raise
 
     @staticmethod
     def _confidence(lm) -> float:
@@ -288,6 +356,17 @@ class PoseCameraInput:
             visible = self._visible(lm)
         x = zoom_normalized_x(1.0 - float(lm.x), self.horizontal_zoom)
         return BodyPoint(x=x, y=float(lm.y), visible=bool(visible))
+
+    def _pose_figure(
+        self,
+        landmarks,
+        overrides: dict[int, BodyPoint] | None = None,
+    ) -> PoseFigure:
+        points = [self._camera_point(lm) for lm in landmarks]
+        for index, point in (overrides or {}).items():
+            if 0 <= index < len(points):
+                points[index] = point
+        return PoseFigure(tuple(points))
 
     def _resolve_point(
         self,
@@ -368,7 +447,20 @@ class PoseCameraInput:
         return knee_for_motion, ankle, control
 
     def _on_result(self, result, output_image, timestamp_ms: int) -> None:
+        try:
+            self._handle_result(result, output_image, timestamp_ms)
+        finally:
+            self._inference_busy.clear()
+
+    def _handle_result(self, result, output_image, timestamp_ms: int) -> None:
         now = time.monotonic()
+        if self._inference_started_at:
+            latency = max(0.0, (now - self._inference_started_at) * 1000.0)
+            self._inference_latency_ms = (
+                latency
+                if not self._inference_latency_ms
+                else 0.9 * self._inference_latency_ms + 0.1 * latency
+            )
         if self._last_result_time:
             inst = 1.0 / max(now - self._last_result_time, 1e-6)
             self._pose_fps_ema = (
@@ -419,6 +511,19 @@ class PoseCameraInput:
         rk, ra, rfc = self._lower_body_points(
             lm[RIGHT_KNEE], lm[RIGHT_ANKLE], self._resolvers["rk"], leg="right"
         )
+        figure = self._pose_figure(
+            lm,
+            {
+                LEFT_SHOULDER: left_shoulder,
+                RIGHT_SHOULDER: right_shoulder,
+                LEFT_WRIST: raw_lw,
+                RIGHT_WRIST: raw_rw,
+                LEFT_KNEE: lk,
+                RIGHT_KNEE: rk,
+                LEFT_ANKLE: la,
+                RIGHT_ANKLE: ra,
+            },
+        )
 
         body = BodyState(
             left_wrist=lw,
@@ -451,6 +556,7 @@ class PoseCameraInput:
         with self._lock:
             self._snapshot = PoseSnapshot(
                 body=body,
+                figure=figure,
                 mask=mask,
                 camera_ok=True,
                 message=message,
