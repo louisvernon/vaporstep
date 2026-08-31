@@ -12,7 +12,7 @@ license-files = ["LICENSE"]
 requires-python = ">=3.12"
 dependencies = [
   # Keep the native vision stack reproducible across local and release builds.
-  "mediapipe==0.10.31",
+  "mediapipe==1.0.1",
   "opencv-python==5.0.0.93",
   "pygame==2.6.1",
   "numpy==2.5.2",
