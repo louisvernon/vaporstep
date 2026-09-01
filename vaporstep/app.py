@@ -45,9 +45,9 @@ from .home_ui import MAIN_OPTIONS, draw_home
 from .keyboard_input import KeyboardBodyInput, add_keyboard_lanes
 from .library_index import LibraryIndexer, LibraryScanSnapshot
 from .menu import (
+    DoubleTapDetector,
     HeldMenuRepeater,
     MenuAction,
-    NoteSpeedTapDetector,
     SongMenu,
     action_for_event,
 )
@@ -591,7 +591,7 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     repeater = HeldMenuRepeater()
-    speed_taps = NoteSpeedTapDetector()
+    speed_taps = DoubleTapDetector()
     if args.demo:
         mode = "game"
     elif privacy_pending:
@@ -1110,7 +1110,41 @@ def main(argv: list[str] | None = None) -> int:
                         if repeat_action is not None:
                             repeater.release(repeat_action)
                         continue
+                    if menu.letter_page is not None:
+                        if event.type == pygame.KEYDOWN and not getattr(event, "repeat", False):
+                            if event.key in (pygame.K_RETURN, pygame.K_KP_ENTER):
+                                menu.exit_letter_paging()
+                                menu_sounds.select()
+                            elif event.key in (pygame.K_UP, pygame.K_w, pygame.K_PAGEUP):
+                                menu.page_letter(-1)
+                                preview.stop(reset_selection=True)
+                                menu_sounds.tick()
+                            elif event.key in (pygame.K_DOWN, pygame.K_s, pygame.K_PAGEDOWN):
+                                menu.page_letter(1)
+                                preview.stop(reset_selection=True)
+                                menu_sounds.tick()
+                        continue
                     if event.type == pygame.KEYDOWN:
+                        if event.key in (pygame.K_PAGEUP, pygame.K_PAGEDOWN):
+                            speed_taps.clear()
+                            menu.enter_letter_paging(
+                                -1 if event.key == pygame.K_PAGEUP else 1
+                            )
+                            repeater.clear()
+                            preview.stop(reset_selection=True)
+                            menu_sounds.select()
+                            continue
+                        if event.key == pygame.K_d:
+                            if (
+                                not getattr(event, "repeat", False)
+                                and speed_taps.register(now)
+                            ):
+                                note_travel_speed = (
+                                    1.0 if note_travel_speed > 1.0 else 2.0
+                                )
+                                menu_sounds.select()
+                            continue
+                        speed_taps.clear()
                         shifted = bool(getattr(event, "mod", 0) & pygame.KMOD_SHIFT)
                         if event.key == pygame.K_f:
                             current_key = song_key(menu.song) if menu.song is not None else None
@@ -1164,22 +1198,9 @@ def main(argv: list[str] | None = None) -> int:
                     if action is not None:
                         if getattr(event, "repeat", False) and action in (MenuAction.UP, MenuAction.DOWN):
                             continue
-                        speed_change, delayed_action = speed_taps.register(action, now)
-                        if delayed_action is not None:
-                            handle_song_menu_action(delayed_action)
-                        if speed_change is not None:
-                            note_travel_speed = speed_change
-                            if menu.song is not None:
-                                settings_store.settings.last_song_key = song_key(menu.song)
-                            preview.stop(reset_selection=True)
-                            repeater.clear()
-                            menu_sounds.select()
-                            continue
                         repeat_action = _repeat_action_for_key(getattr(event, "key", -1))
                         if repeat_action is not None:
                             repeater.press(repeat_action, now)
-                        if action in (MenuAction.UP, MenuAction.DOWN):
-                            continue
                         handle_song_menu_action(action)
                     continue
 
@@ -1352,11 +1373,15 @@ def main(argv: list[str] | None = None) -> int:
                 continue
 
             if mode == "song_menu":
-                delayed_action = speed_taps.pop_expired(now)
-                if delayed_action is not None:
-                    handle_song_menu_action(delayed_action)
-                for repeated in repeater.update(now):
-                    handle_song_menu_action(repeated)
+                long_hold = repeater.long_hold_action(now)
+                if menu.letter_page is None and long_hold is not None:
+                    menu.enter_letter_paging()
+                    repeater.clear()
+                    preview.stop(reset_selection=True)
+                    menu_sounds.select()
+                elif menu.letter_page is None:
+                    for repeated in repeater.update(now):
+                        handle_song_menu_action(repeated)
                 menu.animate(frame_dt)
                 preview.update(menu.song, now)
                 selected_record = ChartRecord()

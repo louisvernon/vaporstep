@@ -50,6 +50,7 @@ class HeldMenuRepeater:
     """Deterministic held-key repeat with a scroll-wheel-style acceleration."""
 
     INITIAL_DELAY = 0.28
+    LETTER_MODE_DELAY = 5.0
 
     def __init__(self) -> None:
         self.action: MenuAction | None = None
@@ -69,6 +70,15 @@ class HeldMenuRepeater:
 
     def clear(self) -> None:
         self.action = None
+
+    def long_hold_action(self, now: float) -> MenuAction | None:
+        """Return the held direction once it is ready to enter letter paging."""
+        if (
+            self.action in (MenuAction.UP, MenuAction.DOWN)
+            and float(now) - self.pressed_at >= self.LETTER_MODE_DELAY
+        ):
+            return self.action
+        return None
 
     @staticmethod
     def _interval(held_for: float) -> float:
@@ -93,42 +103,31 @@ class HeldMenuRepeater:
 
 
 @dataclass
-class NoteSpeedTapDetector:
-    """Recognize a very quick ↑↑/↓↓ gesture before committing navigation."""
+class DoubleTapDetector:
+    """Recognize a deliberate double press without delaying another action."""
 
-    window_seconds: float = 0.05
-    _action: MenuAction | None = None
-    _at: float = 0.0
+    window_seconds: float = 0.35
+    _at: float | None = None
 
     def clear(self) -> None:
-        self._action = None
+        self._at = None
 
-    def _take_pending(self) -> MenuAction | None:
-        action = self._action
-        self.clear()
-        return action
-
-    def pop_expired(self, now: float) -> MenuAction | None:
-        """Release a single navigation action once the gesture window closes."""
-        if self._action is None or float(now) - self._at < self.window_seconds:
-            return None
-        return self._take_pending()
-
-    def register(
-        self,
-        action: MenuAction,
-        now: float,
-    ) -> tuple[float | None, MenuAction | None]:
-        """Return ``(speed, pending_navigation)`` for the new input."""
-        if action not in (MenuAction.UP, MenuAction.DOWN):
-            return None, self._take_pending()
-        if self._action == action and 0.0 <= now - self._at <= self.window_seconds:
+    def register(self, now: float) -> bool:
+        now = float(now)
+        if self._at is not None and 0.0 <= now - self._at <= self.window_seconds:
             self.clear()
-            return (2.0 if action == MenuAction.DOWN else 1.0), None
-        pending = self._take_pending()
-        self._action = action
-        self._at = float(now)
-        return None, pending
+            return True
+        self._at = now
+        return False
+
+
+def _song_letter(song: SongInfo) -> str:
+    for character in song.display_title.strip():
+        if character.isalpha():
+            return character.upper()
+        if character.isdigit():
+            return "#"
+    return "#"
 
 
 @dataclass
@@ -139,6 +138,7 @@ class SongMenu:
     scroll_target: int = 0
     visual_position: float = 0.0
     preferred_difficulty: str = "Medium"
+    letter_page: str | None = field(default=None, init=False)
     _all_songs: list[SongInfo] = field(default_factory=list, init=False, repr=False)
     pack_index: int = field(default=0, init=False)
 
@@ -202,6 +202,7 @@ class SongMenu:
         self.chart_index = 0 if song is None else self._preferred_chart_index(song)
 
     def _apply_pack(self, preserve_song: SongInfo | None = None) -> None:
+        self.letter_page = None
         active = self.active_pack
         self.songs = list(self._all_songs) if active == "ALL" else [
             song for song in self._all_songs if song.pack_name == active
@@ -231,6 +232,39 @@ class SongMenu:
         self.scroll_target = self.song_index
         self.visual_position = float(self.song_index)
         self._select_preferred_chart()
+
+    @property
+    def letter_pages(self) -> tuple[str, ...]:
+        pages = {_song_letter(song) for song in self.songs}
+        return tuple(sorted(pages, key=lambda page: (page != "#", page.casefold())))
+
+    def enter_letter_paging(self, delta: int = 0) -> None:
+        """Freeze on the current song and expose its title-initial page."""
+        if self.song is None:
+            return
+        self.select_song_index(self.song_index)
+        self.letter_page = _song_letter(self.song)
+        if delta:
+            self.page_letter(delta)
+
+    def page_letter(self, delta: int) -> None:
+        pages = self.letter_pages
+        if not pages or not delta:
+            return
+        current = self.letter_page or (_song_letter(self.song) if self.song else pages[0])
+        try:
+            page_index = pages.index(current)
+        except ValueError:
+            page_index = 0
+        target = pages[(page_index + int(delta)) % len(pages)]
+        song_index = next(
+            index for index, song in enumerate(self.songs) if _song_letter(song) == target
+        )
+        self.select_song_index(song_index)
+        self.letter_page = target
+
+    def exit_letter_paging(self) -> None:
+        self.letter_page = None
 
     def animate(self, dt: float) -> None:
         alpha = 1.0 - math.exp(-max(0.0, dt) * 14.0)
