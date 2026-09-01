@@ -1164,10 +1164,11 @@ def main(argv: list[str] | None = None) -> int:
                     if action is not None:
                         if getattr(event, "repeat", False) and action in (MenuAction.UP, MenuAction.DOWN):
                             continue
-                        speed_change = speed_taps.register(action, now, menu.song_index)
+                        speed_change, delayed_action = speed_taps.register(action, now)
+                        if delayed_action is not None:
+                            handle_song_menu_action(delayed_action)
                         if speed_change is not None:
-                            note_travel_speed, origin_index = speed_change
-                            menu.select_song_index(origin_index)
+                            note_travel_speed = speed_change
                             if menu.song is not None:
                                 settings_store.settings.last_song_key = song_key(menu.song)
                             preview.stop(reset_selection=True)
@@ -1177,6 +1178,8 @@ def main(argv: list[str] | None = None) -> int:
                         repeat_action = _repeat_action_for_key(getattr(event, "key", -1))
                         if repeat_action is not None:
                             repeater.press(repeat_action, now)
+                        if action in (MenuAction.UP, MenuAction.DOWN):
+                            continue
                         handle_song_menu_action(action)
                     continue
 
@@ -1349,6 +1352,9 @@ def main(argv: list[str] | None = None) -> int:
                 continue
 
             if mode == "song_menu":
+                delayed_action = speed_taps.pop_expired(now)
+                if delayed_action is not None:
+                    handle_song_menu_action(delayed_action)
                 for repeated in repeater.update(now):
                     handle_song_menu_action(repeated)
                 menu.animate(frame_dt)
@@ -1428,9 +1434,16 @@ def main(argv: list[str] | None = None) -> int:
                 mask = snap.mask
                 if settings_store.settings.player_visual == "character":
                     pose_figure = snap.figure
+                readiness_session = (
+                    session
+                    if mode == "game"
+                    else calibration_session
+                    if mode == "calibration"
+                    else None
+                )
                 camera_status_text = (
-                    readiness_for_session(body, session)
-                    if mode == "game" and session is not None
+                    readiness_for_session(body, readiness_session)
+                    if readiness_session is not None
                     else snap.message
                 )
                 camera_ready = camera_status_text == "READY"
@@ -1460,7 +1473,7 @@ def main(argv: list[str] | None = None) -> int:
                 if calibration_session.running:
                     beat_index = int(math.floor(calibration_session.beat_position))
                     if beat_index != calibration_last_beat:
-                        gameplay_sounds.play_calibration_beat(downbeat=(beat_index % 4 == 0))
+                        gameplay_sounds.play_calibration_beat(beat_index=beat_index % 4)
                         calibration_last_beat = beat_index
                 else:
                     calibration_last_beat = None
@@ -1506,6 +1519,7 @@ def main(argv: list[str] | None = None) -> int:
                     profile_lines=profile_lines,
                     pose_figure=pose_figure,
                     detailed_debug=profile_level == 2,
+                    start_ready_progress=calibration_session.ready_progress,
                 )
                 renderer.draw_calibration_overlay(
                     displayed_camera_index(),
@@ -1661,13 +1675,12 @@ def main(argv: list[str] | None = None) -> int:
                 profile_lines=profile_lines,
                 pose_figure=pose_figure,
                 detailed_debug=profile_level == 2,
+                start_ready_progress=session.ready_progress,
             )
             if active_recording is not None:
                 active_recording.capture(renderer.screen, time.monotonic())
             if record_play_enabled:
                 renderer.draw_recording_indicator()
-            if session.running and session.scoring_complete:
-                renderer.draw_outro_skip_hint()
             render_ms = (time.perf_counter() - render_started) * 1000.0
             flip_started = time.perf_counter()
             pygame.display.flip()

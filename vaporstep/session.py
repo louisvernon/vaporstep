@@ -337,6 +337,18 @@ class GameSession:
     def scoring_complete(self) -> bool:
         return len(self.stats.judgements) >= self.stats.total_notes
 
+    @property
+    def ready_progress(self) -> float:
+        """Fraction of the pre-start pose hold completed for visual feedback."""
+        if self.running:
+            return 1.0
+        if self.ready_since is None:
+            return 0.0
+        return max(
+            0.0,
+            min(1.0, (time.monotonic() - self.ready_since) / READY_HOLD_SECONDS),
+        )
+
     def finish_music_outro(self) -> bool:
         """End a completed chart while its music outro is still playing."""
         if not self.running or self.failed or not self.scoring_complete:

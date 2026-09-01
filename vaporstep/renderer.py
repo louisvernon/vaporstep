@@ -1528,6 +1528,7 @@ class Renderer(_base.Renderer):
         enabled: bool,
         strike_events: tuple[MotionEvent, ...],
         show_start_hand_guide: bool = False,
+        start_ready_progress: float = 0.0,
     ) -> None:
         if not enabled:
             return
@@ -1562,6 +1563,17 @@ class Renderer(_base.Renderer):
                     receptor,
                     4 if active else 3,
                 )
+                progress = max(0.0, min(1.0, float(start_ready_progress)))
+                if progress > 0.0:
+                    point_count = max(2, int(math.ceil(len(receptor) * progress)))
+                    fill = receptor[-point_count:] if lane == 2 else receptor[:point_count]
+                    pygame.draw.lines(
+                        self.screen,
+                        _blend(GREEN, WHITE, 0.82),
+                        False,
+                        fill,
+                        6,
+                    )
             if near:
                 pygame.draw.lines(
                     self.screen,
@@ -1877,6 +1889,7 @@ class Renderer(_base.Renderer):
         foot_enabled: bool,
         strike_events: tuple[MotionEvent, ...],
         show_start_hand_guide: bool = False,
+        start_ready_progress: float = 0.0,
     ) -> None:
         foot_notes = [note for note in notes if note.kind == NoteKind.FOOT]
         foot_events = tuple(
@@ -1896,14 +1909,8 @@ class Renderer(_base.Renderer):
             hand_enabled,
             strike_events,
             show_start_hand_guide,
+            start_ready_progress,
         )
-
-        if show_start_hand_guide:
-            left = self._hand_target_point(2, 0.88)
-            right = self._hand_target_point(3, 0.88)
-            label = self.small_font.render("START HANDS HERE", True, GREEN)
-            center = ((left[0] + right[0]) * 0.5, min(left[1], right[1]) - 12)
-            self.screen.blit(label, label.get_rect(center=(int(center[0]), int(center[1]))))
 
         if not foot_enabled:
             return

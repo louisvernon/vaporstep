@@ -94,33 +94,41 @@ class HeldMenuRepeater:
 
 @dataclass
 class NoteSpeedTapDetector:
-    """Recognize deliberate ↑↑/↓↓ speed gestures without delaying navigation."""
+    """Recognize a very quick ↑↑/↓↓ gesture before committing navigation."""
 
-    window_seconds: float = 0.32
+    window_seconds: float = 0.05
     _action: MenuAction | None = None
     _at: float = 0.0
-    _origin_index: int = 0
 
     def clear(self) -> None:
         self._action = None
+
+    def _take_pending(self) -> MenuAction | None:
+        action = self._action
+        self.clear()
+        return action
+
+    def pop_expired(self, now: float) -> MenuAction | None:
+        """Release a single navigation action once the gesture window closes."""
+        if self._action is None or float(now) - self._at < self.window_seconds:
+            return None
+        return self._take_pending()
 
     def register(
         self,
         action: MenuAction,
         now: float,
-        current_index: int,
-    ) -> tuple[float, int] | None:
+    ) -> tuple[float | None, MenuAction | None]:
+        """Return ``(speed, pending_navigation)`` for the new input."""
         if action not in (MenuAction.UP, MenuAction.DOWN):
-            self.clear()
-            return None
+            return None, self._take_pending()
         if self._action == action and 0.0 <= now - self._at <= self.window_seconds:
-            origin = self._origin_index
             self.clear()
-            return (2.0 if action == MenuAction.DOWN else 1.0), origin
+            return (2.0 if action == MenuAction.DOWN else 1.0), None
+        pending = self._take_pending()
         self._action = action
         self._at = float(now)
-        self._origin_index = int(current_index)
-        return None
+        return None, pending
 
 
 @dataclass

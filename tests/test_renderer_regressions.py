@@ -28,6 +28,12 @@ def test_receptor_renderer_has_no_removed_timing_hint_references() -> None:
     assert "hint_y" not in loaded_names
 
 
+def test_prestart_guide_uses_border_without_instruction_label() -> None:
+    source = Path("vaporstep/renderer.py").read_text(encoding="utf-8")
+
+    assert "START HANDS HERE" not in source
+
+
 def test_activity_dashboard_animates_its_background() -> None:
     source = Path("vaporstep/activity_ui.py").read_text(encoding="utf-8")
     tree = ast.parse(source)

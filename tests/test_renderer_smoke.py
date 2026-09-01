@@ -703,9 +703,11 @@ def test_prestart_hand_guide_highlights_upper_channels(monkeypatch) -> None:
         True,
         (),
         show_start_hand_guide=True,
+        start_ready_progress=0.5,
     )
 
     assert colors.count(renderer_module.GREEN) == 2
+    assert colors.count(renderer_module._blend(renderer_module.GREEN, renderer_module.WHITE, 0.82)) == 2
 
 
 def test_note_glow_converges_smoothly_into_target() -> None:

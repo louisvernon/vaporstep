@@ -1,6 +1,8 @@
 import sys
 from types import SimpleNamespace
 
+import pytest
+
 
 class _FakeMusic:
     @staticmethod
@@ -22,7 +24,7 @@ except ImportError:
     sys.modules.setdefault("pygame", SimpleNamespace(mixer=_FakeMixer()))
 
 from vaporstep.domain import BodyPoint, BodyState, GameNote, HitQuality, NoteKind
-from vaporstep.session import GameSession
+from vaporstep.session import READY_HOLD_SECONDS, GameSession
 
 
 def _body(ts: float, *, knee_y: float = 0.60, lane: int = 2) -> BodyState:
@@ -194,6 +196,19 @@ def test_chart_lead_in_starts_early_enough_for_first_note_to_enter_from_origin()
 def test_demo_lead_in_uses_seconds_fallback():
     session = GameSession(demo_notes=[GameNote(time=2.0, lanes=(2,), kind=NoteKind.FOOT)])
     assert session._compute_lead_in_start_time() == -2.0
+
+
+def test_ready_progress_tracks_prestart_hold(monkeypatch):
+    import vaporstep.session as session_module
+
+    clock = [20.0]
+    monkeypatch.setattr(session_module.time, "monotonic", lambda: clock[0])
+    session = GameSession(demo_notes=[GameNote(time=1.0, lanes=(2,), kind=NoteKind.HANDS)])
+    assert session.ready_progress == 0.0
+
+    session.update(BodyState(), ready_to_start=True)
+    clock[0] += READY_HOLD_SECONDS / 2.0
+    assert session.ready_progress == pytest.approx(0.5)
 
 
 def test_session_pre_roll_delays_chart_zero_until_lead_in_finishes(monkeypatch):

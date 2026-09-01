@@ -58,20 +58,31 @@ def test_held_repeater_has_delay_then_repeats_and_accelerates():
     assert r.update(14.0) == []
 
 
-def test_double_tap_note_speed_gesture_preserves_original_song_index():
+def test_double_tap_note_speed_gesture_does_not_release_navigation():
     detector = NoteSpeedTapDetector()
 
-    assert detector.register(MenuAction.DOWN, 10.0, 4) is None
-    assert detector.register(MenuAction.DOWN, 10.2, 5) == (2.0, 4)
-    assert detector.register(MenuAction.UP, 11.0, 4) is None
-    assert detector.register(MenuAction.UP, 11.2, 3) == (1.0, 4)
+    assert detector.register(MenuAction.DOWN, 10.0) == (None, None)
+    assert detector.pop_expired(10.04) is None
+    assert detector.register(MenuAction.DOWN, 10.049) == (2.0, None)
+    assert detector.register(MenuAction.UP, 11.0) == (None, None)
+    assert detector.register(MenuAction.UP, 11.04) == (1.0, None)
 
 
 def test_slow_song_navigation_does_not_trigger_note_speed_gesture():
     detector = NoteSpeedTapDetector()
 
-    assert detector.register(MenuAction.DOWN, 10.0, 2) is None
-    assert detector.register(MenuAction.DOWN, 10.5, 3) is None
+    assert detector.register(MenuAction.DOWN, 10.0) == (None, None)
+    assert detector.pop_expired(10.049) is None
+    assert detector.pop_expired(10.05) == MenuAction.DOWN
+    assert detector.register(MenuAction.DOWN, 10.5) == (None, None)
+
+
+def test_opposite_direction_releases_pending_navigation_before_new_gesture():
+    detector = NoteSpeedTapDetector()
+
+    assert detector.register(MenuAction.DOWN, 10.0) == (None, None)
+    assert detector.register(MenuAction.UP, 10.02) == (None, MenuAction.DOWN)
+    assert detector.pop_expired(10.07) == MenuAction.UP
 
 
 def _difficulty_song(name: str, difficulties):

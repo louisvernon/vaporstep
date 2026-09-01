@@ -174,6 +174,7 @@ class Renderer:
         profile_lines: tuple[str, ...] = (),
         pose_figure: PoseFigure | None = None,
         detailed_debug: bool = False,
+        start_ready_progress: float = 0.0,
     ) -> None:
         profiling = self._profiling_enabled
         phase_times: dict[str, float] = {}
@@ -236,6 +237,7 @@ class Renderer:
             show_start_hand_guide=(
                 not running and performance_state != "failed" and hand_enabled
             ),
+            start_ready_progress=start_ready_progress,
         )
         finish_phase("receptors")
         if show_body_markers:
@@ -284,11 +286,6 @@ class Renderer:
         w, _ = self.size
         label = self.small_font.render("● REC", True, RED)
         self.screen.blit(label, label.get_rect(topright=(w - 18, 94)))
-
-    def draw_outro_skip_hint(self) -> None:
-        w, h = self.size
-        label = self.small_font.render("ENTER  SKIP MUSIC OUTRO", True, CYAN)
-        self.screen.blit(label, label.get_rect(midbottom=(w // 2, h - 18)))
 
     def draw_startup_splash(self, status: str = "INITIALIZING") -> None:
         self.screen.fill(BG)
