@@ -70,6 +70,17 @@ def test_held_repeater_enters_letter_mode_after_five_seconds():
     assert repeater.long_hold_action(20.0) is None
 
 
+def test_repeated_keydown_does_not_restart_letter_mode_timer():
+    from vaporstep.menu import HeldMenuRepeater
+
+    repeater = HeldMenuRepeater()
+    repeater.press(MenuAction.DOWN, 10.0)
+    for repeated_at in (10.5, 11.0, 12.0, 14.9):
+        repeater.press(MenuAction.DOWN, repeated_at)
+
+    assert repeater.long_hold_action(15.0) == MenuAction.DOWN
+
+
 def test_double_tap_detector_toggles_without_pending_navigation():
     detector = DoubleTapDetector()
 

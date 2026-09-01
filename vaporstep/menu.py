@@ -60,6 +60,10 @@ class HeldMenuRepeater:
     def press(self, action: MenuAction, now: float) -> None:
         if action not in (MenuAction.UP, MenuAction.DOWN):
             return
+        # Some SDL/platform combinations emit repeated KEYDOWN events without
+        # marking them as repeats. Keep the original physical press timestamp.
+        if self.action == action:
+            return
         self.action = action
         self.pressed_at = now
         self.next_repeat = now + self.INITIAL_DELAY
