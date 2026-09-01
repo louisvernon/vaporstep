@@ -19,6 +19,7 @@ from .config import (
     VANISH_HALF_WIDTH,
     VANISH_Y,
 )
+from .chains import HOLD_OCCUPANCY_GRACE_SECONDS
 from .domain import (
     BodyState,
     ChainMode,
@@ -33,7 +34,6 @@ from .hand_control import hand_control_perimeter_along
 from .keyboard_input import label_for_lane
 from .lanes import perspective_adjusted_x
 from .motion import MOTION_EVENT_VISUAL_SECONDS, MotionEvent
-from .scroll import note_is_within_lookahead, timed_is_within_lookahead, timed_progress
 
 
 # Public renderer palette/helpers used by sibling UI modules.
@@ -71,6 +71,7 @@ _PREENTRY_GLOW_RADIUS_Y_PX = 24
 _PREENTRY_GLOW_VERTICAL_SCALE = 2.0
 _PREENTRY_GLOW_SIGMA_PX = 18.0
 _PREENTRY_GLOW_PEAK = 0.41
+HAND_PURPLE = (178, 108, 255)
 
 
 class Renderer(_base.Renderer):
@@ -389,7 +390,13 @@ class Renderer(_base.Renderer):
 
         glow = min(1.0, 0.34 + pulse * (0.58 if downbeat else 0.46))
         trace_color = _blend(DIM, color, glow)
-        self._draw_electric_trace(points, trace_color)
+        self._draw_electric_trace(
+            points,
+            trace_color,
+            core_width=2,
+            glow_width=7,
+            glow_strength=0.52,
+        )
 
     def _draw_hand_hit_pop(self, lane: int, age: float, quality: HitQuality) -> None:
         phase = max(0.0, min(1.0, age / HIT_BRICK_POP_SECONDS))
@@ -748,22 +755,27 @@ class Renderer(_base.Renderer):
         song_time: float,
         song_beat: float,
     ) -> tuple[float, float, bool] | None:
+        speed = self.note_travel_speed
         if event_beat is not None:
             distance = float(event_beat) - song_beat
-            if distance > LOOKAHEAD_BEATS:
-                extra = distance - LOOKAHEAD_BEATS
-                if extra > TARGET_PREENTRY_BEATS:
+            lookahead = LOOKAHEAD_BEATS / speed
+            preentry = TARGET_PREENTRY_BEATS / speed
+            if distance > lookahead:
+                extra = distance - lookahead
+                if extra > preentry:
                     return None
-                return 0.0, self._preentry_brightness(extra, TARGET_PREENTRY_BEATS), True
+                return 0.0, self._preentry_brightness(extra, preentry), True
         else:
             distance = event_time - song_time
-            if distance > LOOKAHEAD_SECONDS:
-                extra = distance - LOOKAHEAD_SECONDS
-                if extra > TARGET_PREENTRY_SECONDS:
+            lookahead = LOOKAHEAD_SECONDS / speed
+            preentry = TARGET_PREENTRY_SECONDS / speed
+            if distance > lookahead:
+                extra = distance - lookahead
+                if extra > preentry:
                     return None
-                return 0.0, self._preentry_brightness(extra, TARGET_PREENTRY_SECONDS), True
+                return 0.0, self._preentry_brightness(extra, preentry), True
 
-        progress = timed_progress(event_time, event_beat, song_time, song_beat)
+        progress = self._timed_progress(event_time, event_beat, song_time, song_beat)
         return progress, 0.24 + 0.48 * (progress ** 0.85), False
 
     @staticmethod
@@ -1103,7 +1115,7 @@ class Renderer(_base.Renderer):
             if note.chain_id is not None and chain_mode == ChainMode.BLOCKS:
                 continue
             dt = note.time - song_time
-            if not note_is_within_lookahead(note, song_time, song_beat):
+            if not self._note_is_within_lookahead(note, song_time, song_beat):
                 continue
             if note.judged and note.judged_at is not None:
                 age = song_time - note.judged_at
@@ -1161,7 +1173,7 @@ class Renderer(_base.Renderer):
                 continue
             if note.chain_id is not None and chain_mode == ChainMode.BLOCKS:
                 continue
-            if not note_is_within_lookahead(note, song_time, song_beat):
+            if not self._note_is_within_lookahead(note, song_time, song_beat):
                 continue
             dt = note.time - song_time
             if note.judged and note.judged_at is not None:
@@ -1205,7 +1217,17 @@ class Renderer(_base.Renderer):
     @staticmethod
     def _hand_note_color(ordinal: int):
         """Alternate authored hand events without splitting simultaneous lanes."""
-        return MAGENTA if int(ordinal) % 2 == 0 else PURPLE
+        return MAGENTA if int(ordinal) % 2 == 0 else HAND_PURPLE
+
+    @staticmethod
+    def _sustain_presence(chain: RuntimeChain, song_time: float) -> float:
+        """Fade an abandoned sustain smoothly across its occupancy grace."""
+        if chain.state == ChainState.BROKEN:
+            return 0.0
+        if chain.state != ChainState.ACTIVE or chain.last_occupancy_at is None:
+            return 1.0
+        age = max(0.0, song_time - chain.last_occupancy_at)
+        return 1.0 - min(1.0, age / HOLD_OCCUPANCY_GRACE_SECONDS)
 
     @classmethod
     def _hand_chain_colors(
@@ -1247,7 +1269,7 @@ class Renderer(_base.Renderer):
             is_hold = definition.source == SustainSource.EXPLICIT_HOLD
             if not is_hold and chain_mode == ChainMode.OFF:
                 continue
-            if not timed_is_within_lookahead(
+            if not self._timed_is_within_lookahead(
                 definition.start_time,
                 definition.start_beat,
                 song_time,
@@ -1259,13 +1281,13 @@ class Renderer(_base.Renderer):
             if song_time > definition.end_time + _base.HIT_FLASH_SECONDS:
                 continue
 
-            head_progress = timed_progress(
+            head_progress = self._timed_progress(
                 definition.start_time,
                 definition.start_beat,
                 song_time,
                 song_beat,
             )
-            tail_progress = timed_progress(
+            tail_progress = self._timed_progress(
                 definition.end_time,
                 definition.end_beat,
                 song_time,
@@ -1276,12 +1298,15 @@ class Renderer(_base.Renderer):
             if hi <= 0.0:
                 continue
 
+            presence = self._sustain_presence(chain, song_time)
             if chain.state == ChainState.BROKEN:
                 fill = _blend(BG, DIM, 0.56)
                 edge = _blend(DIM, WHITE, 0.10)
             elif chain.state == ChainState.ACTIVE:
-                fill = _blend(BG, CYAN, 0.52)
-                edge = _blend(CYAN, WHITE, 0.30)
+                dim_fill = _blend(BG, DIM, 0.56)
+                dim_edge = _blend(DIM, WHITE, 0.10)
+                fill = _blend(dim_fill, _blend(BG, CYAN, 0.52), presence)
+                edge = _blend(dim_edge, _blend(CYAN, WHITE, 0.30), presence)
             else:
                 fill = _blend(BG, CYAN, 0.27)
                 edge = _blend(BG, CYAN, 0.66)
@@ -1310,7 +1335,11 @@ class Renderer(_base.Renderer):
 
                 center0 = (left0 + right0) * 0.5
                 center1 = (left1 + right1) * 0.5
-                center_color = WHITE if chain.state == ChainState.ACTIVE else edge
+                center_color = (
+                    _blend(edge, WHITE, presence)
+                    if chain.state == ChainState.ACTIVE
+                    else edge
+                )
                 pygame.draw.line(
                     self.screen,
                     center_color,
@@ -1324,10 +1353,12 @@ class Renderer(_base.Renderer):
                 head_y = self._field_y(NoteKind.FOOT, head_p)
                 head_pad = max(2.0, (head_right - head_left) * 0.08)
                 head_thickness = max(5, int(4 + 12 * head_p))
-                if chain.state == ChainState.BROKEN:
-                    head_color = _blend(BG, DIM, 0.72)
-                else:
-                    head_color = CYAN
+                dim_head = _blend(BG, DIM, 0.72)
+                head_color = (
+                    _blend(dim_head, CYAN, presence)
+                    if chain.state == ChainState.ACTIVE
+                    else dim_head if chain.state == ChainState.BROKEN else CYAN
+                )
                 pygame.draw.line(
                     self.screen,
                     BG,
@@ -1355,16 +1386,17 @@ class Renderer(_base.Renderer):
                     left, right = self._lane_bounds(NoteKind.FOOT, lane, 1.0)
                     y = self._field_y(NoteKind.FOOT, 1.0)
                     cap_pad = max(2.0, (right - left) * 0.08)
+                    cap_color = _blend(_blend(BG, DIM, 0.72), CYAN, presence)
                     pygame.draw.line(
                         self.screen,
-                        CYAN,
+                        cap_color,
                         (left + cap_pad, y),
                         (right - cap_pad, y),
                         9,
                     )
                     pygame.draw.line(
                         self.screen,
-                        WHITE,
+                        _blend(cap_color, WHITE, presence),
                         (left + cap_pad, y),
                         (right - cap_pad, y),
                         2,
@@ -1397,7 +1429,7 @@ class Renderer(_base.Renderer):
             is_hold = definition.source == SustainSource.EXPLICIT_HOLD
             if not is_hold and chain_mode == ChainMode.OFF:
                 continue
-            if not timed_is_within_lookahead(
+            if not self._timed_is_within_lookahead(
                 definition.start_time,
                 definition.start_beat,
                 song_time,
@@ -1407,13 +1439,13 @@ class Renderer(_base.Renderer):
             if song_time > definition.end_time + _base.HIT_FLASH_SECONDS:
                 continue
 
-            head = timed_progress(
+            head = self._timed_progress(
                 definition.start_time,
                 definition.start_beat,
                 song_time,
                 song_beat,
             )
-            tail = timed_progress(
+            tail = self._timed_progress(
                 definition.end_time,
                 definition.end_beat,
                 song_time,
@@ -1426,7 +1458,10 @@ class Renderer(_base.Renderer):
             if chain.state == ChainState.BROKEN:
                 color = _blend(DIM, BG, 0.25)
             elif chain.state == ChainState.ACTIVE:
-                color = _blend(base_color, WHITE, 0.25)
+                presence = self._sustain_presence(chain, song_time)
+                dim_color = _blend(DIM, BG, 0.25)
+                active_color = _blend(base_color, WHITE, 0.25)
+                color = _blend(dim_color, active_color, presence)
             else:
                 color = _blend(BG, base_color, 0.55)
 
@@ -1445,12 +1480,12 @@ class Renderer(_base.Renderer):
             definition = chain.definition
             if definition.kind != NoteKind.HANDS:
                 continue
-            if chain.state not in (ChainState.PENDING, ChainState.ACTIVE):
+            if chain.state not in (ChainState.PENDING, ChainState.ACTIVE, ChainState.BROKEN):
                 continue
             is_hold = definition.source == SustainSource.EXPLICIT_HOLD
             if not is_hold and chain_mode == ChainMode.OFF:
                 continue
-            if not timed_is_within_lookahead(
+            if not self._timed_is_within_lookahead(
                 definition.start_time,
                 definition.start_beat,
                 song_time,
@@ -1458,7 +1493,7 @@ class Renderer(_base.Renderer):
             ):
                 continue
 
-            head = timed_progress(
+            head = self._timed_progress(
                 definition.start_time,
                 definition.start_beat,
                 song_time,
@@ -1466,10 +1501,13 @@ class Renderer(_base.Renderer):
             )
             if head < 0.0 or head > 1.0:
                 continue
+            presence = self._sustain_presence(chain, song_time)
+            base_color = hand_chain_colors.get(definition.id, MAGENTA)
+            head_color = _blend(_blend(DIM, BG, 0.25), base_color, presence)
             self._draw_hand_note_connector(
                 definition.lanes,
                 head,
-                hand_chain_colors.get(definition.id, MAGENTA),
+                head_color,
                 song_time,
                 beat_pulse,
                 downbeat,
@@ -1478,7 +1516,7 @@ class Renderer(_base.Renderer):
                 self._draw_hand_note_arc(
                     lane,
                     head,
-                    hand_chain_colors.get(definition.id, MAGENTA),
+                    head_color,
                     highlight=chain.state == ChainState.ACTIVE,
                 )
 
@@ -1489,6 +1527,7 @@ class Renderer(_base.Renderer):
         song_time: float,
         enabled: bool,
         strike_events: tuple[MotionEvent, ...],
+        show_start_hand_guide: bool = False,
     ) -> None:
         if not enabled:
             return
@@ -1507,6 +1546,22 @@ class Renderer(_base.Renderer):
 
             if active:
                 pygame.draw.lines(self.screen, MAGENTA, False, receptor, 6)
+            if show_start_hand_guide and lane in (2, 3):
+                guide_color = _blend(GREEN, WHITE, 0.45) if active else GREEN
+                pygame.draw.lines(
+                    self.screen,
+                    _blend(BG, guide_color, 0.34),
+                    False,
+                    receptor,
+                    11,
+                )
+                pygame.draw.lines(
+                    self.screen,
+                    guide_color,
+                    False,
+                    receptor,
+                    4 if active else 3,
+                )
             if near:
                 pygame.draw.lines(
                     self.screen,
@@ -1821,6 +1876,7 @@ class Renderer(_base.Renderer):
         hand_enabled: bool,
         foot_enabled: bool,
         strike_events: tuple[MotionEvent, ...],
+        show_start_hand_guide: bool = False,
     ) -> None:
         foot_notes = [note for note in notes if note.kind == NoteKind.FOOT]
         foot_events = tuple(
@@ -1839,7 +1895,15 @@ class Renderer(_base.Renderer):
             song_time,
             hand_enabled,
             strike_events,
+            show_start_hand_guide,
         )
+
+        if show_start_hand_guide:
+            left = self._hand_target_point(2, 0.88)
+            right = self._hand_target_point(3, 0.88)
+            label = self.small_font.render("START HANDS HERE", True, GREEN)
+            center = ((left[0] + right[0]) * 0.5, min(left[1], right[1]) - 12)
+            self.screen.blit(label, label.get_rect(center=(int(center[0]), int(center[1]))))
 
         if not foot_enabled:
             return

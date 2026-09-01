@@ -8,11 +8,11 @@ from .domain import PoseFigure
 from .renderer import BG, CYAN, MAGENTA, PURPLE, WHITE, Renderer as GameplayRenderer, _blend
 
 
-CHARACTER_CYAN = _blend(BG, CYAN, 0.66)
-CHARACTER_MAGENTA = _blend(BG, MAGENTA, 0.66)
-CHARACTER_CYAN_EDGE = _blend(BG, CYAN, 0.80)
-CHARACTER_MAGENTA_EDGE = _blend(BG, MAGENTA, 0.80)
-CHARACTER_WHITE = _blend(BG, WHITE, 0.70)
+CHARACTER_CYAN = _blend(BG, CYAN, 0.52)
+CHARACTER_MAGENTA = _blend(BG, MAGENTA, 0.52)
+CHARACTER_CYAN_EDGE = _blend(BG, CYAN, 0.64)
+CHARACTER_MAGENTA_EDGE = _blend(BG, MAGENTA, 0.64)
+CHARACTER_WHITE = _blend(BG, WHITE, 0.55)
 
 
 class Renderer(GameplayRenderer):

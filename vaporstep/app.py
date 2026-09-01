@@ -12,7 +12,15 @@ import time
 import pygame
 
 from . import __version__
-from .activity import ActivityStore, RunActivity, counts_as_song, run_progress, target_activity, week_start
+from .activity import (
+    ActivityStore,
+    RunActivity,
+    counts_as_song,
+    normalize_input_mode,
+    run_progress,
+    target_activity,
+    week_start,
+)
 from .activity_ui import (
     NamePrompt,
     ProfilePicker,
@@ -36,7 +44,13 @@ from .domain import ChainMode
 from .home_ui import MAIN_OPTIONS, draw_home
 from .keyboard_input import KeyboardBodyInput, add_keyboard_lanes
 from .library_index import LibraryIndexer, LibraryScanSnapshot
-from .menu import HeldMenuRepeater, MenuAction, SongMenu, action_for_event
+from .menu import (
+    HeldMenuRepeater,
+    MenuAction,
+    NoteSpeedTapDetector,
+    SongMenu,
+    action_for_event,
+)
 from .model_asset import ensure_pose_model
 from .performance import AdaptiveFrameRate, RuntimeProfiler
 from .preview import SongPreviewPlayer
@@ -174,6 +188,17 @@ def _profile_lines(
 def _next_profile_level(level: int) -> int:
     """Cycle F3 through off, basic counters, and detailed profiling."""
     return (int(level) + 1) % 3
+
+
+def _inference_completion_percent(pose_snapshot) -> int | None:
+    """Return the share of captured frames accepted for pose inference."""
+    if pose_snapshot is None:
+        return None
+    captured = max(0, int(pose_snapshot.frames_captured))
+    if captured < 30:
+        return None
+    submitted = max(0, min(captured, int(pose_snapshot.frames_submitted)))
+    return int(round(100.0 * submitted / captured))
 
 
 def _profile_toggle_requested(mode: str, event) -> bool:
@@ -352,6 +377,11 @@ def main(argv: list[str] | None = None) -> int:
 
     activity_store = ActivityStore(activity_path())
     active_profile = activity_store.active_profile()
+    stats_input_mode = normalize_input_mode(
+        active_profile.settings.get("stats_input_mode", "camera")
+        if active_profile is not None
+        else "camera"
+    )
     if active_profile is not None:
         prefs = active_profile.settings
         settings_store.settings.horizontal_reach = clamp_horizontal_reach(
@@ -404,6 +434,7 @@ def main(argv: list[str] | None = None) -> int:
     result_recording: RunRecorder | None = None
     applied_scan_complete = False
     stats_week = week_start(date.today())
+    note_travel_speed = 1.0
     profile_picker = ProfilePicker()
     profile_return_mode = "home"
     name_return_mode = "home"
@@ -429,6 +460,7 @@ def main(argv: list[str] | None = None) -> int:
                 "played_song_keys": sorted(played_keys),
                 "last_song_key": settings_store.settings.last_song_key,
                 "preferred_difficulty": settings_store.settings.preferred_difficulty,
+                "stats_input_mode": stats_input_mode,
             },
         )
         active_profile = activity_store.get_profile(active_profile.id)
@@ -466,7 +498,7 @@ def main(argv: list[str] | None = None) -> int:
             menu.select_song_index(min(max(0, fallback_index), len(visible) - 1))
 
     def apply_profile(profile) -> None:
-        nonlocal active_profile, records, favorite_keys, played_keys
+        nonlocal active_profile, records, favorite_keys, played_keys, stats_input_mode
         active_profile = profile
         activity_store.set_active_profile(profile.id)
         records = RecordStore(profile_highscores_path(profile.id))
@@ -477,6 +509,7 @@ def main(argv: list[str] | None = None) -> int:
         settings_store.settings.played_song_keys = sorted(played_keys)
         settings_store.settings.last_song_key = str(prefs.get("last_song_key", ""))
         settings_store.settings.preferred_difficulty = str(prefs.get("preferred_difficulty", "Medium"))
+        stats_input_mode = normalize_input_mode(prefs.get("stats_input_mode", "camera"))
         settings_store.settings.horizontal_reach = clamp_horizontal_reach(
             float(prefs.get("horizontal_reach", settings_store.settings.horizontal_reach))
         )
@@ -546,6 +579,7 @@ def main(argv: list[str] | None = None) -> int:
                 stomps=stomps,
                 punches=punches,
                 score=session.stats.score,
+                input_mode=session.input_mode,
             )
         )
         activity_run_recorded = True
@@ -557,6 +591,7 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     repeater = HeldMenuRepeater()
+    speed_taps = NoteSpeedTapDetector()
     if args.demo:
         mode = "game"
     elif privacy_pending:
@@ -768,12 +803,18 @@ def main(argv: list[str] | None = None) -> int:
             assert records is not None
             record = records.get(record_key(song, chart, chain_mode))
             active_recording = None
-            session = GameSession(chart=loaded, best_score=record.score, chain_mode=chain_mode)
+            session = GameSession(
+                chart=loaded,
+                best_score=record.score,
+                chain_mode=chain_mode,
+                note_travel_speed=note_travel_speed,
+            )
             reset_activity_run()
             restart_camera()
             session.set_keyboard_mode(True)
             keyboard.reset()
             keyboard_start_requested = False
+            renderer.set_note_travel_speed(note_travel_speed)
             renderer.reset_game_effects()
             repeater.clear()
             load_error = None
@@ -940,6 +981,7 @@ def main(argv: list[str] | None = None) -> int:
                             keyboard.reset()
                             calibration_last_beat = None
                             renderer.reset_game_effects()
+                            renderer.set_note_travel_speed(1.0)
                             mode = "calibration"
                         elif main_index == 3:
                             open_folder_browser()
@@ -962,6 +1004,12 @@ def main(argv: list[str] | None = None) -> int:
                             if next_week <= week_start(date.today()):
                                 stats_week = next_week
                                 menu_sounds.tick()
+                        elif event.key in (pygame.K_UP, pygame.K_w, pygame.K_DOWN, pygame.K_s):
+                            stats_input_mode = (
+                                "keyboard" if stats_input_mode == "camera" else "camera"
+                            )
+                            save_profile_preferences()
+                            menu_sounds.tick()
                     continue
 
                 if mode == "about":
@@ -1116,6 +1164,16 @@ def main(argv: list[str] | None = None) -> int:
                     if action is not None:
                         if getattr(event, "repeat", False) and action in (MenuAction.UP, MenuAction.DOWN):
                             continue
+                        speed_change = speed_taps.register(action, now, menu.song_index)
+                        if speed_change is not None:
+                            note_travel_speed, origin_index = speed_change
+                            menu.select_song_index(origin_index)
+                            if menu.song is not None:
+                                settings_store.settings.last_song_key = song_key(menu.song)
+                            preview.stop(reset_selection=True)
+                            repeater.clear()
+                            menu_sounds.select()
+                            continue
                         repeat_action = _repeat_action_for_key(getattr(event, "key", -1))
                         if repeat_action is not None:
                             repeater.press(repeat_action, now)
@@ -1151,8 +1209,15 @@ def main(argv: list[str] | None = None) -> int:
                         session.register_keyboard_press(*keyboard_press)
                     else:
                         keyboard_start_requested = True
+                        session.mark_keyboard_used()
 
                 if event.type == pygame.KEYDOWN:
+                    if (
+                        event.key == pygame.K_RETURN
+                        and session is not None
+                        and session.finish_music_outro()
+                    ):
+                        continue
                     if event.key == pygame.K_v and session is not None and not session.running:
                         chain_mode = chain_mode.shifted()
                         session.set_chain_mode(chain_mode)
@@ -1234,7 +1299,13 @@ def main(argv: list[str] | None = None) -> int:
 
             if mode == "stats":
                 assert active_profile is not None
-                draw_activity_dashboard(renderer, activity_store, active_profile, stats_week)
+                draw_activity_dashboard(
+                    renderer,
+                    activity_store,
+                    active_profile,
+                    stats_week,
+                    input_mode=stats_input_mode,
+                )
                 pygame.display.flip()
                 clock.tick(TARGET_FPS)
                 continue
@@ -1297,6 +1368,7 @@ def main(argv: list[str] | None = None) -> int:
                     played_only=played_only,
                     chain_mode=chain_mode,
                     recording_enabled=record_play_enabled,
+                    note_travel_speed=note_travel_speed,
                 )
                 draw_profile_badge(renderer, active_profile)
                 pygame.display.flip()
@@ -1440,6 +1512,7 @@ def main(argv: list[str] | None = None) -> int:
                     settings_store.settings.horizontal_reach,
                     camera_status(),
                     settings_store.settings.player_visual,
+                    inference_percent=_inference_completion_percent(pose_snapshot),
                 )
                 draw_lower_body_tracking_overlay(renderer, body)
                 render_ms = (time.perf_counter() - render_started) * 1000.0
@@ -1568,6 +1641,7 @@ def main(argv: list[str] | None = None) -> int:
                 song_title=(session.chart.song.display_title if session.chart else "VaporStep Demo"),
                 chart_label=(
                     f"{session.chart.chart.label}  •  VIRTUAL HOLDS {session.chain_mode.label}"
+                    f"  •  NOTE SPEED {session.note_travel_speed:g}×"
                     if session.chart
                     else "Synthetic chart"
                 ),
@@ -1592,6 +1666,8 @@ def main(argv: list[str] | None = None) -> int:
                 active_recording.capture(renderer.screen, time.monotonic())
             if record_play_enabled:
                 renderer.draw_recording_indicator()
+            if session.running and session.scoring_complete:
+                renderer.draw_outro_skip_hint()
             render_ms = (time.perf_counter() - render_started) * 1000.0
             flip_started = time.perf_counter()
             pygame.display.flip()

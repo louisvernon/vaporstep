@@ -90,6 +90,7 @@ class Renderer:
         self._banner_cache: dict[str, pygame.Surface | None] = {}
         self._song_metadata_fonts: dict[int, MetadataFont] = {}
         self.player_horizontal_zoom = 1.10
+        self.note_travel_speed = 1.0
         self._profiling_enabled = False
         self._phase_times_ms: dict[str, float] = {}
         self._phase_averages_ms: dict[str, float] = {}
@@ -139,6 +140,9 @@ class Renderer:
         self._silhouette_surface = None
         self._last_mask = None
         self._silhouette_size = None
+
+    def set_note_travel_speed(self, value: float) -> None:
+        self.note_travel_speed = max(0.25, float(value))
 
     def draw(
         self,
@@ -222,7 +226,17 @@ class Renderer:
             self._spawn_note_effects(notes)
             self._draw_particles(song_time)
         finish_phase("particles")
-        self._draw_receptors(body, visible_notes, song_time, hand_enabled, foot_enabled, strike_events)
+        self._draw_receptors(
+            body,
+            visible_notes,
+            song_time,
+            hand_enabled,
+            foot_enabled,
+            strike_events,
+            show_start_hand_guide=(
+                not running and performance_state != "failed" and hand_enabled
+            ),
+        )
         finish_phase("receptors")
         if show_body_markers:
             self._draw_body_markers(
@@ -270,6 +284,11 @@ class Renderer:
         w, _ = self.size
         label = self.small_font.render("● REC", True, RED)
         self.screen.blit(label, label.get_rect(topright=(w - 18, 94)))
+
+    def draw_outro_skip_hint(self) -> None:
+        w, h = self.size
+        label = self.small_font.render("ENTER  SKIP MUSIC OUTRO", True, CYAN)
+        self.screen.blit(label, label.get_rect(midbottom=(w // 2, h - 18)))
 
     def draw_startup_splash(self, status: str = "INITIALIZING") -> None:
         self.screen.fill(BG)
@@ -479,6 +498,7 @@ class Renderer:
         horizontal_reach: float,
         camera_status: str,
         player_visual: str = "silhouette",
+        inference_percent: int | None = None,
     ) -> None:
         w, h = self.size
         panel = pygame.Surface((min(660, w - 40), 108), pygame.SRCALPHA)
@@ -495,8 +515,20 @@ class Renderer:
             CYAN,
         )
         self.screen.blit(line2, (38, h - 88))
+        low_inference = (
+            inference_percent is not None
+            and inference_percent < 75
+            and player_visual == "silhouette"
+        )
+        tracking_text = (
+            f"INFERENCE {inference_percent}% — TRY CHARACTER MODE (V) FOR SMOOTHER TRACKING"
+            if low_inference
+            else "Foot control: bright cyan ring   •   faint dots: knee / ankle"
+        )
         tracking = self.small_font.render(
-            "Foot control: bright cyan ring   •   faint dots: knee / ankle", True, DIM
+            tracking_text,
+            True,
+            AMBER if low_inference else DIM,
         )
         self.screen.blit(tracking, (38, h - 62))
         line3 = self.small_font.render(camera_status, True, DIM)
@@ -515,6 +547,7 @@ class Renderer:
         played_only: bool = False,
         chain_mode: ChainMode = ChainMode.BLOCKS,
         recording_enabled: bool = False,
+        note_travel_speed: float = 1.0,
     ) -> None:
         self.screen.fill(BG)
         now = pygame.time.get_ticks() / 1000.0
@@ -939,7 +972,44 @@ class Renderer:
             self._draw_electric_trace(points, trace_color)
 
     def _note_progress(self, note: GameNote, song_time: float, song_beat: float) -> float:
-        return note_progress(note, song_time, song_beat)
+        return note_progress(note, song_time, song_beat, self.note_travel_speed)
+
+    def _note_is_within_lookahead(
+        self, note: GameNote, song_time: float, song_beat: float
+    ) -> bool:
+        return note_is_within_lookahead(
+            note, song_time, song_beat, self.note_travel_speed
+        )
+
+    def _timed_progress(
+        self,
+        event_time: float,
+        event_beat: float | None,
+        song_time: float,
+        song_beat: float,
+    ) -> float:
+        return timed_progress(
+            event_time,
+            event_beat,
+            song_time,
+            song_beat,
+            self.note_travel_speed,
+        )
+
+    def _timed_is_within_lookahead(
+        self,
+        event_time: float,
+        event_beat: float | None,
+        song_time: float,
+        song_beat: float,
+    ) -> bool:
+        return timed_is_within_lookahead(
+            event_time,
+            event_beat,
+            song_time,
+            song_beat,
+            self.note_travel_speed,
+        )
 
 
 

@@ -330,7 +330,7 @@ def test_renderer_connects_paired_hand_hold_head(monkeypatch, state) -> None:
 
     assert len(connectors) == 1
     assert connectors[0][0] == (1, 3)
-    assert connectors[0][2] == renderer_module.PURPLE
+    assert connectors[0][2] == renderer_module.HAND_PURPLE
     assert connectors[0][4:] == (0.75, True)
 
 
@@ -370,7 +370,7 @@ def test_active_hand_hold_keeps_color_when_head_note_leaves_render_window(monkey
     )
 
     assert connectors
-    assert connectors[0][2] == renderer_module.PURPLE
+    assert connectors[0][2] == renderer_module.HAND_PURPLE
 
 
 def test_hand_note_connector_ignores_single_lane_notes() -> None:
@@ -657,8 +657,55 @@ def test_hand_note_colors_alternate_by_event() -> None:
     renderer = renderer_module.Renderer(screen)
 
     assert renderer._hand_note_color(0) == renderer_module.MAGENTA
-    assert renderer._hand_note_color(1) == renderer_module.PURPLE
+    assert renderer._hand_note_color(1) == renderer_module.HAND_PURPLE
     assert renderer._hand_note_color(2) == renderer_module.MAGENTA
+    assert sum(renderer_module.HAND_PURPLE) > sum(renderer_module.PURPLE)
+
+
+def test_abandoned_hold_fades_across_grace_period() -> None:
+    renderer_module = importlib.import_module("vaporstep.renderer")
+    chain = RuntimeChain(
+        definition=ImplicitChain(
+            id=1,
+            kind=NoteKind.HANDS,
+            lanes=(2, 3),
+            note_indices=(0,),
+            start_time=0.0,
+            end_time=2.0,
+            start_beat=0.0,
+            end_beat=4.0,
+        ),
+        state=ChainState.ACTIVE,
+        last_occupancy_at=1.0,
+    )
+
+    assert renderer_module.Renderer._sustain_presence(chain, 1.0) == 1.0
+    assert renderer_module.Renderer._sustain_presence(chain, 1.25) == pytest.approx(0.5)
+    assert renderer_module.Renderer._sustain_presence(chain, 1.5) == 0.0
+
+
+def test_prestart_hand_guide_highlights_upper_channels(monkeypatch) -> None:
+    pygame.font.init()
+    renderer_module = importlib.import_module("vaporstep.renderer")
+    renderer = renderer_module.Renderer(pygame.Surface((1280, 720)))
+    colors = []
+    original = pygame.draw.lines
+
+    def capture(surface, color, closed, points, width=1):
+        colors.append(color)
+        return original(surface, color, closed, points, width)
+
+    monkeypatch.setattr(pygame.draw, "lines", capture)
+    renderer._draw_hand_receptor_feedback(
+        BodyState(),
+        [],
+        0.0,
+        True,
+        (),
+        show_start_hand_guide=True,
+    )
+
+    assert colors.count(renderer_module.GREEN) == 2
 
 
 def test_note_glow_converges_smoothly_into_target() -> None:

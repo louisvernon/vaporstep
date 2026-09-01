@@ -97,6 +97,7 @@ def _draw_song_menu(
     played_only=False,
     chain_mode=ChainMode.BLOCKS,
     recording_enabled=False,
+    note_travel_speed=1.0,
 ) -> None:
     self.screen.fill(BG)
     now = pygame.time.get_ticks() / 1000.0
@@ -235,6 +236,14 @@ def _draw_song_menu(
         self.screen.blit(bpm, (info_x, panel_top + 34))
         self.screen.blit(targets, (info_x + 125, panel_top + 34))
         self.screen.blit(chains_text, (info_x + 265, panel_top + 34))
+        if note_travel_speed > 1.0:
+            speed = self.font.render(f"{note_travel_speed:g}×", True, MAGENTA)
+            self.screen.blit(speed, speed.get_rect(topright=(w - 24, panel_top + 64)))
+            speed_label = self.small_font.render("NOTE SPEED", True, DIM)
+            self.screen.blit(
+                speed_label,
+                speed_label.get_rect(topright=(w - 24, panel_top + 92)),
+            )
 
         total = max(1, chart.foot_count + chart.hand_count)
         self._draw_composition_bar(
@@ -260,13 +269,13 @@ def _draw_song_menu(
         self._draw_difficulty_selector(menu, difficulty_y)
 
         controls = self.small_font.render(
-            "↑/↓ song    ←/→ difficulty    Enter play    F favorite    Shift+F favorites    Shift+P played    Shift+R record",
+            "↑/↓ song    ↓↓ 2× speed    ↑↑ 1× speed    ←/→ difficulty    Enter play    F favorite    Shift+F favorites",
             True,
             DIM,
         )
         self.screen.blit(controls, controls.get_rect(midbottom=(w // 2, h - 34)))
         controls2 = self.small_font.render(
-            f"V virtual holds: {chain_mode.label}    F11 fullscreen    Esc main menu", True, DIM
+            f"V virtual holds: {chain_mode.label}    Shift+P played    Shift+R record    F11 fullscreen    Esc main menu", True, DIM
         )
         self.screen.blit(controls2, controls2.get_rect(midbottom=(w // 2, h - 13)))
 

@@ -75,6 +75,7 @@ class GameSession:
         demo_notes: Iterable[GameNote] = (),
         best_score: int = 0,
         chain_mode: ChainMode = ChainMode.BLOCKS,
+        note_travel_speed: float = 1.0,
     ) -> None:
         self.chart = chart
         source = chart.notes if chart is not None else tuple(demo_notes)
@@ -86,6 +87,7 @@ class GameSession:
         )
         self.best_score = int(best_score)
         self.chain_mode = ChainMode(chain_mode)
+        self.note_travel_speed = max(0.25, float(note_travel_speed))
         self._beat_times = tuple(marker.time for marker in chart.beat_markers) if chart is not None else ()
         self._beat_numbers = tuple(marker.beat for marker in chart.beat_markers) if chart is not None else ()
         self.notes: list[GameNote] = []
@@ -112,6 +114,7 @@ class GameSession:
         self.recent_motion_events: list[MotionEvent] = []
         self._gameplay_events: list[GameplayEvent] = []
         self.keyboard_mode = False
+        self.keyboard_used = False
         self.restart()
 
     def _music_path(self):
@@ -141,6 +144,7 @@ class GameSession:
         """Queue one keyboard timing impulse at the current chart time."""
         if not self.running or not self.keyboard_mode:
             return None
+        self.keyboard_used = True
         event = self.motion.record_input(
             kind,
             lane,
@@ -197,10 +201,23 @@ class GameSession:
         self.chains = [RuntimeChain(definition=chain) for chain in definitions]
         self._chain_by_id = {chain.definition.id: chain for chain in self.chains}
         hand_ordinal = 0
+        previous_hand: GameNote | None = None
         for note in self.notes:
             if note.kind == NoteKind.HANDS:
+                if previous_hand is not None:
+                    if note.beat is not None and previous_hand.beat is not None:
+                        new_batch = note.beat - previous_hand.beat > (
+                            LOOKAHEAD_BEATS / self.note_travel_speed
+                        )
+                    else:
+                        new_batch = note.time - previous_hand.time > (
+                            LOOKAHEAD_SECONDS / self.note_travel_speed
+                        )
+                    if new_batch and hand_ordinal % 2:
+                        hand_ordinal += 1
                 note.visual_ordinal = hand_ordinal
                 hand_ordinal += 1
+                previous_hand = note
         for chain in self.chains:
             indices = chain.definition.note_indices
             if indices:
@@ -230,6 +247,14 @@ class GameSession:
         self.motion.reset()
         self.recent_motion_events = []
         self._gameplay_events = []
+        self.keyboard_used = False
+
+    def mark_keyboard_used(self) -> None:
+        self.keyboard_used = True
+
+    @property
+    def input_mode(self) -> str:
+        return "keyboard" if self.keyboard_used else "camera"
 
     def render_notes(self, song_time: float, song_beat: float) -> list[GameNote]:
         """Return only notes that can contribute to the current rendered frame."""
@@ -242,10 +267,14 @@ class GameSession:
             - max(HIT_WINDOW_SECONDS, GREAT_WINDOW_SECONDS)
             - 0.05
         )
-        upper_time = float(song_time) + LOOKAHEAD_SECONDS + TARGET_PREENTRY_SECONDS
+        upper_time = float(song_time) + (
+            LOOKAHEAD_SECONDS + TARGET_PREENTRY_SECONDS
+        ) / self.note_travel_speed
         timing_engine = self.chart.timing_engine if self.chart is not None else None
         if timing_engine is not None and self._uses_beat_rendering:
-            target_beat = float(song_beat) + LOOKAHEAD_BEATS + TARGET_PREENTRY_BEATS
+            target_beat = float(song_beat) + (
+                LOOKAHEAD_BEATS + TARGET_PREENTRY_BEATS
+            ) / self.note_travel_speed
             try:
                 beat = Fraction(target_beat).limit_denominator(192)
                 upper_time = max(float(song_time), float(timing_engine.time_at(beat)))
@@ -294,7 +323,7 @@ class GameSession:
 
         first = min(self._source_notes, key=lambda n: n.time)
         if self.chart is not None and self.chart.timing_engine is not None and first.beat is not None:
-            target_beat = float(first.beat) - LOOKAHEAD_BEATS
+            target_beat = float(first.beat) - LOOKAHEAD_BEATS / self.note_travel_speed
             try:
                 beat_fraction = Fraction(target_beat).limit_denominator(192)
                 start_time = float(self.chart.timing_engine.time_at(beat_fraction))
@@ -302,7 +331,19 @@ class GameSession:
             except Exception:
                 pass
 
-        return min(0.0, first.time - LOOKAHEAD_SECONDS)
+        return min(0.0, first.time - LOOKAHEAD_SECONDS / self.note_travel_speed)
+
+    @property
+    def scoring_complete(self) -> bool:
+        return len(self.stats.judgements) >= self.stats.total_notes
+
+    def finish_music_outro(self) -> bool:
+        """End a completed chart while its music outro is still playing."""
+        if not self.running or self.failed or not self.scoring_complete:
+            return False
+        _stop_music()
+        self.finished = True
+        return True
 
     def _start_audio_clock(self, now: float) -> None:
         """Begin chart time zero and start audio if the chart has music."""

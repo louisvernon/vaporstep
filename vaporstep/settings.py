@@ -10,7 +10,7 @@ from .user_paths import settings_path, songs_dir
 
 
 MIN_HORIZONTAL_REACH = 1.00
-MAX_HORIZONTAL_REACH = 1.35
+MAX_HORIZONTAL_REACH = 2.00
 HORIZONTAL_REACH_STEP = 0.05
 PRIVACY_NOTICE_VERSION = 2
 PLAYER_VISUALS = ("silhouette", "character")

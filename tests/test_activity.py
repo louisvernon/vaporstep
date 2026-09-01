@@ -1,5 +1,6 @@
 from datetime import date, timedelta
 from pathlib import Path
+import sqlite3
 
 from vaporstep.activity import (
     ActivityStore,
@@ -107,6 +108,69 @@ def test_failed_and_escaped_runs_keep_activity_but_song_requires_progress(tmp_pa
     assert day.stomps == 38
     assert day.punches == 23
     assert day.songs == 1
+    store.close()
+
+
+def test_camera_and_keyboard_activity_are_aggregated_separately(tmp_path: Path):
+    store = ActivityStore(tmp_path / "activity.sqlite3")
+    profile = store.create_profile("Player")
+    common = dict(
+        profile_id=profile.id,
+        started_at_utc="2026-08-19T10:00:00+00:00",
+        local_date="2026-08-19",
+        duration_seconds=60,
+        song_key="song",
+        chart_key="chart",
+        outcome="completed",
+        progress=1.0,
+        counts_as_song=True,
+        punches=0,
+        score=1000,
+    )
+    store.record_run(RunActivity(**common, stomps=20, input_mode="camera"))
+    store.record_run(RunActivity(**common, stomps=80, input_mode="keyboard"))
+
+    camera = store.week(profile.id, date(2026, 8, 19), input_mode="camera")[2]
+    keyboard = store.week(profile.id, date(2026, 8, 19), input_mode="keyboard")[2]
+
+    assert camera.actions == 20
+    assert keyboard.actions == 80
+    assert store.totals(profile.id, input_mode="camera").actions == 20
+    assert store.totals(profile.id, input_mode="keyboard").actions == 80
+    store.close()
+
+
+def test_existing_activity_database_migrates_runs_to_camera_mode(tmp_path: Path):
+    path = tmp_path / "activity.sqlite3"
+    db = sqlite3.connect(path)
+    db.execute(
+        """
+        CREATE TABLE runs (
+            id INTEGER PRIMARY KEY,
+            profile_id INTEGER NOT NULL,
+            started_at_utc TEXT NOT NULL,
+            local_date TEXT NOT NULL,
+            duration_seconds REAL NOT NULL,
+            song_key TEXT NOT NULL,
+            chart_key TEXT NOT NULL,
+            outcome TEXT NOT NULL,
+            progress REAL NOT NULL,
+            counts_as_song INTEGER NOT NULL,
+            stomps INTEGER NOT NULL,
+            punches INTEGER NOT NULL,
+            score INTEGER NOT NULL
+        )
+        """
+    )
+    db.commit()
+    db.close()
+
+    store = ActivityStore(path)
+    columns = {
+        row["name"] for row in store._db.execute("PRAGMA table_info(runs)").fetchall()
+    }
+
+    assert "input_mode" in columns
     store.close()
 
 
