@@ -40,7 +40,7 @@ from .audio_fx import (
 from .config import TARGET_FPS, WINDOW_HEIGHT, WINDOW_WIDTH
 from .demo import make_demo_notes
 from .directory_browser import DirectoryBrowser
-from .domain import ChainMode
+from .domain import ChainMode, NoteKind
 from .home_ui import MAIN_OPTIONS, draw_home
 from .keyboard_input import KeyboardBodyInput, add_keyboard_lanes
 from .library_index import LibraryIndexer, LibraryScanSnapshot
@@ -267,6 +267,19 @@ def _repeat_action_for_key(key: int) -> MenuAction | None:
     if key in (pygame.K_DOWN, pygame.K_s):
         return MenuAction.DOWN
     return None
+
+
+def _route_keyboard_press(
+    session: GameSession | None, press: tuple[NoteKind, int] | None
+) -> bool:
+    """Send gameplay input, or request an immediate start in either play mode."""
+    if session is None or press is None:
+        return False
+    if session.running:
+        session.register_keyboard_press(*press)
+        return False
+    session.mark_keyboard_used()
+    return True
 
 
 def _safe_settings_save(store: SettingsStore) -> None:
@@ -833,6 +846,9 @@ def main(argv: list[str] | None = None) -> int:
             loop_work_started = time.perf_counter()
             frame_dt = min(clock.get_time() / 1000.0, 0.10)
             now = time.monotonic()
+            # Keep a start tap through this frame's events, but never latch the
+            # keyboard override into subsequent calibration loops.
+            calibration_start_requested = False
             scan_snapshot = library_indexer.snapshot()
             if scan_snapshot.complete and not applied_scan_complete:
                 expected_root = songs_root.expanduser().resolve() if songs_root is not None else None
@@ -1040,8 +1056,8 @@ def main(argv: list[str] | None = None) -> int:
                     continue
 
                 if mode == "calibration":
-                    if keyboard_press is not None and calibration_session.running:
-                        calibration_session.register_keyboard_press(*keyboard_press)
+                    if _route_keyboard_press(calibration_session, keyboard_press):
+                        calibration_start_requested = True
                     if event.type == pygame.KEYDOWN:
                         if event.key == pygame.K_ESCAPE:
                             save_profile_preferences()
@@ -1228,12 +1244,8 @@ def main(argv: list[str] | None = None) -> int:
                             menu_sounds.select()
                     continue
 
-                if keyboard_press is not None and session is not None:
-                    if session.running:
-                        session.register_keyboard_press(*keyboard_press)
-                    else:
-                        keyboard_start_requested = True
-                        session.mark_keyboard_used()
+                if _route_keyboard_press(session, keyboard_press):
+                    keyboard_start_requested = True
 
                 if event.type == pygame.KEYDOWN:
                     if (
@@ -1482,9 +1494,15 @@ def main(argv: list[str] | None = None) -> int:
 
             if mode == "calibration":
                 update_started = time.perf_counter()
-                calibration_ready = keyboard_only or camera_ready
+                calibration_ready = (
+                    keyboard_only or camera_ready or calibration_start_requested
+                )
                 calibration_session.set_keyboard_mode(True)
-                calibration_session.update(body, ready_to_start=calibration_ready)
+                calibration_session.update(
+                    body,
+                    ready_to_start=calibration_ready,
+                    start_immediately=calibration_start_requested,
+                )
                 update_ms = (time.perf_counter() - update_started) * 1000.0
                 gameplay_sounds.play(calibration_session.drain_gameplay_events())
                 if calibration_session.finished or calibration_session.failed:
