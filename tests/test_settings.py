@@ -54,13 +54,14 @@ def test_settings_are_clamped_on_load(tmp_path: Path):
     path.write_text(json.dumps({"camera_index": -4, "horizontal_reach": 9.0}), encoding="utf-8")
     settings = SettingsStore(path).settings
     assert settings.camera_index == 0
-    assert settings.horizontal_reach == 1.35
+    assert settings.horizontal_reach == 2.0
 
 
 def test_horizontal_reach_clamps():
     assert clamp_horizontal_reach(0.5) == 1.0
     assert clamp_horizontal_reach(1.17) == 1.17
-    assert clamp_horizontal_reach(2.0) == 1.35
+    assert clamp_horizontal_reach(2.0) == 2.0
+    assert clamp_horizontal_reach(2.5) == 2.0
 
 
 def test_library_preferences_round_trip(tmp_path: Path):

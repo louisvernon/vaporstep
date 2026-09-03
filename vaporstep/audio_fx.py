@@ -59,20 +59,28 @@ def _timing_synth_hit(duration: float, volume: float, sample_rate: int) -> np.nd
     return (body + harmonic) * envelope * volume
 
 
-def _calibration_beat(downbeat: bool, sample_rate: int) -> np.ndarray:
-    """Simple unobtrusive 120-BPM calibration metronome pulse."""
-    base = 92.0 if downbeat else 108.0
-    volume = 0.24 if downbeat else 0.17
-    return _tone(
-        base,
-        0.060,
-        volume,
-        sample_rate=sample_rate,
-        overtone=base * 2.0,
-        overtone_mix=0.12,
-        attack=0.0015,
-        decay_scale=7.5,
-    )
+def _calibration_beat(beat_index: int, sample_rate: int) -> np.ndarray:
+    """A quiet four-step kick/hat/snare/hat loop for the calibration chart."""
+    step = int(beat_index) % 4
+    duration = 0.18 if step in (0, 2) else 0.075
+    count = max(1, int(round(sample_rate * duration)))
+    t = np.arange(count, dtype=np.float64) / sample_rate
+    rng = np.random.default_rng(0xCA11B + step)
+
+    # A short filtered-noise hat keeps every quarter note audible.
+    noise = rng.standard_normal(count)
+    hat = np.concatenate(([noise[0]], np.diff(noise)))
+    wave = hat * np.exp(-t * 72.0) * 0.025
+
+    if step == 0:
+        kick_frequency = 52.0 + 58.0 * np.exp(-t * 30.0)
+        kick_phase = 2.0 * math.pi * np.cumsum(kick_frequency) / sample_rate
+        wave += np.sin(kick_phase) * np.exp(-t * 24.0) * 0.27
+    elif step == 2:
+        snare = rng.standard_normal(count)
+        wave += snare * np.exp(-t * 25.0) * 0.075
+        wave += np.sin(2.0 * math.pi * 185.0 * t) * np.exp(-t * 30.0) * 0.055
+    return wave
 
 
 def _ui_click(duration: float, volume: float, sample_rate: int, *, seed: int) -> np.ndarray:
@@ -235,7 +243,7 @@ class GameplaySounds:
         self._sample_rate = SFX_SAMPLE_RATE
         self._channels = SFX_CHANNELS
         self._hit_sound = None
-        self._beat_cache: dict[bool, object] = {}
+        self._beat_cache: dict[int, object] = {}
         try:
             import pygame
 
@@ -270,19 +278,20 @@ class GameplaySounds:
             except Exception:
                 pass
 
-    def play_calibration_beat(self, *, downbeat: bool = False) -> None:
-        """Play one quiet metronome pulse for the calibration demo."""
+    def play_calibration_beat(self, *, beat_index: int = 0) -> None:
+        """Play one step of the calibration drum loop."""
         if self._pygame is None:
             return
-        sound = self._beat_cache.get(bool(downbeat))
+        step = int(beat_index) % 4
+        sound = self._beat_cache.get(step)
         if sound is None:
             try:
                 pcm = _pcm(
-                    _calibration_beat(bool(downbeat), self._sample_rate),
+                    _calibration_beat(step, self._sample_rate),
                     self._channels,
                 )
                 sound = self._pygame.sndarray.make_sound(pcm)
-                self._beat_cache[bool(downbeat)] = sound
+                self._beat_cache[step] = sound
             except Exception:
                 return
         try:

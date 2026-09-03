@@ -6,7 +6,14 @@ import math
 
 import pygame
 
-from .activity import ActivityStore, DAILY_ACTIVITY_GOAL, DayActivity, Profile, week_start
+from .activity import (
+    ActivityStore,
+    DAILY_ACTIVITY_GOAL,
+    DayActivity,
+    Profile,
+    normalize_input_mode,
+    week_start,
+)
 
 
 BG = (2, 2, 8)
@@ -206,23 +213,32 @@ def draw_activity_dashboard(
     shown_week: date,
     *,
     today: date | None = None,
+    input_mode: str = "camera",
 ) -> None:
     today = today or date.today()
+    input_mode = normalize_input_mode(input_mode)
     start = week_start(shown_week)
-    current = store.week(profile.id, start)
-    totals = store.totals(profile.id, today=today)
+    current = store.week(profile.id, start, input_mode=input_mode)
+    totals = store.totals(profile.id, today=today, input_mode=input_mode)
 
     screen = renderer.screen
     screen.fill(BG)
     renderer._draw_background(pygame.time.get_ticks() / 1000.0, 0.0, False)
     w, h = renderer.size
 
-    title = renderer.big_font.render(f"ACTIVITY — {profile.name.upper()}", True, MAGENTA)
+    mode_label = "CAMERA" if input_mode == "camera" else "KEYBOARD"
+    title = renderer.big_font.render(
+        f"{mode_label} ACTIVITY — {profile.name.upper()}", True, MAGENTA
+    )
     screen.blit(title, (30, 24))
     week_label = f"{start.strftime('%b %d')}–{(start + timedelta(days=6)).strftime('%b %d')}"
     week = renderer.font.render(week_label.upper(), True, CYAN)
     screen.blit(week, week.get_rect(topright=(w - 34, 30)))
-    nav = renderer.small_font.render("← previous week    → next week    Esc back", True, DIM)
+    nav = renderer.small_font.render(
+        "↑/↓ camera or keyboard    ← previous week    → next week    Esc back",
+        True,
+        DIM,
+    )
     screen.blit(nav, nav.get_rect(topright=(w - 34, 62)))
 
     left_x = 38
@@ -244,7 +260,12 @@ def draw_activity_dashboard(
         compare_count = today.weekday() + 1
     cur_time, cur_stomps, cur_punches, cur_songs = _sum_days(current, compare_count)
     cur_actions = cur_stomps + cur_punches
-    records = store.weekly_records(profile.id, before=start, day_count=compare_count)
+    records = store.weekly_records(
+        profile.id,
+        before=start,
+        day_count=compare_count,
+        input_mode=input_mode,
+    )
 
     right_x = int(w * 0.67)
     y = 122
@@ -255,7 +276,17 @@ def draw_activity_dashboard(
     goal = renderer.small_font.render(f"{DAILY_ACTIVITY_GOAL}+ TARGET ACTIONS / DAY", True, DIM)
     screen.blit(goal, (right_x, y + 74))
 
-    y += 126
+    if start == current_week:
+        today_activity = current[today.weekday()]
+        today_line = renderer.small_font.render(
+            f"TODAY  {_format_duration(today_activity.duration_seconds)}  •  "
+            f"{today_activity.actions:,} ACTIONS  •  {today_activity.songs:,} SONGS",
+            True,
+            GREEN if today_activity.actions >= DAILY_ACTIVITY_GOAL else WHITE,
+        )
+        screen.blit(today_line, (right_x, y + 96))
+
+    y += 148 if start == current_week else 126
     period_heading = "THIS WEEK" if start == current_week else "WEEK TOTAL"
     heading = renderer.font.render(period_heading, True, CYAN)
     screen.blit(heading, (right_x, y))

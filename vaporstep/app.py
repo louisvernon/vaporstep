@@ -12,7 +12,15 @@ import time
 import pygame
 
 from . import __version__
-from .activity import ActivityStore, RunActivity, counts_as_song, run_progress, target_activity, week_start
+from .activity import (
+    ActivityStore,
+    RunActivity,
+    counts_as_song,
+    normalize_input_mode,
+    run_progress,
+    target_activity,
+    week_start,
+)
 from .activity_ui import (
     NamePrompt,
     ProfilePicker,
@@ -32,11 +40,17 @@ from .audio_fx import (
 from .config import TARGET_FPS, WINDOW_HEIGHT, WINDOW_WIDTH
 from .demo import make_demo_notes
 from .directory_browser import DirectoryBrowser
-from .domain import ChainMode
+from .domain import ChainMode, NoteKind
 from .home_ui import MAIN_OPTIONS, draw_home
 from .keyboard_input import KeyboardBodyInput, add_keyboard_lanes
 from .library_index import LibraryIndexer, LibraryScanSnapshot
-from .menu import HeldMenuRepeater, MenuAction, SongMenu, action_for_event
+from .menu import (
+    DoubleTapDetector,
+    HeldMenuRepeater,
+    MenuAction,
+    SongMenu,
+    action_for_event,
+)
 from .model_asset import ensure_pose_model
 from .performance import AdaptiveFrameRate, RuntimeProfiler
 from .preview import SongPreviewPlayer
@@ -176,6 +190,17 @@ def _next_profile_level(level: int) -> int:
     return (int(level) + 1) % 3
 
 
+def _inference_completion_percent(pose_snapshot) -> int | None:
+    """Return the share of captured frames accepted for pose inference."""
+    if pose_snapshot is None:
+        return None
+    captured = max(0, int(pose_snapshot.frames_captured))
+    if captured < 30:
+        return None
+    submitted = max(0, min(captured, int(pose_snapshot.frames_submitted)))
+    return int(round(100.0 * submitted / captured))
+
+
 def _profile_toggle_requested(mode: str, event) -> bool:
     return (
         mode in ("game", "calibration")
@@ -242,6 +267,19 @@ def _repeat_action_for_key(key: int) -> MenuAction | None:
     if key in (pygame.K_DOWN, pygame.K_s):
         return MenuAction.DOWN
     return None
+
+
+def _route_keyboard_press(
+    session: GameSession | None, press: tuple[NoteKind, int] | None
+) -> bool:
+    """Send gameplay input, or request an immediate start in either play mode."""
+    if session is None or press is None:
+        return False
+    if session.running:
+        session.register_keyboard_press(*press)
+        return False
+    session.mark_keyboard_used()
+    return True
 
 
 def _safe_settings_save(store: SettingsStore) -> None:
@@ -352,6 +390,11 @@ def main(argv: list[str] | None = None) -> int:
 
     activity_store = ActivityStore(activity_path())
     active_profile = activity_store.active_profile()
+    stats_input_mode = normalize_input_mode(
+        active_profile.settings.get("stats_input_mode", "camera")
+        if active_profile is not None
+        else "camera"
+    )
     if active_profile is not None:
         prefs = active_profile.settings
         settings_store.settings.horizontal_reach = clamp_horizontal_reach(
@@ -404,6 +447,7 @@ def main(argv: list[str] | None = None) -> int:
     result_recording: RunRecorder | None = None
     applied_scan_complete = False
     stats_week = week_start(date.today())
+    note_travel_speed = 1.0
     profile_picker = ProfilePicker()
     profile_return_mode = "home"
     name_return_mode = "home"
@@ -429,6 +473,7 @@ def main(argv: list[str] | None = None) -> int:
                 "played_song_keys": sorted(played_keys),
                 "last_song_key": settings_store.settings.last_song_key,
                 "preferred_difficulty": settings_store.settings.preferred_difficulty,
+                "stats_input_mode": stats_input_mode,
             },
         )
         active_profile = activity_store.get_profile(active_profile.id)
@@ -466,7 +511,7 @@ def main(argv: list[str] | None = None) -> int:
             menu.select_song_index(min(max(0, fallback_index), len(visible) - 1))
 
     def apply_profile(profile) -> None:
-        nonlocal active_profile, records, favorite_keys, played_keys
+        nonlocal active_profile, records, favorite_keys, played_keys, stats_input_mode
         active_profile = profile
         activity_store.set_active_profile(profile.id)
         records = RecordStore(profile_highscores_path(profile.id))
@@ -477,6 +522,7 @@ def main(argv: list[str] | None = None) -> int:
         settings_store.settings.played_song_keys = sorted(played_keys)
         settings_store.settings.last_song_key = str(prefs.get("last_song_key", ""))
         settings_store.settings.preferred_difficulty = str(prefs.get("preferred_difficulty", "Medium"))
+        stats_input_mode = normalize_input_mode(prefs.get("stats_input_mode", "camera"))
         settings_store.settings.horizontal_reach = clamp_horizontal_reach(
             float(prefs.get("horizontal_reach", settings_store.settings.horizontal_reach))
         )
@@ -546,6 +592,7 @@ def main(argv: list[str] | None = None) -> int:
                 stomps=stomps,
                 punches=punches,
                 score=session.stats.score,
+                input_mode=session.input_mode,
             )
         )
         activity_run_recorded = True
@@ -557,6 +604,7 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     repeater = HeldMenuRepeater()
+    speed_taps = DoubleTapDetector()
     if args.demo:
         mode = "game"
     elif privacy_pending:
@@ -768,12 +816,18 @@ def main(argv: list[str] | None = None) -> int:
             assert records is not None
             record = records.get(record_key(song, chart, chain_mode))
             active_recording = None
-            session = GameSession(chart=loaded, best_score=record.score, chain_mode=chain_mode)
+            session = GameSession(
+                chart=loaded,
+                best_score=record.score,
+                chain_mode=chain_mode,
+                note_travel_speed=note_travel_speed,
+            )
             reset_activity_run()
             restart_camera()
             session.set_keyboard_mode(True)
             keyboard.reset()
             keyboard_start_requested = False
+            renderer.set_note_travel_speed(note_travel_speed)
             renderer.reset_game_effects()
             repeater.clear()
             load_error = None
@@ -792,6 +846,9 @@ def main(argv: list[str] | None = None) -> int:
             loop_work_started = time.perf_counter()
             frame_dt = min(clock.get_time() / 1000.0, 0.10)
             now = time.monotonic()
+            # Keep a start tap through this frame's events, but never latch the
+            # keyboard override into subsequent calibration loops.
+            calibration_start_requested = False
             scan_snapshot = library_indexer.snapshot()
             if scan_snapshot.complete and not applied_scan_complete:
                 expected_root = songs_root.expanduser().resolve() if songs_root is not None else None
@@ -940,6 +997,7 @@ def main(argv: list[str] | None = None) -> int:
                             keyboard.reset()
                             calibration_last_beat = None
                             renderer.reset_game_effects()
+                            renderer.set_note_travel_speed(1.0)
                             mode = "calibration"
                         elif main_index == 3:
                             open_folder_browser()
@@ -962,6 +1020,12 @@ def main(argv: list[str] | None = None) -> int:
                             if next_week <= week_start(date.today()):
                                 stats_week = next_week
                                 menu_sounds.tick()
+                        elif event.key in (pygame.K_UP, pygame.K_w, pygame.K_DOWN, pygame.K_s):
+                            stats_input_mode = (
+                                "keyboard" if stats_input_mode == "camera" else "camera"
+                            )
+                            save_profile_preferences()
+                            menu_sounds.tick()
                     continue
 
                 if mode == "about":
@@ -992,8 +1056,8 @@ def main(argv: list[str] | None = None) -> int:
                     continue
 
                 if mode == "calibration":
-                    if keyboard_press is not None and calibration_session.running:
-                        calibration_session.register_keyboard_press(*keyboard_press)
+                    if _route_keyboard_press(calibration_session, keyboard_press):
+                        calibration_start_requested = True
                     if event.type == pygame.KEYDOWN:
                         if event.key == pygame.K_ESCAPE:
                             save_profile_preferences()
@@ -1062,7 +1126,41 @@ def main(argv: list[str] | None = None) -> int:
                         if repeat_action is not None:
                             repeater.release(repeat_action)
                         continue
+                    if menu.letter_page is not None:
+                        if event.type == pygame.KEYDOWN and not getattr(event, "repeat", False):
+                            if event.key in (pygame.K_RETURN, pygame.K_KP_ENTER):
+                                menu.exit_letter_paging()
+                                menu_sounds.select()
+                            elif event.key in (pygame.K_UP, pygame.K_w, pygame.K_PAGEUP):
+                                menu.page_letter(-1)
+                                preview.stop(reset_selection=True)
+                                menu_sounds.tick()
+                            elif event.key in (pygame.K_DOWN, pygame.K_s, pygame.K_PAGEDOWN):
+                                menu.page_letter(1)
+                                preview.stop(reset_selection=True)
+                                menu_sounds.tick()
+                        continue
                     if event.type == pygame.KEYDOWN:
+                        if event.key in (pygame.K_PAGEUP, pygame.K_PAGEDOWN):
+                            speed_taps.clear()
+                            menu.enter_letter_paging(
+                                -1 if event.key == pygame.K_PAGEUP else 1
+                            )
+                            repeater.clear()
+                            preview.stop(reset_selection=True)
+                            menu_sounds.select()
+                            continue
+                        if event.key == pygame.K_d:
+                            if (
+                                not getattr(event, "repeat", False)
+                                and speed_taps.register(now)
+                            ):
+                                note_travel_speed = (
+                                    1.0 if note_travel_speed > 1.0 else 2.0
+                                )
+                                menu_sounds.select()
+                            continue
+                        speed_taps.clear()
                         shifted = bool(getattr(event, "mod", 0) & pygame.KMOD_SHIFT)
                         if event.key == pygame.K_f:
                             current_key = song_key(menu.song) if menu.song is not None else None
@@ -1146,13 +1244,16 @@ def main(argv: list[str] | None = None) -> int:
                             menu_sounds.select()
                     continue
 
-                if keyboard_press is not None and session is not None:
-                    if session.running:
-                        session.register_keyboard_press(*keyboard_press)
-                    else:
-                        keyboard_start_requested = True
+                if _route_keyboard_press(session, keyboard_press):
+                    keyboard_start_requested = True
 
                 if event.type == pygame.KEYDOWN:
+                    if (
+                        event.key == pygame.K_RETURN
+                        and session is not None
+                        and session.finish_music_outro()
+                    ):
+                        continue
                     if event.key == pygame.K_v and session is not None and not session.running:
                         chain_mode = chain_mode.shifted()
                         session.set_chain_mode(chain_mode)
@@ -1234,7 +1335,13 @@ def main(argv: list[str] | None = None) -> int:
 
             if mode == "stats":
                 assert active_profile is not None
-                draw_activity_dashboard(renderer, activity_store, active_profile, stats_week)
+                draw_activity_dashboard(
+                    renderer,
+                    activity_store,
+                    active_profile,
+                    stats_week,
+                    input_mode=stats_input_mode,
+                )
                 pygame.display.flip()
                 clock.tick(TARGET_FPS)
                 continue
@@ -1278,8 +1385,15 @@ def main(argv: list[str] | None = None) -> int:
                 continue
 
             if mode == "song_menu":
-                for repeated in repeater.update(now):
-                    handle_song_menu_action(repeated)
+                long_hold = repeater.long_hold_action(now)
+                if menu.letter_page is None and long_hold is not None:
+                    menu.enter_letter_paging()
+                    repeater.clear()
+                    preview.stop(reset_selection=True)
+                    menu_sounds.select()
+                elif menu.letter_page is None:
+                    for repeated in repeater.update(now):
+                        handle_song_menu_action(repeated)
                 menu.animate(frame_dt)
                 preview.update(menu.song, now)
                 selected_record = ChartRecord()
@@ -1297,6 +1411,7 @@ def main(argv: list[str] | None = None) -> int:
                     played_only=played_only,
                     chain_mode=chain_mode,
                     recording_enabled=record_play_enabled,
+                    note_travel_speed=note_travel_speed,
                 )
                 draw_profile_badge(renderer, active_profile)
                 pygame.display.flip()
@@ -1356,9 +1471,16 @@ def main(argv: list[str] | None = None) -> int:
                 mask = snap.mask
                 if settings_store.settings.player_visual == "character":
                     pose_figure = snap.figure
+                readiness_session = (
+                    session
+                    if mode == "game"
+                    else calibration_session
+                    if mode == "calibration"
+                    else None
+                )
                 camera_status_text = (
-                    readiness_for_session(body, session)
-                    if mode == "game" and session is not None
+                    readiness_for_session(body, readiness_session)
+                    if readiness_session is not None
                     else snap.message
                 )
                 camera_ready = camera_status_text == "READY"
@@ -1372,9 +1494,15 @@ def main(argv: list[str] | None = None) -> int:
 
             if mode == "calibration":
                 update_started = time.perf_counter()
-                calibration_ready = keyboard_only or camera_ready
+                calibration_ready = (
+                    keyboard_only or camera_ready or calibration_start_requested
+                )
                 calibration_session.set_keyboard_mode(True)
-                calibration_session.update(body, ready_to_start=calibration_ready)
+                calibration_session.update(
+                    body,
+                    ready_to_start=calibration_ready,
+                    start_immediately=calibration_start_requested,
+                )
                 update_ms = (time.perf_counter() - update_started) * 1000.0
                 gameplay_sounds.play(calibration_session.drain_gameplay_events())
                 if calibration_session.finished or calibration_session.failed:
@@ -1388,7 +1516,7 @@ def main(argv: list[str] | None = None) -> int:
                 if calibration_session.running:
                     beat_index = int(math.floor(calibration_session.beat_position))
                     if beat_index != calibration_last_beat:
-                        gameplay_sounds.play_calibration_beat(downbeat=(beat_index % 4 == 0))
+                        gameplay_sounds.play_calibration_beat(beat_index=beat_index % 4)
                         calibration_last_beat = beat_index
                 else:
                     calibration_last_beat = None
@@ -1434,12 +1562,14 @@ def main(argv: list[str] | None = None) -> int:
                     profile_lines=profile_lines,
                     pose_figure=pose_figure,
                     detailed_debug=profile_level == 2,
+                    start_ready_progress=calibration_session.ready_progress,
                 )
                 renderer.draw_calibration_overlay(
                     displayed_camera_index(),
                     settings_store.settings.horizontal_reach,
                     camera_status(),
                     settings_store.settings.player_visual,
+                    inference_percent=_inference_completion_percent(pose_snapshot),
                 )
                 draw_lower_body_tracking_overlay(renderer, body)
                 render_ms = (time.perf_counter() - render_started) * 1000.0
@@ -1568,6 +1698,7 @@ def main(argv: list[str] | None = None) -> int:
                 song_title=(session.chart.song.display_title if session.chart else "VaporStep Demo"),
                 chart_label=(
                     f"{session.chart.chart.label}  •  VIRTUAL HOLDS {session.chain_mode.label}"
+                    f"  •  NOTE SPEED {session.note_travel_speed:g}×"
                     if session.chart
                     else "Synthetic chart"
                 ),
@@ -1587,6 +1718,7 @@ def main(argv: list[str] | None = None) -> int:
                 profile_lines=profile_lines,
                 pose_figure=pose_figure,
                 detailed_debug=profile_level == 2,
+                start_ready_progress=session.ready_progress,
             )
             if active_recording is not None:
                 active_recording.capture(renderer.screen, time.monotonic())

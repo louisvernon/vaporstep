@@ -76,7 +76,7 @@ def test_character_palette_stays_below_full_note_brightness() -> None:
 
     renderer._draw_pose_figure(_pose())
 
-    assert pygame.surfarray.array3d(screen).max() <= 210
+    assert pygame.surfarray.array3d(screen).max() <= 190
 
 
 def test_character_torso_is_narrower_and_uses_four_sided_depth_face(monkeypatch) -> None:

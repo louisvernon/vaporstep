@@ -1,7 +1,9 @@
 import sys
 from types import SimpleNamespace
 
-from vaporstep.audio_fx import GameplaySounds
+import numpy as np
+
+from vaporstep.audio_fx import GameplaySounds, _calibration_beat
 from vaporstep.domain import GameplayEvent, GameplayEventType, HitQuality, NoteKind
 
 
@@ -36,3 +38,13 @@ def test_gameplay_hit_sound_is_created_before_first_judgement(monkeypatch):
 
     assert len(made_pcm) == 1
     assert len(play_calls) == 2
+
+
+def test_calibration_loop_has_distinct_safe_drum_steps():
+    steps = [_calibration_beat(index, 44_100) for index in range(4)]
+
+    assert len(steps[0]) > len(steps[1])
+    assert len(steps[2]) > len(steps[3])
+    assert all(np.isfinite(step).all() for step in steps)
+    assert all(0.0 < np.max(np.abs(step)) < 1.0 for step in steps)
+    assert not np.array_equal(steps[0], steps[2])

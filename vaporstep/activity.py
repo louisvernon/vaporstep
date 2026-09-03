@@ -12,6 +12,12 @@ from .domain import GameNote, NoteKind
 
 SONG_PROGRESS_THRESHOLD = 0.25
 DAILY_ACTIVITY_GOAL = 100
+INPUT_MODES = ("camera", "keyboard")
+
+
+def normalize_input_mode(value: object) -> str:
+    mode = str(value or "").strip().casefold()
+    return mode if mode in INPUT_MODES else "camera"
 
 
 @dataclass(frozen=True)
@@ -35,6 +41,7 @@ class RunActivity:
     stomps: int
     punches: int
     score: int
+    input_mode: str = "camera"
 
     @property
     def actions(self) -> int:
@@ -164,13 +171,22 @@ class ActivityStore:
                 counts_as_song INTEGER NOT NULL,
                 stomps INTEGER NOT NULL,
                 punches INTEGER NOT NULL,
-                score INTEGER NOT NULL
+                score INTEGER NOT NULL,
+                input_mode TEXT NOT NULL DEFAULT 'camera'
             );
 
             CREATE INDEX IF NOT EXISTS runs_profile_date_idx
                 ON runs(profile_id, local_date);
             """
         )
+        columns = {
+            str(row["name"])
+            for row in self._db.execute("PRAGMA table_info(runs)").fetchall()
+        }
+        if "input_mode" not in columns:
+            self._db.execute(
+                "ALTER TABLE runs ADD COLUMN input_mode TEXT NOT NULL DEFAULT 'camera'"
+            )
         self._db.commit()
 
     def profiles(self) -> list[Profile]:
@@ -235,8 +251,8 @@ class ActivityStore:
             INSERT INTO runs(
                 profile_id, started_at_utc, local_date, duration_seconds,
                 song_key, chart_key, outcome, progress, counts_as_song,
-                stomps, punches, score
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                stomps, punches, score, input_mode
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 activity.profile_id,
@@ -251,12 +267,19 @@ class ActivityStore:
                 max(0, activity.stomps),
                 max(0, activity.punches),
                 max(0, activity.score),
+                normalize_input_mode(activity.input_mode),
             ),
         )
         self._db.commit()
         return int(cur.lastrowid)
 
-    def week(self, profile_id: int, start: date) -> list[DayActivity]:
+    def week(
+        self,
+        profile_id: int,
+        start: date,
+        *,
+        input_mode: str = "camera",
+    ) -> list[DayActivity]:
         start = week_start(start)
         end = start + timedelta(days=7)
         rows = self._db.execute(
@@ -267,10 +290,16 @@ class ActivityStore:
                    COALESCE(SUM(punches), 0) AS punches,
                    COALESCE(SUM(counts_as_song), 0) AS songs
             FROM runs
-            WHERE profile_id = ? AND local_date >= ? AND local_date < ?
+            WHERE profile_id = ? AND input_mode = ?
+                  AND local_date >= ? AND local_date < ?
             GROUP BY local_date
             """,
-            (int(profile_id), start.isoformat(), end.isoformat()),
+            (
+                int(profile_id),
+                normalize_input_mode(input_mode),
+                start.isoformat(),
+                end.isoformat(),
+            ),
         ).fetchall()
         by_day = {date.fromisoformat(row["local_date"]): row for row in rows}
         result: list[DayActivity] = []
@@ -288,18 +317,26 @@ class ActivityStore:
             )
         return result
 
-    def totals(self, profile_id: int, *, today: date | None = None) -> ActivityTotals:
+    def totals(
+        self,
+        profile_id: int,
+        *,
+        today: date | None = None,
+        input_mode: str = "camera",
+    ) -> ActivityTotals:
         row = self._db.execute(
             """
             SELECT COALESCE(SUM(duration_seconds), 0) AS duration_seconds,
                    COALESCE(SUM(stomps), 0) AS stomps,
                    COALESCE(SUM(punches), 0) AS punches,
                    COALESCE(SUM(counts_as_song), 0) AS songs
-            FROM runs WHERE profile_id = ?
+            FROM runs WHERE profile_id = ? AND input_mode = ?
             """,
-            (int(profile_id),),
+            (int(profile_id), normalize_input_mode(input_mode)),
         ).fetchone()
-        current, best = self.streaks(profile_id, today=today)
+        current, best = self.streaks(
+            profile_id, today=today, input_mode=input_mode
+        )
         return ActivityTotals(
             duration_seconds=float(row["duration_seconds"]),
             stomps=int(row["stomps"]),
@@ -315,6 +352,7 @@ class ActivityStore:
         *,
         before: date,
         day_count: int = 7,
+        input_mode: str = "camera",
     ) -> WeeklyRecords:
         """Return the best comparable partial-week totals before ``before``.
 
@@ -331,11 +369,15 @@ class ActivityStore:
                    COALESCE(SUM(stomps + punches), 0) AS actions,
                    COALESCE(SUM(counts_as_song), 0) AS songs
             FROM runs
-            WHERE profile_id = ? AND local_date < ?
+            WHERE profile_id = ? AND input_mode = ? AND local_date < ?
             GROUP BY local_date
             ORDER BY local_date
             """,
-            (int(profile_id), before.isoformat()),
+            (
+                int(profile_id),
+                normalize_input_mode(input_mode),
+                before.isoformat(),
+            ),
         ).fetchall()
 
         weeks: dict[date, list[float]] = {}
@@ -358,15 +400,21 @@ class ActivityStore:
             has_history=True,
         )
 
-    def streaks(self, profile_id: int, *, today: date | None = None) -> tuple[int, int]:
+    def streaks(
+        self,
+        profile_id: int,
+        *,
+        today: date | None = None,
+        input_mode: str = "camera",
+    ) -> tuple[int, int]:
         today = today or date.today()
         rows = self._db.execute(
             """
             SELECT local_date, COALESCE(SUM(stomps + punches), 0) AS actions
-            FROM runs WHERE profile_id = ?
+            FROM runs WHERE profile_id = ? AND input_mode = ?
             GROUP BY local_date ORDER BY local_date
             """,
-            (int(profile_id),),
+            (int(profile_id), normalize_input_mode(input_mode)),
         ).fetchall()
         qualifying = {
             date.fromisoformat(row["local_date"])

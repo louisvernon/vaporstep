@@ -1,6 +1,8 @@
 import sys
 from types import SimpleNamespace
 
+import pytest
+
 
 class _FakeMusic:
     @staticmethod
@@ -22,7 +24,7 @@ except ImportError:
     sys.modules.setdefault("pygame", SimpleNamespace(mixer=_FakeMixer()))
 
 from vaporstep.domain import BodyPoint, BodyState, GameNote, HitQuality, NoteKind
-from vaporstep.session import GameSession
+from vaporstep.session import READY_HOLD_SECONDS, GameSession
 
 
 def _body(ts: float, *, knee_y: float = 0.60, lane: int = 2) -> BodyState:
@@ -116,6 +118,39 @@ def test_keyboard_start_request_begins_immediately(monkeypatch):
     assert session.running
 
 
+def test_keyboard_input_marks_run_separately(monkeypatch):
+    session, clock = _session(monkeypatch)
+    session.set_keyboard_mode(True)
+    assert session.input_mode == "camera"
+
+    clock[0] = 1.0
+    session.register_keyboard_press(NoteKind.FOOT, 2)
+
+    assert session.input_mode == "keyboard"
+
+
+def test_completed_chart_can_skip_music_outro(monkeypatch):
+    session, _clock = _session(monkeypatch)
+    stopped = []
+    monkeypatch.setattr("vaporstep.session._stop_music", lambda: stopped.append(True))
+    session.stats.register_hit()
+
+    assert session.scoring_complete
+    assert session.finish_music_outro()
+    assert session.finished
+    # Keep the chart clock alive until the app records the completed run.
+    assert session.running
+    assert stopped == [True]
+
+
+def test_music_outro_cannot_skip_before_scoring_finishes(monkeypatch):
+    session, _clock = _session(monkeypatch)
+
+    assert not session.scoring_complete
+    assert not session.finish_music_outro()
+    assert session.running
+
+
 def test_chart_lead_in_starts_early_enough_for_first_note_to_enter_from_origin():
     from pathlib import Path
     from vaporstep.song import BeatMarker, ChartInfo, LoadedChart, SongInfo
@@ -161,6 +196,19 @@ def test_chart_lead_in_starts_early_enough_for_first_note_to_enter_from_origin()
 def test_demo_lead_in_uses_seconds_fallback():
     session = GameSession(demo_notes=[GameNote(time=2.0, lanes=(2,), kind=NoteKind.FOOT)])
     assert session._compute_lead_in_start_time() == -2.0
+
+
+def test_ready_progress_tracks_prestart_hold(monkeypatch):
+    import vaporstep.session as session_module
+
+    clock = [20.0]
+    monkeypatch.setattr(session_module.time, "monotonic", lambda: clock[0])
+    session = GameSession(demo_notes=[GameNote(time=1.0, lanes=(2,), kind=NoteKind.HANDS)])
+    assert session.ready_progress == 0.0
+
+    session.update(BodyState(), ready_to_start=True)
+    clock[0] += READY_HOLD_SECONDS / 2.0
+    assert session.ready_progress == pytest.approx(0.5)
 
 
 def test_session_pre_roll_delays_chart_zero_until_lead_in_finishes(monkeypatch):
@@ -286,3 +334,14 @@ def test_render_note_window_preserves_global_hand_ordinals() -> None:
     assert len(visible) < len(session.notes)
     assert visible_hands
     assert visible_hands[0].visual_ordinal == 25
+
+
+def test_new_hand_batch_restarts_with_pink_after_playfield_sized_gap() -> None:
+    notes = [
+        GameNote(time=beat * 0.5, beat=beat, lanes=(1,), kind=NoteKind.HANDS)
+        for beat in (0.0, 1.0, 2.0, 11.0)
+    ]
+
+    session = GameSession(demo_notes=notes)
+
+    assert [note.visual_ordinal % 2 for note in session.notes] == [0, 1, 0, 0]

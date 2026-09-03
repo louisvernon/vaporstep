@@ -14,11 +14,11 @@ def make_demo_notes() -> list[GameNote]:
     return [
         GameNote(2.0, (2,), NoteKind.FOOT),
         GameNote(3.0, (4,), NoteKind.FOOT),
-        GameNote(4.2, (1, 4), NoteKind.HANDS),
-        GameNote(5.4, (3,), NoteKind.FOOT),
-        GameNote(6.4, (1,), NoteKind.FOOT),
-        GameNote(7.5, (2, 3), NoteKind.HANDS),
-        GameNote(8.6, (4,), NoteKind.FOOT),
+        GameNote(4.0, (1, 4), NoteKind.HANDS),
+        GameNote(5.0, (3,), NoteKind.FOOT),
+        GameNote(6.0, (1,), NoteKind.FOOT),
+        GameNote(7.0, (2, 3), NoteKind.HANDS),
+        GameNote(8.0, (4,), NoteKind.FOOT),
     ]
 
 

@@ -1,4 +1,4 @@
-from vaporstep.menu import MenuAction, SongMenu
+from vaporstep.menu import DoubleTapDetector, MenuAction, SongMenu
 from vaporstep.song import ChartInfo, SongInfo
 from pathlib import Path
 
@@ -56,6 +56,60 @@ def test_held_repeater_has_delay_then_repeats_and_accelerates():
     assert 1 <= len(emitted) <= 5
     r.release(MenuAction.DOWN)
     assert r.update(14.0) == []
+
+
+def test_held_repeater_enters_letter_mode_after_five_seconds():
+    from vaporstep.menu import HeldMenuRepeater
+
+    repeater = HeldMenuRepeater()
+    repeater.press(MenuAction.UP, 10.0)
+
+    assert repeater.long_hold_action(14.999) is None
+    assert repeater.long_hold_action(15.0) == MenuAction.UP
+    repeater.clear()
+    assert repeater.long_hold_action(20.0) is None
+
+
+def test_repeated_keydown_does_not_restart_letter_mode_timer():
+    from vaporstep.menu import HeldMenuRepeater
+
+    repeater = HeldMenuRepeater()
+    repeater.press(MenuAction.DOWN, 10.0)
+    for repeated_at in (10.5, 11.0, 12.0, 14.9):
+        repeater.press(MenuAction.DOWN, repeated_at)
+
+    assert repeater.long_hold_action(15.0) == MenuAction.DOWN
+
+
+def test_double_tap_detector_toggles_without_pending_navigation():
+    detector = DoubleTapDetector()
+
+    assert not detector.register(10.0)
+    assert detector.register(10.3)
+    assert not detector.register(11.0)
+    assert not detector.register(11.5)
+
+
+def test_song_menu_pages_by_available_title_letters():
+    menu = SongMenu(
+        [_song("123 Start"), _song("Alpha"), _song("Another"), _song("Beta"), _song("Delta")]
+    )
+    menu.select_song_index(2)
+
+    menu.enter_letter_paging()
+    assert menu.letter_pages == ("#", "A", "B", "D")
+    assert menu.letter_page == "A"
+    assert menu.song.display_title == "Another"
+    assert menu.visual_position == 2.0
+
+    menu.page_letter(1)
+    assert menu.letter_page == "B"
+    assert menu.song.display_title == "Beta"
+    menu.page_letter(-1)
+    assert menu.letter_page == "A"
+    assert menu.song.display_title == "Alpha"
+    menu.exit_letter_paging()
+    assert menu.letter_page is None
 
 
 def _difficulty_song(name: str, difficulties):

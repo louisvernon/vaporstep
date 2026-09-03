@@ -2,7 +2,12 @@ from types import SimpleNamespace
 
 import pygame
 
-from vaporstep.app import _next_profile_level, _profile_lines, _profile_toggle_requested
+from vaporstep.app import (
+    _inference_completion_percent,
+    _next_profile_level,
+    _profile_lines,
+    _profile_toggle_requested,
+)
 from vaporstep.performance import AdaptiveFrameRate, RuntimeProfiler
 
 
@@ -91,3 +96,11 @@ def test_basic_profile_lines_show_only_requested_live_counters() -> None:
     )
     assert any("MAIN THREAD" in line for line in detailed)
     assert any("CAMERA / INFERENCE" in line for line in detailed)
+
+
+def test_inference_completion_percent_waits_for_warmup_and_uses_submissions() -> None:
+    warming = SimpleNamespace(frames_captured=29, frames_submitted=10)
+    snapshot = SimpleNamespace(frames_captured=100, frames_submitted=74)
+
+    assert _inference_completion_percent(warming) is None
+    assert _inference_completion_percent(snapshot) == 74

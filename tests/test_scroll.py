@@ -34,6 +34,13 @@ class ScrollTests(unittest.TestCase):
         self.assertAlmostEqual(note_progress(note, song_time=0.0, song_beat=0.0), 0.0)
         self.assertAlmostEqual(note_progress(note, song_time=2.0, song_beat=99.0), 0.5)
 
+    def test_double_speed_halves_visual_lookahead_without_changing_hit_time(self):
+        note = GameNote(time=4.0, lanes=(2,), kind=NoteKind.FOOT, beat=8.0)
+
+        self.assertAlmostEqual(note_progress(note, 0.0, 4.0, speed=2.0), 0.0)
+        self.assertAlmostEqual(note_progress(note, 0.0, 6.0, speed=2.0), 0.5)
+        self.assertAlmostEqual(note_progress(note, 0.0, 8.0, speed=2.0), 1.0)
+
 
 if __name__ == '__main__':
     unittest.main()
