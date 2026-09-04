@@ -51,7 +51,7 @@ jobs:
         with:
           subject-path: VaporStep-Linux-x86_64.tar.gz
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: VaporStep-Linux-x86_64
           path: VaporStep-Linux-x86_64.tar.gz
@@ -180,7 +180,7 @@ jobs:
             "${RUNNER_TEMP}"/AuthKey_*.p8 \
             "${RUNNER_TEMP}/VaporStep-notarize.zip"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: VaporStep-macOS-AppleSilicon
           path: VaporStep-macOS-AppleSilicon.zip
@@ -342,7 +342,7 @@ jobs:
             "$hash *$_"
           } | Set-Content SHA256SUMS-Windows.txt
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: VaporStep-Windows-x86_64
           path: |
