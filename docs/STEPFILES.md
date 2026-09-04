@@ -39,9 +39,14 @@ Being in the correct lane is sufficient for a basic hit. A deliberate movement c
 
 Current timing windows are:
 
-- **PERFECT:** ±100 ms
-- **GREAT:** ±300 ms
-- **basic occupancy:** ±100 ms around the note
+- **PERFECT:** approximately 67 ms early or late
+- **GREAT:** up to 200 ms early or 100 ms late
+- **timing quality:** GREAT and PERFECT also require 100 ms of continuous target occupancy
+- **basic occupancy:** briefly reaching the target is sufficient for a fallback HIT
+
+Camera movement and keyboard presses use the same timing-quality windows. A
+deliberate lane entry or strike can score even when the player has left the lane
+by the authored beat, provided the player stayed there continuously long enough.
 
 These are gameplay tuning values, not requirements of the stepfile format, and may change as VaporStep evolves.
 

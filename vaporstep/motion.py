@@ -5,8 +5,11 @@ from dataclasses import dataclass
 from .domain import BodyPoint, BodyState, HitQuality, NoteKind
 
 
-PERFECT_WINDOW_SECONDS = 0.10
-GREAT_WINDOW_SECONDS = 0.30
+PERFECT_WINDOW_SECONDS = 1.0 / 15.0
+GREAT_EARLY_WINDOW_SECONDS = 0.20
+GREAT_LATE_WINDOW_SECONDS = 0.10
+# Compatibility/export value for code that only needs the largest extent.
+GREAT_WINDOW_SECONDS = max(GREAT_EARLY_WINDOW_SECONDS, GREAT_LATE_WINDOW_SECONDS)
 MOTION_EVENT_LOCKOUT_SECONDS = 0.16
 MOTION_REARM_SECONDS = 0.07
 MOTION_EVENT_VISUAL_SECONDS = 0.80
@@ -38,6 +41,7 @@ class _LimbState:
     vertical_velocity_ema: float = 0.0
     armed: bool = True
     last_event_body_time: float = -999.0
+    active_strike: MotionEvent | None = None
 
 
 class MotionTracker:
@@ -127,6 +131,27 @@ class MotionTracker:
             )
             since_event = body.timestamp - state.last_event_body_time
 
+            # Threshold crossing starts a strike, but the musically meaningful
+            # moment can be the later landing/extension. Keep the same pending
+            # event aligned with the ongoing movement until it slows, changes
+            # lane, or is consumed by a note.
+            if state.active_strike is not None and state.active_strike.consumed:
+                state.active_strike = None
+            if (
+                state.active_strike is not None
+                and song_time is not None
+                and point.visible
+                and point.lane == state.active_strike.lane
+                and not entered_lane
+            ):
+                state.active_strike.song_time = float(song_time)
+                state.active_strike.strength = max(
+                    state.active_strike.strength,
+                    strike_speed / max(strike_threshold, 1e-6),
+                )
+            elif entered_lane:
+                state.active_strike = None
+
             event: MotionEvent | None = None
             if entered_lane:
                 event = MotionEvent(
@@ -160,6 +185,8 @@ class MotionTracker:
                 state.last_event_body_time = body.timestamp
                 self._events.append(event)
                 generated.append(event)
+                if event.source == "strike":
+                    state.active_strike = event
 
             if (
                 event is None
@@ -168,6 +195,7 @@ class MotionTracker:
                 and strike_speed <= reset_threshold
             ):
                 state.armed = True
+                state.active_strike = None
 
             state.point = point
             state.body_timestamp = body.timestamp
@@ -205,6 +233,8 @@ class MotionTracker:
         note_time: float,
         *,
         sources: frozenset[str] | None = None,
+        perfect_only: bool = False,
+        consume: bool = True,
     ) -> tuple[HitQuality, float] | None:
         chosen: list[MotionEvent] = []
         used_ids: set[int] = set()
@@ -217,7 +247,9 @@ class MotionTracker:
                 and e.kind == kind
                 and e.lane == lane
                 and (sources is None or e.source in sources)
-                and abs(e.song_time - note_time) <= GREAT_WINDOW_SECONDS
+                and -GREAT_EARLY_WINDOW_SECONDS
+                <= e.song_time - note_time
+                <= GREAT_LATE_WINDOW_SECONDS
             ]
             if not candidates:
                 return None
@@ -226,10 +258,13 @@ class MotionTracker:
             used_ids.add(id(event))
 
         worst_delta = max(abs(e.song_time - note_time) for e in chosen)
+        if perfect_only and worst_delta > PERFECT_WINDOW_SECONDS:
+            return None
         quality = HitQuality.PERFECT if worst_delta <= PERFECT_WINDOW_SECONDS else HitQuality.GREAT
-        for event in chosen:
-            event.consumed = True
-        self._events = [e for e in self._events if not e.consumed]
+        if consume:
+            for event in chosen:
+                event.consumed = True
+            self._events = [e for e in self._events if not e.consumed]
         return quality, worst_delta
 
     @property

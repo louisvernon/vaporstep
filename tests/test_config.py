@@ -11,10 +11,10 @@ from vaporstep.config import (
 
 
 class PlayfieldConfigTests(unittest.TestCase):
-    def test_basic_occupancy_grace_allows_more_late_camera_latency(self):
-        self.assertAlmostEqual(OCCUPANCY_GRACE_SECONDS, 0.10)
+    def test_basic_occupancy_is_more_forgiving_early_than_late(self):
+        self.assertAlmostEqual(OCCUPANCY_GRACE_SECONDS, 0.20)
         self.assertAlmostEqual(HIT_WINDOW_SECONDS, 0.15)
-        self.assertGreater(HIT_WINDOW_SECONDS, OCCUPANCY_GRACE_SECONDS)
+        self.assertGreater(OCCUPANCY_GRACE_SECONDS, HIT_WINDOW_SECONDS)
 
     def test_hand_playfield_is_wider_than_foot_playfield(self):
         hand_width = HAND_PLAYFIELD_RIGHT - HAND_PLAYFIELD_LEFT

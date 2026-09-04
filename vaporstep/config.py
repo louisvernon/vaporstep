@@ -67,13 +67,14 @@ TARGET_PREENTRY_BEATS = 1.5
 # Fallback only for synthetic/demo notes that do not carry a source beat.
 LOOKAHEAD_SECONDS = 4.0
 TARGET_PREENTRY_SECONDS = 0.75
-# Basic occupancy hits are deliberately much tighter than timing-bonus motion.
-# The player must still occupy the lane at the beat (or within a very short
-# recent/late grace), preventing a quick sweep through several lanes from
-# latching many notes. The late side is slightly wider to absorb camera/inference
-# latency; the early side remains OCCUPANCY_GRACE_SECONDS.
+# Basic occupancy remains deliberately forgiving: reaching the target at any
+# point in this window is enough for a fallback HIT. GREAT and PERFECT require
+# both a timed input and a continuous stay, which protects the higher-value
+# judgements from quick lane sweeps without making a basic clear frustrating.
 HIT_WINDOW_SECONDS = 0.15
-OCCUPANCY_GRACE_SECONDS = 0.10
+OCCUPANCY_GRACE_SECONDS = 0.20
+TIMING_QUALITY_MIN_OCCUPANCY_SECONDS = 0.10
+TIMING_QUALITY_CONFIRM_LATE_SECONDS = 0.20
 HIT_FLASH_SECONDS = 0.38
 
 # Screen-space geometry for the split vector playfield. Notes emerge from a

@@ -18,6 +18,8 @@ from .config import (
     OCCUPANCY_GRACE_SECONDS,
     TARGET_PREENTRY_BEATS,
     TARGET_PREENTRY_SECONDS,
+    TIMING_QUALITY_CONFIRM_LATE_SECONDS,
+    TIMING_QUALITY_MIN_OCCUPANCY_SECONDS,
 )
 from .domain import (
     BodyState,
@@ -31,7 +33,14 @@ from .domain import (
     RuntimeChain,
     SustainSource,
 )
-from .motion import GREAT_WINDOW_SECONDS, MOTION_EVENT_VISUAL_SECONDS, MotionEvent, MotionTracker
+from .motion import (
+    GREAT_LATE_WINDOW_SECONDS,
+    GREAT_WINDOW_SECONDS,
+    MOTION_EVENT_VISUAL_SECONDS,
+    PERFECT_WINDOW_SECONDS,
+    MotionEvent,
+    MotionTracker,
+)
 from .scoring import RunStats
 from .song import LoadedChart
 
@@ -492,35 +501,76 @@ class GameSession:
 
     def _update_regular_note(self, note: GameNote, body: BodyState, t: float) -> None:
         delta = t - note.time
+        satisfied = note.is_satisfied(body)
         if (
-            -OCCUPANCY_GRACE_SECONDS <= delta <= HIT_WINDOW_SECONDS
-            and note.is_satisfied(body)
+            -OCCUPANCY_GRACE_SECONDS
+            <= delta
+            <= TIMING_QUALITY_CONFIRM_LATE_SECONDS
         ):
+            if satisfied:
+                if note.timing_quality_occupancy_since is None:
+                    note.timing_quality_occupancy_since = t
+                if (
+                    t - note.timing_quality_occupancy_since + 1e-9
+                    >= TIMING_QUALITY_MIN_OCCUPANCY_SECONDS
+                ):
+                    note.timing_quality_ready = True
+            else:
+                note.timing_quality_occupancy_since = None
+        elif delta > TIMING_QUALITY_CONFIRM_LATE_SECONDS:
+            # A frame can land just beyond the window. If occupancy was already
+            # continuous, conservatively extend it only to the configured edge.
+            if satisfied and note.timing_quality_occupancy_since is not None:
+                if (
+                    note.time
+                    + TIMING_QUALITY_CONFIRM_LATE_SECONDS
+                    - note.timing_quality_occupancy_since
+                    + 1e-9
+                    >= TIMING_QUALITY_MIN_OCCUPANCY_SECONDS
+                ):
+                    note.timing_quality_ready = True
+            note.timing_quality_occupancy_since = None
+
+        if -OCCUPANCY_GRACE_SECONDS <= delta <= HIT_WINDOW_SECONDS and satisfied:
             note.last_occupancy_at = t
 
-        if delta >= 0.0 and self.keyboard_mode:
+        if delta >= 0.0 and note.timing_quality_ready:
+            # An early GREAT is provisional until the late PERFECT edge passes.
+            # This lets a landing/strike near the beat replace an earlier lane
+            # entry, which is especially important for consecutive foot notes.
             timed = self.motion.match(
                 note.kind,
                 note.lanes,
                 note.time,
-                sources=frozenset(("keyboard",)),
+                perfect_only=delta < PERFECT_WINDOW_SECONDS,
             )
             if timed is not None:
                 quality, timing_delta = timed
                 self._judge(note, True, t, quality=quality, timing_delta=timing_delta)
                 return
 
-        if delta >= 0.0 and note.last_occupancy_at is not None:
-            timed = self.motion.match(note.kind, note.lanes, note.time)
-            if timed is not None:
-                quality, timing_delta = timed
-                self._judge(note, True, t, quality=quality, timing_delta=timing_delta)
-                return
-            if delta >= HIT_WINDOW_SECONDS:
+        if delta >= HIT_WINDOW_SECONDS and note.last_occupancy_at is not None:
+            pending_timed = self.motion.match(
+                note.kind,
+                note.lanes,
+                note.time,
+                consume=False,
+            )
+            if pending_timed is None or delta >= TIMING_QUALITY_CONFIRM_LATE_SECONDS:
                 self._judge(note, True, t, quality=HitQuality.HIT)
                 return
 
-        miss_window = GREAT_WINDOW_SECONDS if self.keyboard_mode else HIT_WINDOW_SECONDS
+        # With no qualifying occupancy, there is no dwell or fallback HIT left
+        # to confirm once the basic late edge has passed.
+        if delta > HIT_WINDOW_SECONDS and note.last_occupancy_at is None:
+            self._judge(note, False, t)
+            return
+
+        miss_window = max(
+            HIT_WINDOW_SECONDS,
+            GREAT_LATE_WINDOW_SECONDS,
+            TIMING_QUALITY_CONFIRM_LATE_SECONDS,
+        )
         if delta > miss_window:
             self._judge(note, False, t)
 

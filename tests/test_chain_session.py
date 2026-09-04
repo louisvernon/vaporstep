@@ -291,7 +291,7 @@ def test_missed_hold_head_breaks_combo_once_and_tail_does_not_break_it_again(mon
     assert session.stats.combo == 2
 
 
-def test_late_occupancy_within_camera_grace_counts_as_hit(monkeypatch):
+def test_single_late_occupancy_sample_counts_as_fallback_hit(monkeypatch):
     clock = [0.0]
     monkeypatch.setattr(GameSession, "time", property(lambda self: clock[0]))
     note = GameNote(time=1.0, beat=2.0, lanes=(1,), kind=NoteKind.FOOT)
@@ -306,8 +306,8 @@ def test_late_occupancy_within_camera_grace_counts_as_hit(monkeypatch):
     session = GameSession(chart=chart)
     session.running = True
 
-    # A pose result arriving 140 ms late is still accepted. It can disappear on
-    # the next frame and the remembered occupancy is awarded at window close.
+    # A single pose result arriving 140 ms late remains enough for the forgiving
+    # fallback HIT, though it cannot earn timing quality without a longer stay.
     clock[0] = 1.14
     session.update(_body(1.14, 1), True)
     assert not session.notes[0].judged

@@ -80,18 +80,18 @@ def test_plain_occupancy_settles_to_hit_at_late_grace(monkeypatch):
     assert note.judgement == HitQuality.HIT
 
 
-def test_keyboard_press_scores_perfect_without_continuous_occupancy(monkeypatch):
+def test_keyboard_press_and_hold_scores_perfect(monkeypatch):
     session, clock = _session(monkeypatch)
     session.set_keyboard_mode(True)
     note = session.notes[0]
 
     clock[0] = 0.94
     session.register_keyboard_press(NoteKind.FOOT, 2)
-    session.update(BodyState(), ready_to_start=True)
+    session.update(_body(1.00), ready_to_start=True)
     assert not note.judged
 
-    clock[0] = 1.0
-    session.update(BodyState(), ready_to_start=True)
+    clock[0] = 1.04
+    session.update(_body(1.10), ready_to_start=True)
     assert note.judgement == HitQuality.PERFECT
 
 
@@ -100,11 +100,97 @@ def test_keyboard_press_can_score_late_great(monkeypatch):
     session.set_keyboard_mode(True)
     note = session.notes[0]
 
-    clock[0] = 1.20
+    clock[0] = 1.09
     session.register_keyboard_press(NoteKind.FOOT, 2)
-    session.update(BodyState(), ready_to_start=True)
+    session.update(_body(1.00), ready_to_start=True)
+    assert not note.judged
+
+    clock[0] = 1.19
+    session.update(_body(1.10), ready_to_start=True)
 
     assert note.judgement == HitQuality.GREAT
+
+
+def test_early_great_waits_for_a_possible_late_perfect(monkeypatch):
+    session, clock = _session(monkeypatch)
+    note = session.notes[0]
+    session.motion.record_input(
+        NoteKind.FOOT,
+        2,
+        0.85,
+        source="entry",
+        limb="lk",
+    )
+
+    clock[0] = 0.85
+    session.update(_body(1.00), ready_to_start=True)
+    clock[0] = 0.95
+    session.update(_body(1.10), ready_to_start=True)
+
+    clock[0] = 1.00
+    session.update(_body(1.15), ready_to_start=True)
+    assert not note.judged
+
+    session.motion.record_input(
+        NoteKind.FOOT,
+        2,
+        1.04,
+        source="strike",
+        limb="lk",
+    )
+    clock[0] = 1.04
+    session.update(_body(1.20), ready_to_start=True)
+    assert note.judgement == HitQuality.PERFECT
+
+
+def test_timed_camera_input_without_dwell_falls_back_to_hit(monkeypatch):
+    session, clock = _session(monkeypatch)
+    note = session.notes[0]
+
+    clock[0] = 0.95
+    session.update(_body(1.00, lane=1), ready_to_start=True)
+    clock[0] = 0.98
+    session.update(_body(1.03, lane=2), ready_to_start=True)
+    clock[0] = 1.00
+    session.update(BodyState(), ready_to_start=True)
+    assert not note.judged
+
+    clock[0] = 1.21
+    session.update(BodyState(), ready_to_start=True)
+    assert note.judgement == HitQuality.HIT
+    assert not note.timing_quality_ready
+
+
+def test_single_occupancy_sample_is_enough_for_fallback_hit(monkeypatch):
+    session, clock = _session(monkeypatch)
+    note = session.notes[0]
+
+    clock[0] = 1.14
+    session.update(_body(1.00), ready_to_start=True)
+    clock[0] = 1.16
+    session.update(BodyState(), ready_to_start=True)
+
+    assert note.judgement == HitQuality.HIT
+    assert not note.timing_quality_ready
+
+
+def test_separate_short_occupancy_visits_do_not_unlock_timing_quality(monkeypatch):
+    session, clock = _session(monkeypatch)
+    note = session.notes[0]
+
+    clock[0] = 0.90
+    session.update(_body(1.00), ready_to_start=True)
+    clock[0] = 0.96
+    session.update(BodyState(), ready_to_start=True)
+    clock[0] = 1.04
+    session.update(_body(1.10), ready_to_start=True)
+    clock[0] = 1.11
+    session.update(BodyState(), ready_to_start=True)
+    clock[0] = 1.16
+    session.update(BodyState(), ready_to_start=True)
+
+    assert note.judgement == HitQuality.HIT
+    assert not note.timing_quality_ready
 
 
 def test_keyboard_start_request_begins_immediately(monkeypatch):
@@ -314,7 +400,7 @@ def test_session_updates_only_notes_near_current_time(monkeypatch):
 
     session.update(BodyState(timestamp=1.0), ready_to_start=True)
 
-    assert calls == [0.0, 0.05, 0.1]
+    assert calls == pytest.approx([0.0, 0.05, 0.1, 0.15, 0.2])
 
 
 def test_render_note_window_preserves_global_hand_ordinals() -> None:

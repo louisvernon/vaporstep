@@ -170,6 +170,8 @@ class GameNote:
     judgement: HitQuality | None = None
     timing_delta: float | None = None
     last_occupancy_at: float | None = None
+    timing_quality_occupancy_since: float | None = None
+    timing_quality_ready: bool = False
     chain_id: int | None = None
     chain_index: int = 0
     chain_length: int = 1

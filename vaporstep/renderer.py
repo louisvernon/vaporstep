@@ -1123,7 +1123,7 @@ class Renderer(_base.Renderer):
                     continue
                 if note.hit and age > HIT_BRICK_POP_SECONDS:
                     continue
-            elif dt < -_base.HIT_WINDOW_SECONDS:
+            elif dt < -_base.TIMING_QUALITY_CONFIRM_LATE_SECONDS:
                 continue
 
             if note.judged and note.hit:
@@ -1182,7 +1182,7 @@ class Renderer(_base.Renderer):
                     continue
                 if note.hit and age > HIT_BRICK_POP_SECONDS:
                     continue
-            elif dt < -_base.HIT_WINDOW_SECONDS:
+            elif dt < -_base.TIMING_QUALITY_CONFIRM_LATE_SECONDS:
                 continue
 
             progress = self._note_progress(note, song_time, song_beat)
