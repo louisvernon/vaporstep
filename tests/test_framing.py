@@ -147,6 +147,10 @@ def test_framing_warning_draws_full_width_at_physical_screen_edges() -> None:
     assert screen.get_at((1279, 0))[:3] == RED
     assert screen.get_at((0, 719))[:3] == RED
     assert screen.get_at((1279, 719))[:3] == RED
+    assert screen.get_at((640, 7))[:3] != BG
+    assert screen.get_at((640, 712))[:3] != BG
+    assert screen.get_at((640, 8))[:3] == BG
+    assert screen.get_at((640, 711))[:3] == BG
     assert screen.get_at((640, 360))[:3] == BG
 
 

@@ -79,7 +79,7 @@ class Renderer(GameplayRenderer):
         if not warnings.top and not warnings.bottom:
             return
         w, h = self.size
-        glow = (1.0, 0.68, 0.42, 0.24, 0.12)
+        glow = (1.0, 0.78, 0.58, 0.42, 0.30, 0.20, 0.12, 0.06)
         if warnings.top:
             for offset, strength in enumerate(glow):
                 pygame.draw.line(
