@@ -49,11 +49,11 @@ These are gameplay tuning values, not requirements of the stepfile format, and m
 
 Explicit holds/rolls in the source chart are rendered as sustained blocks.
 
-The player hits the head normally, remains in the required lane, and sustains the position through the tail. A brief grace period helps with short cross-steps and tracking occlusions. If a sustain is broken, the remaining block is greyed out and does not reactivate.
+The player hits the start of the note normally, remains in the required lane, and sustains the position through the tail. A brief grace period helps with deliberate short cross-steps and tracking occlusions. If a sustain is broken, the remaining block is greyed out and does not reactivate.
 
 ## Implicit chains
 
-VaporStep can optionally turn repeated identical targets into a sustained phrase. This is intended to avoid requiring an artificial new stomp or hand strike for every note in a dense repeated sequence.
+VaporStep can optionally turn quickly repeated notes targets into a sustained hold. The intent of this was to mitigate situations where notes are too closely packed to accurately get perfects with the webcam sensititivy, however in practice very few note sets are auto converted to holds with this enabled.
 
 Current automatic chain generation requires:
 
