@@ -10,19 +10,49 @@ permissions:
   contents: read
 
 jobs:
-  build-unix:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-latest
-            artifact: VaporStep-Linux-x86_64
-            package: VaporStep-Linux-x86_64.tar.gz
-          - os: macos-latest
-            artifact: VaporStep-macOS-AppleSilicon
-            package: VaporStep-macOS-AppleSilicon.zip
+  build-linux:
+    runs-on: ubuntu-latest
 
-    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: python -m pip install -e ".[build]"
+
+      - name: Run tests
+        run: python -m pytest -q
+
+      - name: Download bundled pose model
+        run: python scripts/fetch_pose_model.py
+
+      - name: Build application
+        run: pyinstaller --noconfirm --clean VaporStep.spec
+
+      - name: Package Linux
+        shell: bash
+        run: |
+          chmod +x dist/VaporStep/VaporStep
+          tar -C dist -czf VaporStep-Linux-x86_64.tar.gz VaporStep
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VaporStep-Linux-x86_64
+          path: VaporStep-Linux-x86_64.tar.gz
+          if-no-files-found: error
+
+  build-macos:
+    if: github.event_name == 'push' || github.ref == 'refs/heads/main'
+    runs-on: macos-latest
+    environment: release-signing
+    permissions:
+      contents: read
 
     steps:
       - uses: actions/checkout@v4
@@ -44,11 +74,9 @@ jobs:
         run: python scripts/fetch_pose_model.py
 
       - name: Build macOS icon
-        if: runner.os == 'macOS'
         run: ./scripts/make_macos_icon.sh
 
       - name: Import macOS signing certificate
-        if: runner.os == 'macOS'
         shell: bash
         env:
           MACOS_CERTIFICATE_BASE64: ${{ secrets.MACOS_CERTIFICATE_BASE64 }}
@@ -86,11 +114,10 @@ jobs:
 
       - name: Build application
         env:
-          VAPORSTEP_CODESIGN_IDENTITY: ${{ runner.os == 'macOS' && vars.MACOS_SIGNING_IDENTITY || '' }}
+          VAPORSTEP_CODESIGN_IDENTITY: ${{ vars.MACOS_SIGNING_IDENTITY }}
         run: pyinstaller --noconfirm --clean VaporStep.spec
 
       - name: Verify macOS signature
-        if: runner.os == 'macOS'
         shell: bash
         run: |
           set -euo pipefail
@@ -98,7 +125,6 @@ jobs:
           codesign -dvvv dist/VaporStep.app
 
       - name: Notarize and staple macOS application
-        if: runner.os == 'macOS'
         shell: bash
         env:
           APPLE_NOTARY_KEY_BASE64: ${{ secrets.APPLE_NOTARY_KEY_BASE64 }}
@@ -131,20 +157,12 @@ jobs:
 
           rm -f "${NOTARY_KEY_PATH}" "${NOTARY_ZIP}"
 
-      - name: Package Linux
-        if: runner.os == 'Linux'
-        shell: bash
-        run: |
-          chmod +x dist/VaporStep/VaporStep
-          tar -C dist -czf "${{ matrix.package }}" VaporStep
-
       - name: Package macOS
-        if: runner.os == 'macOS'
         shell: bash
-        run: ditto -c -k --sequesterRsrc --keepParent dist/VaporStep.app "${{ matrix.package }}"
+        run: ditto -c -k --sequesterRsrc --keepParent dist/VaporStep.app VaporStep-macOS-AppleSilicon.zip
 
       - name: Clean up macOS signing material
-        if: always() && runner.os == 'macOS'
+        if: always()
         shell: bash
         run: |
           security delete-keychain "${RUNNER_TEMP}/vaporstep-signing.keychain-db" >/dev/null 2>&1 || true
@@ -155,8 +173,8 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.artifact }}
-          path: ${{ matrix.package }}
+          name: VaporStep-macOS-AppleSilicon
+          path: VaporStep-macOS-AppleSilicon.zip
           if-no-files-found: error
 
   build-windows:
@@ -327,7 +345,7 @@ jobs:
 
   release:
     if: startsWith(github.ref, 'refs/tags/')
-    needs: [build-unix, build-windows]
+    needs: [build-linux, build-macos, build-windows]
     runs-on: ubuntu-latest
     permissions:
       contents: write
