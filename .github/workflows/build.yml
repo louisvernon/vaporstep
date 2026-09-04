@@ -160,7 +160,16 @@ jobs:
           if-no-files-found: error
 
   build-windows:
+    if: github.event_name == 'push' || github.ref == 'refs/heads/main'
     runs-on: windows-2025
+    environment: release-signing
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      ARTIFACT_SIGNING_ENDPOINT: ${{ vars.ARTIFACT_SIGNING_ENDPOINT }}
+      ARTIFACT_SIGNING_ACCOUNT: ${{ vars.ARTIFACT_SIGNING_ACCOUNT }}
+      ARTIFACT_SIGNING_PROFILE: ${{ vars.ARTIFACT_SIGNING_PROFILE }}
 
     steps:
       - uses: actions/checkout@v4
@@ -195,6 +204,36 @@ jobs:
       - name: Build application folder
         run: pyinstaller --noconfirm --clean VaporStep.spec
 
+      - name: Sign in to Azure with GitHub OIDC
+        uses: azure/login@v3
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Install Artifact Signing client tools
+        shell: pwsh
+        run: |
+          $ProgressPreference = 'SilentlyContinue'
+          $msi = Join-Path $env:RUNNER_TEMP 'ArtifactSigningClientTools.msi'
+          Invoke-WebRequest `
+            -Uri 'https://download.microsoft.com/download/70ad2c3b-761f-4aa9-a9de-e7405aa2b4c1/ArtifactSigningClientTools.msi' `
+            -OutFile $msi
+          $process = Start-Process msiexec.exe -Wait -PassThru -ArgumentList @(
+            '/I',
+            $msi,
+            '/quiet',
+            '/norestart'
+          )
+          if ($process.ExitCode -ne 0) {
+            throw "Artifact Signing Client Tools installer failed with exit code $($process.ExitCode)."
+          }
+          Remove-Item $msi -Force
+
+      - name: Sign VaporStep executable
+        shell: pwsh
+        run: .\scripts\windows_sign.ps1 .\dist\VaporStep\VaporStep.exe
+
       - name: Install Inno Setup 6.7.1
         shell: pwsh
         run: |
@@ -213,7 +252,7 @@ jobs:
             -DestinationPath VaporStep-Windows-x86_64-Portable.zip `
             -CompressionLevel Optimal
 
-      - name: Build Windows installer
+      - name: Build signed Windows installer
         shell: pwsh
         run: |
           $rawVersion = python -c "from vaporstep import __version__; print(__version__.split('+', 1)[0])"
@@ -224,6 +263,7 @@ jobs:
           $numericVersion = "$displayVersion.0"
           $sourceDir = (Resolve-Path dist\VaporStep).Path
           $outputDir = (Resolve-Path .).Path
+          $signScript = (Resolve-Path scripts\windows_sign.ps1).Path
           $iscc = (Get-Command iscc.exe -ErrorAction SilentlyContinue).Source
           if (-not $iscc) {
             $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
@@ -231,14 +271,38 @@ jobs:
           if (-not (Test-Path $iscc)) {
             throw "Inno Setup compiler was not found."
           }
+
+          $signToolCommand = "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File `$q$signScript`$q `$f"
           & $iscc `
             "/DAppVersion=$displayVersion" `
             "/DAppNumericVersion=$numericVersion" `
             "/DSourceDir=$sourceDir" `
             "/DOutputDir=$outputDir" `
+            "/DSignWindows" `
+            "/SArtifactSigning=$signToolCommand" `
             installer\windows\VaporStep.iss
           if ($LASTEXITCODE -ne 0) {
             throw "Inno Setup failed with exit code $LASTEXITCODE."
+          }
+
+      - name: Verify Windows signatures
+        shell: pwsh
+        run: |
+          $sdkBin = "${env:ProgramFiles(x86)}\Windows Kits\10\bin"
+          $signtool = Get-ChildItem -Path "$sdkBin\*\x64\signtool.exe" -File -ErrorAction Stop |
+            Sort-Object -Property @{ Expression = {
+              try { [version]$_.Directory.Parent.Name } catch { [version]'0.0' }
+            } } -Descending |
+            Select-Object -First 1 -ExpandProperty FullName
+
+          @(
+            "dist\VaporStep\VaporStep.exe",
+            "VaporStep-Windows-x86_64-Setup.exe"
+          ) | ForEach-Object {
+            & $signtool verify /pa /all /v $_
+            if ($LASTEXITCODE -ne 0) {
+              throw "Authenticode verification failed for '$_'."
+            }
           }
 
       - name: Write Windows checksums
