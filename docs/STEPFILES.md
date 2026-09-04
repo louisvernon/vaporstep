@@ -49,7 +49,7 @@ These are gameplay tuning values, not requirements of the stepfile format, and m
 
 Explicit holds/rolls in the source chart are rendered as sustained blocks.
 
-The player hits the head normally, remains in the required lane, and sustains the position through the tail. Explicit holds currently tolerate about **300 ms** away from the lane before breaking, which helps with short cross-steps and brief tracking occlusions. If a sustain is broken, the remaining block is greyed out and does not reactivate.
+The player hits the head normally, remains in the required lane, and sustains the position through the tail. A brief grace period helps with short cross-steps and tracking occlusions. If a sustain is broken, the remaining block is greyed out and does not reactivate.
 
 ## Implicit chains
 
@@ -63,13 +63,12 @@ Current automatic chain generation requires:
 
 The timing judgment on the chain head carries through the active phrase. If the chain is broken, the remaining portion stays visible but inactive.
 
-Implicit chains have three pre-song modes:
+Implicit chains have two pre-song modes:
 
-- **BLOCKS** — show generated sustained blocks;
-- **BLOCKS + NOTES** — show the block and the original source notes, useful when authoring/debugging charts;
+- **ON** — replace eligible repeated targets with generated sustained blocks;
 - **OFF** — disable non-hold implicit chains.
 
-Explicit source-chart holds remain active in every mode.
+Explicit source-chart holds remain active in both modes.
 
 ## BPM and chart timing
 
@@ -90,7 +89,7 @@ A few practical guidelines:
 - Use `dance-single` for conventional four-column material that VaporStep can reinterpret automatically.
 - Use `ds3ddx-single` when you want explicit control over hand and foot channels.
 - Use source holds when you explicitly want the player to sustain a position.
-- Test dense repeated passages with **BLOCKS + NOTES** to see how implicit chains are being inferred.
+- Toggle Virtual Holds on and off when testing dense repeated passages to compare inferred sustained phrases with the original notes.
 - Avoid designing simultaneous targets that require more limbs than a player can reasonably keep active.
 
 Compatibility will continue to evolve, so charts intended specifically for VaporStep should be tested against the version you plan to distribute with them.
