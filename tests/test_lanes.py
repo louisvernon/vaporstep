@@ -1,5 +1,6 @@
 import unittest
 
+from vaporstep.config import LOWER_BODY_ANKLE_BLEND
 from vaporstep.lanes import (
     HystereticLaneResolver,
     confidence_weight,
@@ -110,19 +111,20 @@ def test_confidence_weight_is_smooth_and_bounded():
 
 
 def test_lower_leg_control_uses_full_configured_blend_at_good_confidence():
+    assert LOWER_BODY_ANKLE_BLEND == 0.95
     x, y, weight = lower_leg_control_position(
         0.40,
         0.66,
         0.34,
         0.88,
         ankle_confidence=0.90,
-        ankle_blend=0.45,
+        ankle_blend=LOWER_BODY_ANKLE_BLEND,
         confidence_low=0.25,
         confidence_high=0.70,
     )
-    assert abs(weight - 0.45) < 1e-9
-    assert abs(x - (0.40 + (0.34 - 0.40) * 0.45)) < 1e-9
-    assert abs(y - (0.66 + (0.88 - 0.66) * 0.45)) < 1e-9
+    assert abs(weight - 0.95) < 1e-9
+    assert abs(x - (0.40 + (0.34 - 0.40) * 0.95)) < 1e-9
+    assert abs(y - (0.66 + (0.88 - 0.66) * 0.95)) < 1e-9
 
 
 def test_lower_leg_control_fades_by_confidence_not_camera_edge():

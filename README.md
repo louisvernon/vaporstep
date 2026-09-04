@@ -10,7 +10,7 @@ VaporStep has out of the box support for StepMania style step/sim files, so you 
   <img width="18%" alt="VaporStep-Menu" src="https://github.com/user-attachments/assets/60a93ae6-bc3a-44f0-a612-09ffaa0600ee" />
   <img width="18%" alt="VaporStep-SongList" src="https://github.com/user-attachments/assets/57099977-4e1e-48ee-a4dc-2480ababdc80" />
   <img width="18%" alt="VaporStep-Play" src="https://github.com/user-attachments/assets/f3e05618-25f6-443a-aba8-9bf2c0dfbc71" />
-  <img width="18%" alt="VaportStep-ResultsScreen" src="https://github.com/user-attachments/assets/814d120d-3d85-4f69-99ab-0fa5e3d2408a" />
+  <img width="18%" alt="VaporStep-ResultsScreen" src="https://github.com/user-attachments/assets/814d120d-3d85-4f69-99ab-0fa5e3d2408a" />
   <img width="18%" alt="VaporStep-Stats" src="https://github.com/user-attachments/assets/377e4975-36be-4096-ad38-907b7a804ee5" />
 </p>
 
@@ -64,6 +64,8 @@ StepMania, Dance Super Station and related names are referenced only to describe
 ## Keyboard play
 
 Keyboard input is always available, including while a camera is active. The hand lanes use **A S D F** and the foot lanes use **J K L ;** from left to right. Press any lane key to start a song, tap for timed notes, and hold the corresponding key for sustained notes. To play without starting a camera, press Down past camera 0 in **Calibration** and select **Camera Off (Keyboard)**.
+
+Press **F3** during calibration or gameplay to cycle the live performance overlay between off, basic and detailed views.
 
 ## Health & Safety
 
