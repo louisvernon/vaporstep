@@ -48,7 +48,6 @@ jobs:
           if-no-files-found: error
 
   build-macos:
-    if: github.event_name == 'push' || github.ref == 'refs/heads/main'
     runs-on: macos-latest
     environment: release-signing
     permissions:
@@ -178,7 +177,6 @@ jobs:
           if-no-files-found: error
 
   build-windows:
-    if: github.event_name == 'push' || github.ref == 'refs/heads/main'
     runs-on: windows-2025
     environment: release-signing
     permissions:
