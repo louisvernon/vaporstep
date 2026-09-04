@@ -1,11 +1,22 @@
 from __future__ import annotations
 
 import math
+import time
 
 import pygame
 
-from .domain import PoseFigure
-from .renderer import BG, CYAN, MAGENTA, PURPLE, WHITE, Renderer as GameplayRenderer, _blend
+from .domain import BodyState, PoseFigure
+from .framing import FramingMonitor, FramingWarnings
+from .renderer import (
+    BG,
+    CYAN,
+    MAGENTA,
+    PURPLE,
+    RED,
+    WHITE,
+    Renderer as GameplayRenderer,
+    _blend,
+)
 
 
 CHARACTER_CYAN = _blend(BG, CYAN, 0.52)
@@ -24,6 +35,8 @@ class Renderer(GameplayRenderer):
         self._character_last_time: float | None = None
         self._character_hair_sway = 0.0
         self._character_hair_velocity = 0.0
+        self._framing_monitor = FramingMonitor()
+        self._framing_running = False
 
     def reset_game_effects(self) -> None:
         super().reset_game_effects()
@@ -31,6 +44,59 @@ class Renderer(GameplayRenderer):
         self._character_last_time = None
         self._character_hair_sway = 0.0
         self._character_hair_velocity = 0.0
+        self._framing_monitor.reset()
+        self._framing_running = False
+
+    def draw(self, body: BodyState, *args, **kwargs) -> None:
+        running = bool(kwargs.get("running", False))
+        framing_active = running and kwargs.get("stats") is not None
+        hands_enabled = bool(kwargs.get("hand_enabled", True))
+        feet_enabled = bool(kwargs.get("foot_enabled", True))
+        show_body_markers = bool(kwargs.get("show_body_markers", True))
+        performance_state = str(kwargs.get("performance_state", "ok"))
+
+        if framing_active and not self._framing_running:
+            self._framing_monitor.start(
+                body,
+                hands_enabled=hands_enabled,
+                feet_enabled=feet_enabled,
+            )
+
+        warnings = FramingWarnings()
+        if framing_active and show_body_markers and performance_state != "failed":
+            warnings = self._framing_monitor.update(
+                body,
+                now=time.monotonic(),
+                hands_enabled=hands_enabled,
+                feet_enabled=feet_enabled,
+            )
+
+        super().draw(body, *args, **kwargs)
+        self._draw_framing_warning(warnings)
+        self._framing_running = framing_active
+
+    def _draw_framing_warning(self, warnings: FramingWarnings) -> None:
+        if not warnings.top and not warnings.bottom:
+            return
+        w, h = self.size
+        glow = (1.0, 0.68, 0.42, 0.24, 0.12)
+        if warnings.top:
+            for offset, strength in enumerate(glow):
+                pygame.draw.line(
+                    self.screen,
+                    _blend(BG, RED, strength),
+                    (0, offset),
+                    (w - 1, offset),
+                )
+        if warnings.bottom:
+            for offset, strength in enumerate(glow):
+                y = h - 1 - offset
+                pygame.draw.line(
+                    self.screen,
+                    _blend(BG, RED, strength),
+                    (0, y),
+                    (w - 1, y),
+                )
 
     def _draw_pose_figure(self, figure: PoseFigure) -> None:
         self._draw_character_figure(figure)
