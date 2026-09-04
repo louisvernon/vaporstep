@@ -545,6 +545,7 @@ class Renderer:
         chain_mode: ChainMode = ChainMode.BLOCKS,
         recording_enabled: bool = False,
         note_travel_speed: float = 1.0,
+        preview_elapsed: float | None = None,
     ) -> None:
         self.screen.fill(BG)
         now = pygame.time.get_ticks() / 1000.0

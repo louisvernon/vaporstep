@@ -27,6 +27,43 @@ from .renderer import (
 
 
 _installed = False
+_METADATA_SCROLL_PX_PER_SECOND = 42.0
+
+
+def _metadata_scroll_offset(
+    text_width: int,
+    viewport_width: int,
+    playback_elapsed: float | None,
+) -> int:
+    """Scroll overflowing selected metadata once, then hold at its far edge."""
+    overflow = max(0, int(text_width) - max(0, int(viewport_width)))
+    if overflow == 0 or playback_elapsed is None:
+        return 0
+    return min(overflow, int(max(0.0, playback_elapsed) * _METADATA_SCROLL_PX_PER_SECOND))
+
+
+def _blit_metadata(
+    renderer: Renderer,
+    surface: pygame.Surface,
+    viewport: pygame.Rect,
+    *,
+    center_y: int,
+    playback_elapsed: float | None,
+) -> None:
+    old_clip = renderer.screen.get_clip()
+    renderer.screen.set_clip(old_clip.clip(viewport))
+    try:
+        offset = _metadata_scroll_offset(
+            surface.get_width(),
+            viewport.width,
+            playback_elapsed,
+        )
+        renderer.screen.blit(
+            surface,
+            surface.get_rect(midleft=(viewport.left - offset, center_y)),
+        )
+    finally:
+        renderer.screen.set_clip(old_clip)
 
 
 def _symbol_font(renderer: Renderer) -> SymbolFont:
@@ -98,6 +135,7 @@ def _draw_song_menu(
     chain_mode=ChainMode.BLOCKS,
     recording_enabled=False,
     note_travel_speed=1.0,
+    preview_elapsed=None,
 ) -> None:
     self.screen.fill(BG)
     now = pygame.time.get_ticks() / 1000.0
@@ -157,6 +195,7 @@ def _draw_song_menu(
     favorite_x = max(70, w // 2 - 282)
     text_x = max(92, w // 2 - 260)
     artist_x = max(26, w // 2 + 115)
+    metadata_right = w // 2 + 360
 
     if menu.letter_page is not None:
         plate = pygame.Rect(28, center_y - 61, 118, 122)
@@ -197,10 +236,35 @@ def _draw_song_menu(
                     [(cx, cy - 5), (cx + 5, cy), (cx, cy + 5), (cx - 5, cy)],
                 )
 
+            row_preview_elapsed = preview_elapsed if selected else None
+            title_viewport = pygame.Rect(
+                text_x,
+                y - 5,
+                max(1, artist_x - text_x - 24),
+                36,
+            )
+            artist_viewport = pygame.Rect(
+                artist_x,
+                y - 5,
+                max(1, metadata_right - artist_x),
+                36,
+            )
             song_text = title_font.render(song.display_title, True, color)
-            self.screen.blit(song_text, song_text.get_rect(midleft=(text_x, y + 13)))
+            _blit_metadata(
+                self,
+                song_text,
+                title_viewport,
+                center_y=y + 13,
+                playback_elapsed=row_preview_elapsed,
+            )
             artist = artist_font.render(song.artist or "Unknown artist", True, artist_color)
-            self.screen.blit(artist, artist.get_rect(midleft=(artist_x, y + 13)))
+            _blit_metadata(
+                self,
+                artist,
+                artist_viewport,
+                center_y=y + 13,
+                playback_elapsed=row_preview_elapsed,
+            )
     finally:
         self.screen.set_clip(old_clip)
 

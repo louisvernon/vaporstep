@@ -1412,6 +1412,7 @@ def main(argv: list[str] | None = None) -> int:
                     chain_mode=chain_mode,
                     recording_enabled=record_play_enabled,
                     note_travel_speed=note_travel_speed,
+                    preview_elapsed=preview.playback_elapsed(menu.song, now),
                 )
                 draw_profile_badge(renderer, active_profile)
                 pygame.display.flip()
