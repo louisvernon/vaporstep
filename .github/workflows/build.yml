@@ -12,6 +12,10 @@ permissions:
 jobs:
   build-linux:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
 
     steps:
       - uses: actions/checkout@v4
@@ -40,6 +44,12 @@ jobs:
         run: |
           chmod +x dist/VaporStep/VaporStep
           tar -C dist -czf VaporStep-Linux-x86_64.tar.gz VaporStep
+
+      - name: Attest Linux artifact provenance
+        if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
+        uses: actions/attest@v4
+        with:
+          subject-path: VaporStep-Linux-x86_64.tar.gz
 
       - uses: actions/upload-artifact@v4
         with:
