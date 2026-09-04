@@ -23,6 +23,7 @@ class SongPreviewPlayer:
     _changed_at: float = 0.0
     _playing_key: str | None = None
     _stop_at: float | None = None
+    _started_at: float | None = None
 
     @staticmethod
     def _key(song: SongInfo | None) -> str | None:
@@ -39,6 +40,7 @@ class SongPreviewPlayer:
             pass
         self._playing_key = None
         self._stop_at = None
+        self._started_at = None
         if reset_selection:
             self._desired_key = None
             self._desired_song = None
@@ -74,7 +76,15 @@ class SongPreviewPlayer:
                 # from the beginning is still preferable to no preview.
                 pygame.mixer.music.play()
             self._playing_key = key
+            self._started_at = now
             self._stop_at = now + max(3.0, song.sample_length)
         except Exception:
             self._playing_key = None
+            self._started_at = None
             self._stop_at = None
+
+    def playback_elapsed(self, song: SongInfo | None, now: float) -> float | None:
+        """Return elapsed preview time only while this song is actually playing."""
+        if self._playing_key != self._key(song) or self._started_at is None:
+            return None
+        return max(0.0, float(now) - self._started_at)
