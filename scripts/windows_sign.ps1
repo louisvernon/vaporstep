@@ -18,9 +18,9 @@ function Get-RequiredEnvironmentVariable {
 }
 
 $target = (Resolve-Path -LiteralPath $Path).Path
-$endpoint = Get-RequiredEnvironmentVariable "ARTIFACT_SIGNING_ENDPOINT"
-$account = Get-RequiredEnvironmentVariable "ARTIFACT_SIGNING_ACCOUNT"
-$profile = Get-RequiredEnvironmentVariable "ARTIFACT_SIGNING_PROFILE"
+$endpoint = Get-RequiredEnvironmentVariable "AZURE_ARTIFACT_SIGNING_ENDPOINT"
+$account = Get-RequiredEnvironmentVariable "AZURE_ARTIFACT_SIGNING_ACCOUNT"
+$profile = Get-RequiredEnvironmentVariable "AZURE_ARTIFACT_SIGNING_PROFILE"
 
 $programFilesX86 = [Environment]::GetEnvironmentVariable("ProgramFiles(x86)")
 if ([string]::IsNullOrWhiteSpace($programFilesX86)) {
