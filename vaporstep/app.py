@@ -61,10 +61,12 @@ from .character_renderer import Renderer
 from .resources import resource_path
 from .session import GameSession
 from .settings import (
+    AUDIO_SYNC_STEP_MS,
     HORIZONTAL_REACH_STEP,
     PLAYER_VISUALS,
     PRIVACY_NOTICE_VERSION,
     SettingsStore,
+    clamp_audio_sync_ms,
     clamp_horizontal_reach,
     normalize_player_visual,
 )
@@ -211,6 +213,18 @@ def _profile_toggle_requested(mode: str, event) -> bool:
 
 def _next_player_visual(value: object) -> str:
     return "character" if normalize_player_visual(value) == "silhouette" else "silhouette"
+
+
+def _audio_sync_adjustment_for_event(event) -> int:
+    """Return the requested signed note-delay adjustment for +/- keys."""
+    if event.type != pygame.KEYDOWN:
+        return 0
+    typed = getattr(event, "unicode", "")
+    if typed == "+" or event.key in (pygame.K_PLUS, pygame.K_EQUALS, pygame.K_KP_PLUS):
+        return AUDIO_SYNC_STEP_MS
+    if typed == "-" or event.key in (pygame.K_MINUS, pygame.K_KP_MINUS):
+        return -AUDIO_SYNC_STEP_MS
+    return 0
 
 
 def _load_pose_components():
@@ -616,7 +630,14 @@ def main(argv: list[str] | None = None) -> int:
         mode = "home"
     main_index = 0
     folder_browser: DirectoryBrowser | None = None
-    session = GameSession(demo_notes=make_demo_notes()) if args.demo else None
+    session = (
+        GameSession(
+            demo_notes=make_demo_notes(),
+            audio_sync_ms=settings_store.settings.audio_sync_ms,
+        )
+        if args.demo
+        else None
+    )
     result_record = ChartRecord()
     result_new_high = False
     result_failed = False
@@ -733,7 +754,10 @@ def main(argv: list[str] | None = None) -> int:
     runtime_profiler = RuntimeProfiler()
     frame_rate = AdaptiveFrameRate(high_fps=TARGET_FPS, low_fps=30)
     running = True
-    calibration_session = GameSession(demo_notes=make_demo_notes())
+    calibration_session = GameSession(
+        demo_notes=make_demo_notes(),
+        audio_sync_ms=settings_store.settings.audio_sync_ms,
+    )
     calibration_last_beat: int | None = None
 
     def record_runtime_frame(
@@ -821,6 +845,7 @@ def main(argv: list[str] | None = None) -> int:
                 best_score=record.score,
                 chain_mode=chain_mode,
                 note_travel_speed=note_travel_speed,
+                audio_sync_ms=settings_store.settings.audio_sync_ms,
             )
             reset_activity_run()
             restart_camera()
@@ -1059,7 +1084,15 @@ def main(argv: list[str] | None = None) -> int:
                     if _route_keyboard_press(calibration_session, keyboard_press):
                         calibration_start_requested = True
                     if event.type == pygame.KEYDOWN:
-                        if event.key == pygame.K_ESCAPE:
+                        audio_sync_adjustment = _audio_sync_adjustment_for_event(event)
+                        if audio_sync_adjustment:
+                            settings_store.settings.audio_sync_ms = clamp_audio_sync_ms(
+                                settings_store.settings.audio_sync_ms + audio_sync_adjustment
+                            )
+                            calibration_session.set_audio_sync_ms(
+                                settings_store.settings.audio_sync_ms
+                            )
+                        elif event.key == pygame.K_ESCAPE:
                             save_profile_preferences()
                             _safe_settings_save(settings_store)
                             calibration_session.stop()
@@ -1514,7 +1547,7 @@ def main(argv: list[str] | None = None) -> int:
                     calibration_session.beat_pulse() if calibration_session.running else (0.0, False)
                 )
                 if calibration_session.running:
-                    beat_index = int(math.floor(calibration_session.beat_position))
+                    beat_index = int(math.floor(calibration_session.audio_time * 2.0))
                     if beat_index != calibration_last_beat:
                         gameplay_sounds.play_calibration_beat(beat_index=beat_index % 4)
                         calibration_last_beat = beat_index
@@ -1570,6 +1603,7 @@ def main(argv: list[str] | None = None) -> int:
                     camera_status(),
                     settings_store.settings.player_visual,
                     inference_percent=_inference_completion_percent(pose_snapshot),
+                    audio_sync_ms=settings_store.settings.audio_sync_ms,
                 )
                 draw_lower_body_tracking_overlay(renderer, body)
                 render_ms = (time.perf_counter() - render_started) * 1000.0

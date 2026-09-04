@@ -1,7 +1,7 @@
 import pygame
 import pytest
 
-from vaporstep.app import _route_keyboard_press
+from vaporstep.app import _audio_sync_adjustment_for_event, _route_keyboard_press
 from vaporstep.demo import make_demo_notes
 from vaporstep.domain import BodyState, GameNote, NoteKind
 from vaporstep.keyboard_input import HAND_KEYS, FOOT_KEYS, KeyboardBodyInput
@@ -51,3 +51,19 @@ def test_running_session_routes_keyboard_press_as_gameplay(monkeypatch):
     assert not _route_keyboard_press(session, (NoteKind.FOOT, 2))
     assert len(session.recent_motion_events) == 1
     assert session.recent_motion_events[0].lane == 2
+
+
+@pytest.mark.parametrize(
+    ("key", "unicode", "expected"),
+    (
+        (pygame.K_EQUALS, "+", 5),
+        (pygame.K_KP_PLUS, "+", 5),
+        (pygame.K_MINUS, "-", -5),
+        (pygame.K_KP_MINUS, "-", -5),
+        (pygame.K_LEFT, "", 0),
+    ),
+)
+def test_calibration_audio_sync_keys(key, unicode, expected):
+    event = pygame.event.Event(pygame.KEYDOWN, key=key, unicode=unicode)
+
+    assert _audio_sync_adjustment_for_event(event) == expected

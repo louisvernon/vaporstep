@@ -12,6 +12,9 @@ from .user_paths import settings_path, songs_dir
 MIN_HORIZONTAL_REACH = 1.00
 MAX_HORIZONTAL_REACH = 2.00
 HORIZONTAL_REACH_STEP = 0.05
+MIN_AUDIO_SYNC_MS = -250
+MAX_AUDIO_SYNC_MS = 250
+AUDIO_SYNC_STEP_MS = 5
 PRIVACY_NOTICE_VERSION = 2
 PLAYER_VISUALS = ("silhouette", "character")
 
@@ -37,6 +40,11 @@ def normalize_player_visual(value: object) -> str:
     return visual if visual in PLAYER_VISUALS else "silhouette"
 
 
+def clamp_audio_sync_ms(value: int | float) -> int:
+    """Clamp the signed note delay used to compensate for audio output latency."""
+    return max(MIN_AUDIO_SYNC_MS, min(MAX_AUDIO_SYNC_MS, int(round(float(value)))))
+
+
 @dataclass
 class AppSettings:
     song_folder: str = field(default_factory=default_song_folder)
@@ -44,6 +52,7 @@ class AppSettings:
     camera_enabled: bool = True
     horizontal_reach: float = PLAYER_HORIZONTAL_ZOOM
     player_visual: str = "silhouette"
+    audio_sync_ms: int = 0
     favorite_song_keys: list[str] = field(default_factory=list)
     played_song_keys: list[str] = field(default_factory=list)
     last_song_key: str = ""
@@ -68,6 +77,7 @@ class AppSettings:
             camera_enabled=bool(self.camera_enabled),
             horizontal_reach=clamp_horizontal_reach(self.horizontal_reach),
             player_visual=normalize_player_visual(self.player_visual),
+            audio_sync_ms=clamp_audio_sync_ms(self.audio_sync_ms),
             favorite_song_keys=clean_keys(self.favorite_song_keys),
             played_song_keys=clean_keys(self.played_song_keys),
             last_song_key=str(self.last_song_key or ""),
@@ -106,6 +116,7 @@ class SettingsStore:
                 camera_enabled=bool(raw.get("camera_enabled", True)),
                 horizontal_reach=float(raw.get("horizontal_reach", PLAYER_HORIZONTAL_ZOOM)),
                 player_visual=normalize_player_visual(raw.get("player_visual", "silhouette")),
+                audio_sync_ms=clamp_audio_sync_ms(raw.get("audio_sync_ms", 0)),
                 favorite_song_keys=raw.get("favorite_song_keys", []),
                 played_song_keys=raw.get("played_song_keys", []),
                 last_song_key=str(raw.get("last_song_key", "") or ""),

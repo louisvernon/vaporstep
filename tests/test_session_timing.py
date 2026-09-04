@@ -320,6 +320,52 @@ def test_session_pre_roll_delays_chart_zero_until_lead_in_finishes(monkeypatch):
     assert session.time == 0.0
 
 
+def test_positive_audio_sync_starts_audio_early_and_delays_notes(monkeypatch):
+    import vaporstep.session as session_module
+
+    clock = [100.0]
+    monkeypatch.setattr(session_module.time, "monotonic", lambda: clock[0])
+    session = GameSession(
+        demo_notes=[GameNote(time=2.0, lanes=(2,), kind=NoteKind.FOOT)],
+        audio_sync_ms=50,
+    )
+
+    session._start(clock[0])
+    assert session.time == pytest.approx(-2.0)
+
+    clock[0] = 101.94
+    session.update(BodyState(), ready_to_start=True)
+    assert not session.audio_started
+
+    clock[0] = 101.95
+    session.update(BodyState(), ready_to_start=True)
+    assert session.audio_started
+    assert session.time == pytest.approx(-0.05)
+
+    clock[0] = 102.0
+    assert session.time == pytest.approx(0.0)
+
+
+def test_live_audio_sync_moves_notes_without_moving_audio_clock(monkeypatch):
+    import vaporstep.session as session_module
+
+    clock = [101.0]
+    monkeypatch.setattr(session_module.time, "monotonic", lambda: clock[0])
+    session = GameSession(demo_notes=[])
+    session.running = True
+    session.audio_started = True
+    session.audio_loaded = False
+    session.started = 100.0
+
+    assert session.audio_time == pytest.approx(1.0)
+    assert session.time == pytest.approx(1.0)
+
+    session.set_audio_sync_ms(50)
+
+    assert session.audio_time == pytest.approx(1.0)
+    assert session.time == pytest.approx(0.95)
+
+
 def test_session_loads_music_at_pre_roll_start_and_only_plays_at_chart_zero(monkeypatch):
     from pathlib import Path
 

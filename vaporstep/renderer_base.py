@@ -497,21 +497,31 @@ class Renderer:
         camera_status: str,
         player_visual: str = "silhouette",
         inference_percent: int | None = None,
+        audio_sync_ms: int = 0,
     ) -> None:
         w, h = self.size
-        panel = pygame.Surface((min(660, w - 40), 108), pygame.SRCALPHA)
-        panel.fill((*BG, 210))
-        self.screen.blit(panel, (20, h - 128))
         camera_label = "OFF (KEYBOARD)" if camera_index is None else str(camera_index)
+        if audio_sync_ms > 0:
+            sync_label = f"+{audio_sync_ms} ms  NOTES LATER"
+        elif audio_sync_ms < 0:
+            sync_label = f"{audio_sync_ms} ms  NOTES EARLIER"
+        else:
+            sync_label = "0 ms"
         line1 = self.font.render(
-            f"CAMERA  {camera_label}      REACH  {horizontal_reach:.2f}x", True, WHITE
+            f"CAMERA  {camera_label}      REACH  {horizontal_reach:.2f}x      AUDIO SYNC  {sync_label}",
+            True,
+            WHITE,
         )
-        self.screen.blit(line1, (38, h - 118))
         line2 = self.small_font.render(
-            f"←/→ reach    ↑/↓ camera    V visual ({player_visual.upper()})    Esc save & return",
+            f"←/→ reach    ↑/↓ camera    −/+ audio sync    V visual ({player_visual.upper()})    Esc save & return",
             True,
             CYAN,
         )
+        panel_width = min(w - 40, max(660, line1.get_width() + 36, line2.get_width() + 36))
+        panel = pygame.Surface((panel_width, 108), pygame.SRCALPHA)
+        panel.fill((*BG, 210))
+        self.screen.blit(panel, (20, h - 128))
+        self.screen.blit(line1, (38, h - 118))
         self.screen.blit(line2, (38, h - 88))
         low_inference = (
             inference_percent is not None

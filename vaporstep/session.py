@@ -85,6 +85,7 @@ class GameSession:
         best_score: int = 0,
         chain_mode: ChainMode = ChainMode.BLOCKS,
         note_travel_speed: float = 1.0,
+        audio_sync_ms: int = 0,
     ) -> None:
         self.chart = chart
         source = chart.notes if chart is not None else tuple(demo_notes)
@@ -97,6 +98,7 @@ class GameSession:
         self.best_score = int(best_score)
         self.chain_mode = ChainMode(chain_mode)
         self.note_travel_speed = max(0.25, float(note_travel_speed))
+        self.audio_sync_seconds = float(audio_sync_ms) / 1000.0
         self._beat_times = tuple(marker.time for marker in chart.beat_markers) if chart is not None else ()
         self._beat_numbers = tuple(marker.beat for marker in chart.beat_markers) if chart is not None else ()
         self.notes: list[GameNote] = []
@@ -113,6 +115,7 @@ class GameSession:
         self.audio_loaded = False
         self.audio_started = False
         self.lead_in_start_time = 0.0
+        self._pre_roll_audio_time = 0.0
         self.audio_error: str | None = None
         self.finished = False
         self.failed = False
@@ -148,6 +151,10 @@ class GameSession:
 
     def set_keyboard_mode(self, enabled: bool) -> None:
         self.keyboard_mode = bool(enabled)
+
+    def set_audio_sync_ms(self, value: int) -> None:
+        """Delay notes by a signed number of milliseconds relative to audio."""
+        self.audio_sync_seconds = float(value) / 1000.0
 
     def register_keyboard_press(self, kind: NoteKind, lane: int) -> MotionEvent | None:
         """Queue one keyboard timing impulse at the current chart time."""
@@ -247,6 +254,7 @@ class GameSession:
         self.audio_loaded = False
         self.audio_started = False
         self.lead_in_start_time = 0.0
+        self._pre_roll_audio_time = 0.0
         self.audio_error = None
         self.finished = False
         self.failed = False
@@ -367,7 +375,7 @@ class GameSession:
         return True
 
     def _start_audio_clock(self, now: float) -> None:
-        """Begin chart time zero and start audio if the chart has music."""
+        """Begin the uncompensated audio clock and start chart music."""
         self.started = now
         self.audio_started = True
         if self.audio_loaded:
@@ -397,9 +405,27 @@ class GameSession:
         self.audio_started = False
         self.audio_error = None
         self.lead_in_start_time = self._compute_lead_in_start_time()
+        # Keep the first visual frame at the normal lead-in time while placing
+        # audio on a separate, uncompensated clock. Positive sync starts audio
+        # early and delays notes; changing sync during calibration moves only
+        # the notes, leaving the drum reference steady.
+        self._pre_roll_audio_time = self.lead_in_start_time + self.audio_sync_seconds
         self._preload_audio()
-        if self.lead_in_start_time >= -1e-6:
+        if self._pre_roll_audio_time >= -1e-6:
             self._start_audio_clock(now)
+
+    @property
+    def audio_time(self) -> float:
+        """Uncompensated playback clock used by music and calibration beats."""
+        if not self.running:
+            return 0.0
+        if not self.audio_started:
+            return self._pre_roll_audio_time + (time.monotonic() - self.started)
+        if self.audio_loaded:
+            pos_ms = pygame.mixer.music.get_pos()
+            if pos_ms >= 0:
+                return pos_ms / 1000.0
+        return time.monotonic() - self.started
 
     @property
     def time(self) -> float:
@@ -407,13 +433,7 @@ class GameSession:
             return self.failed_song_time
         if not self.running:
             return 0.0
-        if not self.audio_started:
-            return self.lead_in_start_time + (time.monotonic() - self.started)
-        if self.audio_loaded:
-            pos_ms = pygame.mixer.music.get_pos()
-            if pos_ms >= 0:
-                return pos_ms / 1000.0
-        return time.monotonic() - self.started
+        return self.audio_time - self.audio_sync_seconds
 
     @property
     def beat_position(self) -> float:
@@ -687,7 +707,7 @@ class GameSession:
             return
 
         t = self.time
-        if not self.audio_started and t >= 0.0:
+        if not self.audio_started and self.audio_time >= 0.0:
             self._start_audio_clock(now)
             t = self.time
         generated = self.motion.update(body, t)

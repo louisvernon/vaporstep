@@ -4,6 +4,7 @@ from pathlib import Path
 from vaporstep.settings import (
     AppSettings,
     SettingsStore,
+    clamp_audio_sync_ms,
     clamp_horizontal_reach,
     normalize_player_visual,
 )
@@ -12,13 +13,19 @@ from vaporstep.settings import (
 def test_settings_round_trip(tmp_path: Path):
     path = tmp_path / "settings.json"
     store = SettingsStore(path)
-    store.settings = AppSettings(song_folder="/music/Songs", camera_index=2, horizontal_reach=1.20)
+    store.settings = AppSettings(
+        song_folder="/music/Songs",
+        camera_index=2,
+        horizontal_reach=1.20,
+        audio_sync_ms=35,
+    )
     store.save()
 
     reloaded = SettingsStore(path)
     assert reloaded.settings.song_folder == "/music/Songs"
     assert reloaded.settings.camera_index == 2
     assert reloaded.settings.horizontal_reach == 1.20
+    assert reloaded.settings.audio_sync_ms == 35
 
 
 def test_keyboard_only_camera_choice_round_trips(tmp_path: Path):
@@ -62,6 +69,12 @@ def test_horizontal_reach_clamps():
     assert clamp_horizontal_reach(1.17) == 1.17
     assert clamp_horizontal_reach(2.0) == 2.0
     assert clamp_horizontal_reach(2.5) == 2.0
+
+
+def test_audio_sync_clamps():
+    assert clamp_audio_sync_ms(-500) == -250
+    assert clamp_audio_sync_ms(35) == 35
+    assert clamp_audio_sync_ms(500) == 250
 
 
 def test_library_preferences_round_trip(tmp_path: Path):
