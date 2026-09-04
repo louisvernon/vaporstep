@@ -27,14 +27,24 @@ if ([string]::IsNullOrWhiteSpace($programFilesX86)) {
     throw "ProgramFiles(x86) is not available."
 }
 
+$programFiles = [Environment]::GetEnvironmentVariable("ProgramFiles")
+$programData = [Environment]::GetEnvironmentVariable("ProgramData")
 $dlibCandidates = @(
+    (Join-Path $programData "Microsoft\MicrosoftTrustedSigningClientTools\Azure.CodeSigning.Dlib.dll"),
+    (Join-Path $programData "Microsoft\ArtifactSigningClientTools\Azure.CodeSigning.Dlib.dll"),
+    (Join-Path $programFilesX86 "Microsoft\ArtifactSigningClientTools\bin\x64\Azure.CodeSigning.Dlib.dll"),
     (Join-Path $programFilesX86 "Microsoft\ArtifactSigningClientTools\bin\Azure.CodeSigning.Dlib.dll"),
-    (Join-Path $programFilesX86 "Microsoft\ArtifactSigningClientTools\bin\x64\Azure.CodeSigning.Dlib.dll")
-)
+    (Join-Path $programFiles "Microsoft\ArtifactSigningClientTools\bin\x64\Azure.CodeSigning.Dlib.dll"),
+    (Join-Path $programFiles "Microsoft\ArtifactSigningClientTools\bin\Azure.CodeSigning.Dlib.dll")
+) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+
 $dlib = $dlibCandidates | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
 if (-not $dlib) {
-    throw "Azure.CodeSigning.Dlib.dll was not found. Install Microsoft Artifact Signing Client Tools first."
+    $searched = $dlibCandidates -join "`n  - "
+    throw "Azure.CodeSigning.Dlib.dll was not found. Searched:`n  - $searched"
 }
+
+Write-Host "Using Artifact Signing dlib: $dlib"
 
 $sdkBin = Join-Path $programFilesX86 "Windows Kits\10\bin"
 $signtoolCandidates = @(Get-ChildItem -Path (Join-Path $sdkBin "*\x64\signtool.exe") -File -ErrorAction SilentlyContinue)
