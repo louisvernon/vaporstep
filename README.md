@@ -49,7 +49,7 @@ The easiest way to use VaporStep is with a packaged build from the project relea
 
 On first launch your operating system may ask for camera access. VaporStep releases the camera whenever you are browsing menus or results and acquires it only for calibration and gameplay. If you later choose a song folder in an operating-system protected location, the OS may separately ask for permission to access it.
 
-macOS releases are signed and notarized. Windows releases are not yet signed and may trigger an operating-system warning.
+macOS releases are signed and notarized. Windows releases are also signed but still may trigger a SmartScreen warning until the app is better known. 
 
 ## Song libraries
 
