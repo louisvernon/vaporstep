@@ -287,6 +287,12 @@ class PoseCameraInput:
                     self._camera_reported_width = 0
                     self._camera_reported_height = 0
                     self._camera_reported_fps = 0.0
+                print(
+                    "Camera mode: "
+                    f"requested {CAMERA_WIDTH}x{CAMERA_HEIGHT}@{CAMERA_FPS}fps; "
+                    f"reported {self._camera_reported_width}x{self._camera_reported_height}"
+                    f"@{self._camera_reported_fps:.1f}fps"
+                )
                 with self._lock:
                     self._snapshot = PoseSnapshot(
                         body=BodyState(),
