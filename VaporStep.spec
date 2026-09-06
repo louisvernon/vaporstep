@@ -74,7 +74,7 @@ for candidate in (
     if candidate.is_file():
         datas.append((str(candidate), "third_party_licenses/Python"))
         break
-model = assets / "pose_landmarker_full.task"
+model = assets / "pose_landmarker_lite.task"
 if model.exists():
     datas.append((str(model), "assets"))
 
