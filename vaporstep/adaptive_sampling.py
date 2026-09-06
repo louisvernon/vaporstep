@@ -10,6 +10,12 @@ FULL_RATE_EXIT_RATIO = 0.90
 SERVICE_EMA_ALPHA = 0.10
 SERVICE_WARMUP_SAMPLES = 12
 EXTRA_MAX_AGE_SECONDS = 0.20
+# Outside scoring windows, keep the protected baseline close to measured
+# sustainable capacity so presentation remains smooth. Inside a scoring window,
+# deliberately lower only the protected baseline so disposable 30 Hz samples can
+# consume the remaining service capacity without risking baseline starvation.
+NORMAL_BASELINE_CAPACITY_RATIO = 0.90
+CRITICAL_BASELINE_CAPACITY_RATIO = 0.60
 
 
 _timing_critical = threading.Event()
@@ -38,10 +44,12 @@ class AdaptiveSamplingPolicy:
     """Choose protected baseline samples and disposable timing-window extras.
 
     The policy begins at full camera rate while it measures complete inference
-    service time. If one serialized landmarker cannot sustainably match the
-    camera, baseline sampling falls toward half of measured capacity, never
-    below 10 Hz unless the measured capacity itself is below 10 Hz. Frames
-    between baseline samples are retained only inside timing-critical windows.
+    service time. Machines that can sustain essentially the full camera rate keep
+    every frame. When capacity is lower, ordinary gameplay keeps a high protected
+    baseline near sustainable throughput. During timing-critical chart windows,
+    only the *protected* baseline is reduced aggressively so spare service slots
+    can be filled by disposable 30 Hz samples. This preserves smooth motion away
+    from notes while reserving priority headroom for denser timing evidence.
     """
 
     def __init__(self, camera_fps: float) -> None:
@@ -65,14 +73,26 @@ class AdaptiveSamplingPolicy:
     def full_rate(self) -> bool:
         return self._full_rate
 
-    @property
-    def baseline_fps(self) -> float:
+    def _baseline_fps(self, *, critical: bool) -> float:
         if self._full_rate or self._service_samples < SERVICE_WARMUP_SAMPLES:
             return self.camera_fps
         capacity = self.capacity_fps
         if capacity < MIN_BASELINE_FPS:
             return max(1.0, capacity)
-        return min(self.camera_fps, max(MIN_BASELINE_FPS, capacity * 0.5))
+        ratio = (
+            CRITICAL_BASELINE_CAPACITY_RATIO
+            if critical
+            else NORMAL_BASELINE_CAPACITY_RATIO
+        )
+        return min(self.camera_fps, max(MIN_BASELINE_FPS, capacity * ratio))
+
+    @property
+    def baseline_fps(self) -> float:
+        """Current ordinary (non-critical) protected baseline target."""
+        return self._baseline_fps(critical=False)
+
+    def baseline_fps_for(self, *, critical: bool) -> float:
+        return self._baseline_fps(critical=bool(critical))
 
     def observe_service(self, service_ms: float) -> None:
         sample = max(0.1, float(service_ms))
@@ -94,7 +114,7 @@ class AdaptiveSamplingPolicy:
 
     def decide(self, captured_at: float, *, critical: bool) -> SamplingDecision:
         captured_at = float(captured_at)
-        baseline_fps = self.baseline_fps
+        baseline_fps = self.baseline_fps_for(critical=critical)
         interval = 1.0 / max(baseline_fps, 1e-6)
         baseline_due = (
             self._full_rate
