@@ -25,7 +25,9 @@ def draw_lower_body_tracking_overlay(renderer, body: BodyState) -> None:
         if not point.visible:
             continue
         pos = renderer._screen_point(point)
-        pygame.draw.circle(renderer.screen, BG, pos, 11)
+        # Keep the marker hollow so calibration diagnostics never hide a note or
+        # lane underneath the player's control point.
+        pygame.draw.circle(renderer.screen, BG, pos, 10, 3)
         pygame.draw.circle(renderer.screen, CYAN, pos, 7, 2)
 
         weight = max(0.0, float(getattr(control, "source_weight", 0.0)))
