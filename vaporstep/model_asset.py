@@ -10,6 +10,9 @@ from .resources import resource_path
 from .user_paths import cache_dir
 
 
+POSE_MODEL_KEY = "pose_landmarker_lite"
+
+
 @dataclass(frozen=True)
 class ModelSpec:
     name: str
@@ -25,7 +28,7 @@ class ModelSpec:
 
 def load_pose_model_spec() -> ModelSpec:
     manifest_path = resource_path("assets/models.json")
-    data = json.loads(manifest_path.read_text(encoding="utf-8"))["pose_landmarker_full"]
+    data = json.loads(manifest_path.read_text(encoding="utf-8"))[POSE_MODEL_KEY]
     return ModelSpec(**data)
 
 
