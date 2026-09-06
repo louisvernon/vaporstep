@@ -8,6 +8,7 @@ from typing import Iterable
 
 import pygame
 
+from .adaptive_sampling import set_timing_critical
 from .audio_fx import GAMEPLAY_MUSIC_VOLUME
 from .chains import HOLD_OCCUPANCY_GRACE_SECONDS
 from .config import (
@@ -194,6 +195,7 @@ class GameSession:
 
     def restart(self) -> None:
         _stop_music()
+        set_timing_critical(False)
         self.notes = fresh_notes(self._source_notes)
         definitions = ()
         if self.chart is not None:
@@ -309,7 +311,21 @@ class GameSession:
 
     def stop(self) -> None:
         _stop_music()
+        set_timing_critical(False)
         self.running = False
+
+    def _pose_sampling_critical(self, t: float) -> bool:
+        """Return whether a camera timing event could still affect scoring."""
+        if not self.running:
+            return False
+        lower_note_time = float(t) - HIT_WINDOW_SECONDS
+        upper_note_time = float(t) + GREAT_WINDOW_SECONDS
+        for note in self._gameplay_notes[self._pending_note_cursor :]:
+            if note.time > upper_note_time:
+                break
+            if not note.judged and note.time >= lower_note_time:
+                return True
+        return False
 
     def _compute_lead_in_start_time(self) -> float:
         """Virtual chart time where the pre-roll should begin.
@@ -610,11 +626,13 @@ class GameSession:
 
         # Hold the failed playfield on screen for a moment before results.
         if self.failed:
+            set_timing_critical(False)
             if self.failed_at is not None and now - self.failed_at >= FAIL_HOLD_SECONDS:
                 self.finished = True
             return
 
         if not self.running:
+            set_timing_critical(False)
             # Keep motion baselines warm while positioning, but deliberately do
             # not emit timing events before the song starts.
             self.motion.update(body, None)
@@ -640,6 +658,7 @@ class GameSession:
         if not self.audio_started and t >= 0.0:
             self._start_audio_clock(now)
             t = self.time
+        set_timing_critical(self._pose_sampling_critical(t))
         generated = self.motion.update(body, t)
         if generated:
             self.recent_motion_events.extend(generated)
@@ -697,6 +716,7 @@ class GameSession:
                 self.failed = True
                 self.failed_at = now
                 self.failed_song_time = t
+                set_timing_critical(False)
                 _stop_music()
                 self.running = False
                 return
