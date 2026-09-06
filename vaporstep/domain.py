@@ -42,6 +42,10 @@ class BodyState:
     supplemental_foot_lanes: frozenset[int] = field(default_factory=frozenset)
     pose_visible: bool = False
     timestamp: float = 0.0
+    # True only for webcam samples whose timestamp is the monotonic time at
+    # which their source camera frame was received. Synthetic/keyboard states
+    # retain the historical timestamp semantics used by tests and demos.
+    timestamp_is_capture: bool = False
 
     @property
     def hand_lanes(self) -> frozenset[int]:
