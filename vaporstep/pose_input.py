@@ -108,6 +108,12 @@ class PoseSnapshot:
     frames_captured: int = 0
     frames_submitted: int = 0
     frames_dropped: int = 0
+    camera_requested_width: int = CAMERA_WIDTH
+    camera_requested_height: int = CAMERA_HEIGHT
+    camera_requested_fps: float = float(CAMERA_FPS)
+    camera_reported_width: int = 0
+    camera_reported_height: int = 0
+    camera_reported_fps: float = 0.0
 
 
 @dataclass
@@ -162,6 +168,9 @@ class PoseCameraInput:
         self._frames_captured = 0
         self._frames_submitted = 0
         self._frames_dropped = 0
+        self._camera_reported_width = 0
+        self._camera_reported_height = 0
+        self._camera_reported_fps = 0.0
         self._inference_busy = threading.Event()
         self._snapshot = PoseSnapshot(body=BodyState())
         self._lower_leg_filters = {
@@ -231,6 +240,9 @@ class PoseCameraInput:
                 frames_captured=self._frames_captured,
                 frames_submitted=self._frames_submitted,
                 frames_dropped=self._frames_dropped,
+                camera_reported_width=self._camera_reported_width,
+                camera_reported_height=self._camera_reported_height,
+                camera_reported_fps=self._camera_reported_fps,
             )
 
     def _open_camera(self):
@@ -267,6 +279,14 @@ class PoseCameraInput:
                 self._capture = cap
                 retry_count = 0
                 failed_reads = 0
+                try:
+                    self._camera_reported_width = int(round(cap.get(cv2.CAP_PROP_FRAME_WIDTH)))
+                    self._camera_reported_height = int(round(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)))
+                    self._camera_reported_fps = float(cap.get(cv2.CAP_PROP_FPS))
+                except Exception:
+                    self._camera_reported_width = 0
+                    self._camera_reported_height = 0
+                    self._camera_reported_fps = 0.0
                 with self._lock:
                     self._snapshot = PoseSnapshot(
                         body=BodyState(),
