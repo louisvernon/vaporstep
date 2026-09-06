@@ -78,6 +78,8 @@ def test_timing_window_keeps_all_camera_frames_eligible_as_extras() -> None:
     baseline_count = sum(decision.keep and decision.baseline for decision in decisions)
     extra_count = sum(decision.keep and not decision.baseline for decision in decisions)
 
+    # Critical sampling deliberately requests all camera frames. Queue pressure,
+    # rather than this policy, decides which optional extras must be discarded.
     assert 14 <= baseline_count <= 16
     assert 14 <= extra_count <= 16
     assert all(decision.keep for decision in decisions)
