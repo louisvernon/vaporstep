@@ -74,7 +74,7 @@ def test_pose_timestamps_remain_strictly_increasing_with_same_millisecond():
     assert later == 1236
 
 
-def test_busy_inference_skips_frame_before_rgb_conversion(monkeypatch):
+def test_busy_inference_buffers_frame_before_rgb_conversion(monkeypatch):
     camera = PoseCameraInput("unused.task", camera_index=0)
 
     class OneFrameCapture:
@@ -99,24 +99,122 @@ def test_busy_inference_skips_frame_before_rgb_conversion(monkeypatch):
     assert conversions == []
     assert snapshot.frames_captured == 1
     assert snapshot.frames_submitted == 0
-    assert snapshot.frames_dropped == 1
+    assert snapshot.frames_dropped == 0
+    assert snapshot.inference_queue_depth == 1
+
+
+def test_new_baseline_keeps_at_most_one_pending_extra():
+    camera = PoseCameraInput("unused.task", camera_index=0)
+    camera._last_baseline_submitted_at = 1.0
+    camera._inference_queue.extend(
+        (
+            pose_input._QueuedFrame(object(), 1.03, False, True),
+            pose_input._QueuedFrame(object(), 1.08, False, True),
+        )
+    )
+
+    camera._thin_extras_before_baseline_locked(1.10)
+
+    assert len(camera._inference_queue) == 1
+    assert camera._inference_queue[0].captured_at == 1.03
+    assert camera._extra_frames_flushed == 1
+
+
+def test_inflight_extra_forces_all_pending_extras_out_before_baseline():
+    camera = PoseCameraInput("unused.task", camera_index=0)
+    camera._inflight_extra = True
+    camera._last_baseline_submitted_at = 1.0
+    camera._inference_queue.extend(
+        (
+            pose_input._QueuedFrame(object(), 1.03, False, True),
+            pose_input._QueuedFrame(object(), 1.06, False, True),
+        )
+    )
+
+    camera._thin_extras_before_baseline_locked(1.10)
+
+    assert len(camera._inference_queue) == 0
+    assert camera._extra_frames_flushed == 2
+
+
+def test_second_queued_baseline_flushes_every_pending_extra():
+    camera = PoseCameraInput("unused.task", camera_index=0)
+    camera._inference_queue.extend(
+        (
+            pose_input._QueuedFrame(object(), 1.00, True, True),
+            pose_input._QueuedFrame(object(), 1.03, False, True),
+            pose_input._QueuedFrame(object(), 1.06, False, True),
+        )
+    )
+
+    queued = camera._queue_frame_locked(
+        pose_input._QueuedFrame(object(), 1.10, True, True)
+    )
+
+    assert queued
+    assert [frame.captured_at for frame in camera._inference_queue] == [1.00, 1.10]
+    assert all(frame.baseline for frame in camera._inference_queue)
+    assert camera._extra_frames_flushed == 2
+    assert camera._frames_dropped == 2
+
+
+def test_new_extra_is_rejected_while_two_baselines_are_queued():
+    camera = PoseCameraInput("unused.task", camera_index=0)
+    camera._inference_queue.extend(
+        (
+            pose_input._QueuedFrame(object(), 1.00, True, True),
+            pose_input._QueuedFrame(object(), 1.10, True, True),
+        )
+    )
+
+    queued = camera._queue_frame_locked(
+        pose_input._QueuedFrame(object(), 1.13, False, True)
+    )
+
+    assert not queued
+    assert [frame.captured_at for frame in camera._inference_queue] == [1.00, 1.10]
+    assert camera._extra_frames_flushed == 1
+    assert camera._frames_dropped == 1
+
+
+def test_queue_age_limit_flushes_stale_baseline_as_well_as_extra():
+    camera = PoseCameraInput("unused.task", camera_index=0)
+    camera._inference_queue.extend(
+        (
+            pose_input._QueuedFrame(object(), 1.00, True, True),
+            pose_input._QueuedFrame(object(), 1.05, False, True),
+            pose_input._QueuedFrame(object(), 1.25, True, True),
+        )
+    )
+
+    camera._prune_stale_frames_locked(1.25)
+
+    assert [frame.captured_at for frame in camera._inference_queue] == [1.05, 1.25]
+    assert camera._baseline_frames_flushed == 1
+    assert camera._extra_frames_flushed == 0
+    assert camera._frames_dropped == 1
 
 
 def test_result_callback_releases_backpressure_gate():
     camera = PoseCameraInput("unused.task", camera_index=0)
     camera._inference_busy.set()
-    camera._inference_started_at = pose_input.time.monotonic()
+    now = pose_input.time.monotonic()
+    camera._inference_started_at = now
+    camera._inference_service_started_at = now
 
     camera._on_result(SimpleNamespace(pose_landmarks=[]), None, 0)
 
     assert not camera._inference_busy.is_set()
     assert camera.snapshot().inference_latency_ms >= 0.0
+    assert camera.snapshot().inference_service_ms >= 0.0
 
 
 def test_result_body_uses_source_capture_timestamp():
     camera = PoseCameraInput("unused.task", camera_index=0)
     camera._inference_busy.set()
-    camera._inference_started_at = pose_input.time.monotonic()
+    now = pose_input.time.monotonic()
+    camera._inference_started_at = now
+    camera._inference_service_started_at = now
     camera._inference_capture_at = 123.456
 
     camera._on_result(SimpleNamespace(pose_landmarks=[]), None, 0)

@@ -70,17 +70,27 @@ def test_f3_cycles_off_basic_detailed_and_applies_in_calibration() -> None:
     assert not _profile_toggle_requested("home", event)
 
 
-def test_basic_profile_lines_show_only_requested_live_counters() -> None:
+def test_basic_profile_lines_distinguish_omitted_and_flushed_frames() -> None:
     profiler = RuntimeProfiler()
     profiler.record(update_ms=1.0, render_ms=20.0, flip_ms=1.0, work_ms=22.0)
     pose = SimpleNamespace(
         frames_captured=100,
-        frames_dropped=25,
+        frames_intentionally_skipped=20,
+        frames_dropped=5,
         frames_submitted=75,
+        extra_frames_submitted=12,
+        extra_frames_flushed=4,
+        baseline_frames_flushed=1,
         capture_fps=30.0,
-        submitted_fps=15.0,
-        pose_fps=10.5,
+        submitted_fps=20.0,
+        pose_fps=19.5,
         inference_latency_ms=67.7,
+        inference_service_ms=45.0,
+        baseline_fps=15.0,
+        inference_capacity_fps=22.2,
+        inference_queue_depth=1,
+        inference_queue_age_ms=32.0,
+        pose_age_ms=84.0,
     )
 
     basic = _profile_lines(
@@ -92,10 +102,12 @@ def test_basic_profile_lines_show_only_requested_live_counters() -> None:
 
     assert basic == (
         "FRAME RATE  actual=29.8fps  target=30fps",
-        "INFERENCE  results=10.5fps  latency=67.7ms  skipped=25 (25%)",
+        "INFERENCE  results=19.5fps  latency=67.7ms  omitted=20%  flushed=5%",
     )
     assert any("MAIN THREAD" in line for line in detailed)
     assert any("CAMERA / INFERENCE" in line for line in detailed)
+    assert any("SAMPLER" in line and "queue age=32ms" in line for line in detailed)
+    assert any("omitted=20" in line and "flushed=5" in line for line in detailed)
 
 
 def test_inference_completion_percent_waits_for_warmup_and_uses_submissions() -> None:

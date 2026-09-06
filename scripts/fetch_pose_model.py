@@ -8,11 +8,10 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from vaporstep.model_asset import load_pose_model_spec, verify_model
+from vaporstep.model_asset import load_pose_model_specs, verify_model
 
 
-def main() -> None:
-    spec = load_pose_model_spec()
+def _fetch(spec) -> None:
     out = ROOT / "assets" / spec.filename
     out.parent.mkdir(parents=True, exist_ok=True)
 
@@ -40,6 +39,11 @@ def main() -> None:
     tmp.replace(out)
     print(f"Verified SHA-256: {spec.sha256}")
     print(f"Installed: {out}")
+
+
+def main() -> None:
+    for spec in load_pose_model_specs():
+        _fetch(spec)
 
 
 if __name__ == "__main__":

@@ -8,6 +8,7 @@ from typing import Iterable
 
 import pygame
 
+from .adaptive_sampling import set_timing_critical
 from .audio_fx import GAMEPLAY_MUSIC_VOLUME
 from .chains import HOLD_OCCUPANCY_GRACE_SECONDS
 from .config import (
@@ -115,6 +116,8 @@ class GameSession:
         self._gameplay_events: list[GameplayEvent] = []
         self.keyboard_mode = False
         self.keyboard_used = False
+        self._camera_input_timestamp = 0.0
+        self._camera_scoring_time: float | None = None
         self.restart()
 
     def _music_path(self):
@@ -194,6 +197,7 @@ class GameSession:
 
     def restart(self) -> None:
         _stop_music()
+        set_timing_critical(False)
         self.notes = fresh_notes(self._source_notes)
         definitions = ()
         if self.chart is not None:
@@ -248,6 +252,8 @@ class GameSession:
         self.recent_motion_events = []
         self._gameplay_events = []
         self.keyboard_used = False
+        self._camera_input_timestamp = 0.0
+        self._camera_scoring_time = None
 
     def mark_keyboard_used(self) -> None:
         self.keyboard_used = True
@@ -309,7 +315,47 @@ class GameSession:
 
     def stop(self) -> None:
         _stop_music()
+        set_timing_critical(False)
         self.running = False
+
+    def _pose_sampling_critical(self, t: float) -> bool:
+        """Return whether a camera timing event could still affect scoring."""
+        if not self.running:
+            return False
+        lower_note_time = float(t) - HIT_WINDOW_SECONDS
+        upper_note_time = float(t) + GREAT_WINDOW_SECONDS
+        for note in self._gameplay_notes[self._pending_note_cursor :]:
+            if note.time > upper_note_time:
+                break
+            if not note.judged and note.time >= lower_note_time:
+                return True
+        return False
+
+    def _input_scoring_time(self, body: BodyState, current_time: float, now: float) -> float:
+        """Map the newest completed camera sample onto the historical song clock.
+
+        MediaPipe results remain chronological, so this value is also the camera
+        scoring watermark: misses and sustain transitions must not advance past
+        evidence that has not finished inference yet. Keyboard/synthetic input
+        keeps the historical current-time behavior.
+        """
+        if self.keyboard_mode or not body.timestamp_is_capture or body.timestamp <= 0.0:
+            return float(current_time)
+
+        timestamp = float(body.timestamp)
+        if (
+            timestamp == self._camera_input_timestamp
+            and self._camera_scoring_time is not None
+        ):
+            return self._camera_scoring_time
+
+        sample_time = float(current_time) - max(0.0, float(now) - timestamp)
+        if self._camera_scoring_time is None:
+            self._camera_scoring_time = sample_time
+        else:
+            self._camera_scoring_time = max(self._camera_scoring_time, sample_time)
+        self._camera_input_timestamp = timestamp
+        return self._camera_scoring_time
 
     def _compute_lead_in_start_time(self) -> float:
         """Virtual chart time where the pre-roll should begin.
@@ -610,11 +656,13 @@ class GameSession:
 
         # Hold the failed playfield on screen for a moment before results.
         if self.failed:
+            set_timing_critical(False)
             if self.failed_at is not None and now - self.failed_at >= FAIL_HOLD_SECONDS:
                 self.finished = True
             return
 
         if not self.running:
+            set_timing_critical(False)
             # Keep motion baselines warm while positioning, but deliberately do
             # not emit timing events before the song starts.
             self.motion.update(body, None)
@@ -640,18 +688,24 @@ class GameSession:
         if not self.audio_started and t >= 0.0:
             self._start_audio_clock(now)
             t = self.time
+        set_timing_critical(self._pose_sampling_critical(t))
+
+        # Rendering/audio remain on current chart time, but camera scoring advances
+        # only to the capture time of the newest completed chronological sample.
+        scoring_t = self._input_scoring_time(body, t, now)
+
         generated = self.motion.update(body, t)
         if generated:
             self.recent_motion_events.extend(generated)
         self.recent_motion_events = [
             e for e in self.recent_motion_events if t - e.song_time <= MOTION_EVENT_VISUAL_SECONDS + 0.04
         ]
-        self._update_active_chains(body, t)
+        self._update_active_chains(body, scoring_t)
 
         due_end = self._pending_note_cursor
         while (
             due_end < len(self._gameplay_notes)
-            and self._gameplay_notes[due_end].time <= t + OCCUPANCY_GRACE_SECONDS
+            and self._gameplay_notes[due_end].time <= scoring_t + OCCUPANCY_GRACE_SECONDS
         ):
             due_end += 1
 
@@ -663,19 +717,19 @@ class GameSession:
                 chain = None
 
             if chain is None:
-                self._update_regular_note(note, body, t)
+                self._update_regular_note(note, body, scoring_t)
                 continue
 
             if note.chain_index == 0:
-                self._update_regular_note(note, body, t)
+                self._update_regular_note(note, body, scoring_t)
                 if note.judged:
                     if note.hit:
                         chain.state = ChainState.ACTIVE
-                        chain.last_occupancy_at = t
+                        chain.last_occupancy_at = scoring_t
                         chain.quality = note.judgement or HitQuality.HIT
                     else:
                         chain.state = ChainState.BROKEN
-                        chain.broken_at = t
+                        chain.broken_at = scoring_t
                 continue
 
         while (
@@ -697,6 +751,7 @@ class GameSession:
                 self.failed = True
                 self.failed_at = now
                 self.failed_song_time = t
+                set_timing_critical(False)
                 _stop_music()
                 self.running = False
                 return

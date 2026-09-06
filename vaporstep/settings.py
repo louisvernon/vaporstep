@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 
 from .config import PLAYER_HORIZONTAL_ZOOM
+from .model_asset import DEFAULT_POSE_MODEL_MODE, normalize_pose_model_mode
 from .user_paths import settings_path, songs_dir
 
 
@@ -44,6 +45,7 @@ class AppSettings:
     camera_enabled: bool = True
     horizontal_reach: float = PLAYER_HORIZONTAL_ZOOM
     player_visual: str = "silhouette"
+    pose_model_mode: str = DEFAULT_POSE_MODEL_MODE
     favorite_song_keys: list[str] = field(default_factory=list)
     played_song_keys: list[str] = field(default_factory=list)
     last_song_key: str = ""
@@ -68,6 +70,7 @@ class AppSettings:
             camera_enabled=bool(self.camera_enabled),
             horizontal_reach=clamp_horizontal_reach(self.horizontal_reach),
             player_visual=normalize_player_visual(self.player_visual),
+            pose_model_mode=normalize_pose_model_mode(self.pose_model_mode),
             favorite_song_keys=clean_keys(self.favorite_song_keys),
             played_song_keys=clean_keys(self.played_song_keys),
             last_song_key=str(self.last_song_key or ""),
@@ -106,6 +109,9 @@ class SettingsStore:
                 camera_enabled=bool(raw.get("camera_enabled", True)),
                 horizontal_reach=float(raw.get("horizontal_reach", PLAYER_HORIZONTAL_ZOOM)),
                 player_visual=normalize_player_visual(raw.get("player_visual", "silhouette")),
+                pose_model_mode=normalize_pose_model_mode(
+                    raw.get("pose_model_mode", DEFAULT_POSE_MODEL_MODE)
+                ),
                 favorite_song_keys=raw.get("favorite_song_keys", []),
                 played_song_keys=raw.get("played_song_keys", []),
                 last_song_key=str(raw.get("last_song_key", "") or ""),

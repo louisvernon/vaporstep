@@ -51,10 +51,10 @@ LANDMARK_VISIBILITY_THRESHOLD = 0.45
 
 CAMERA_WIDTH = 640
 CAMERA_HEIGHT = 480
-# Capture at up to 60 FPS even when pose inference cannot keep up. The pose
-# worker remains latest-frame/best-effort and drops frames while inference is
-# busy, so this improves sampling opportunity without creating a backlog.
-CAMERA_FPS = 60
+# The adaptive inference scheduler treats 30 Hz as the canonical camera
+# timeline. Capable systems infer every captured frame; slower systems retain a
+# dynamic protected baseline and spend spare capacity on timing-window frames.
+CAMERA_FPS = 30
 
 WINDOW_WIDTH = 1280
 WINDOW_HEIGHT = 720

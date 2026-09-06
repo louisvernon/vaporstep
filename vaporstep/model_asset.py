@@ -10,7 +10,12 @@ from .resources import resource_path
 from .user_paths import cache_dir
 
 
-POSE_MODEL_KEY = "pose_landmarker_lite"
+DEFAULT_POSE_MODEL_MODE = "speed"
+POSE_MODEL_MODES = ("speed", "accuracy")
+POSE_MODEL_KEYS = {
+    "speed": "pose_landmarker_lite",
+    "accuracy": "pose_landmarker_full",
+}
 
 
 @dataclass(frozen=True)
@@ -26,10 +31,29 @@ class ModelSpec:
     license: str
 
 
-def load_pose_model_spec() -> ModelSpec:
+def normalize_pose_model_mode(value: object) -> str:
+    mode = str(value or "").strip().casefold()
+    if mode in ("lite", "fast"):
+        mode = "speed"
+    elif mode in ("full", "quality"):
+        mode = "accuracy"
+    return mode if mode in POSE_MODEL_MODES else DEFAULT_POSE_MODEL_MODE
+
+
+def _model_manifest() -> dict[str, dict[str, object]]:
     manifest_path = resource_path("assets/models.json")
-    data = json.loads(manifest_path.read_text(encoding="utf-8"))[POSE_MODEL_KEY]
+    return json.loads(manifest_path.read_text(encoding="utf-8"))
+
+
+def load_pose_model_spec(mode: object = DEFAULT_POSE_MODEL_MODE) -> ModelSpec:
+    normalized = normalize_pose_model_mode(mode)
+    data = _model_manifest()[POSE_MODEL_KEYS[normalized]]
     return ModelSpec(**data)
+
+
+def load_pose_model_specs() -> tuple[ModelSpec, ...]:
+    data = _model_manifest()
+    return tuple(ModelSpec(**data[POSE_MODEL_KEYS[mode]]) for mode in POSE_MODEL_MODES)
 
 
 def _sha256(path: Path) -> str:
@@ -56,9 +80,9 @@ def _cache_dir() -> Path:
     return cache_dir()
 
 
-def ensure_pose_model() -> Path:
-    """Return the verified bundled model, or download the pinned artifact."""
-    spec = load_pose_model_spec()
+def ensure_pose_model(mode: object = DEFAULT_POSE_MODEL_MODE) -> Path:
+    """Return the selected verified bundled model, or download the pinned artifact."""
+    spec = load_pose_model_spec(mode)
 
     bundled = resource_path(f"assets/{spec.filename}")
     ok, _ = verify_model(bundled, spec)

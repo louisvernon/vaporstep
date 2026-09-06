@@ -1,0 +1,201 @@
+from __future__ import annotations
+
+import threading
+from dataclasses import dataclass
+
+
+MIN_BASELINE_FPS = 10.0
+# Full-rate mode should have real service headroom. Queue pressure can still
+# force adaptive mode immediately if non-inference overhead makes this estimate
+# optimistic.
+FULL_RATE_ENTER_RATIO = 1.08
+FULL_RATE_EXIT_RATIO = 1.00
+SERVICE_EMA_ALPHA = 0.10
+SERVICE_WARMUP_SAMPLES = 12
+MAX_QUEUE_AGE_SECONDS = 0.20
+QUEUE_PRESSURE_FRAMES = 2
+QUEUE_PRESSURE_HOLD_SAMPLES = 18
+# Away from scoring windows, use most of sustainable inference throughput so
+# motion remains naturally smooth. In timing-critical windows, lower the
+# protected baseline to create room for opportunistic higher-resolution samples.
+# The queue, not a predicted extra-rate cap, decides how many extras survive.
+NORMAL_BASELINE_CAPACITY_RATIO = 0.90
+PRESSURED_BASELINE_CAPACITY_RATIO = 0.85
+PRESSURED_CAMERA_RATE_RATIO = 0.90
+CRITICAL_EXTRA_RESERVE_FPS = 10.0
+
+
+_timing_critical = threading.Event()
+
+
+def set_timing_critical(active: bool) -> None:
+    """Publish whether the active chart is inside a camera timing window."""
+    if active:
+        _timing_critical.set()
+    else:
+        _timing_critical.clear()
+
+
+def timing_critical() -> bool:
+    return _timing_critical.is_set()
+
+
+@dataclass(frozen=True)
+class SamplingDecision:
+    keep: bool
+    baseline: bool
+    critical: bool
+
+
+class AdaptiveSamplingPolicy:
+    """Choose protected baseline samples and opportunistic timing-window extras.
+
+    The policy begins at full camera rate while it measures complete inference
+    service time. Machines with genuine headroom keep every frame. When capacity
+    is lower, ordinary gameplay keeps a high protected baseline near sustainable
+    throughput. During timing-critical chart windows, only the *protected*
+    baseline is reduced aggressively, creating room for extra camera samples.
+
+    Every non-baseline camera frame in a critical window remains eligible. We do
+    not pre-throttle extras from an imperfect capacity estimate: the inference
+    queue keeps them while capacity is available and sheds them when protected
+    baseline debt proves the worker is falling behind.
+
+    Fractional baseline targets are scheduled with a time-based accumulator. This
+    matters at a 30 Hz camera: a naive minimum-interval test turns many targets in
+    the 20s into an accidental every-other-frame 15 Hz cadence.
+    """
+
+    def __init__(self, camera_fps: float) -> None:
+        self.camera_fps = max(1.0, float(camera_fps))
+        self._service_ms_ema = 0.0
+        self._service_samples = 0
+        self._full_rate = True
+        self._last_decision_at = 0.0
+        self._baseline_credit = 1.0
+        self._queue_pressure_samples = 0
+
+    @property
+    def service_ms(self) -> float:
+        return self._service_ms_ema
+
+    @property
+    def capacity_fps(self) -> float:
+        if self._service_ms_ema <= 0.0:
+            return self.camera_fps
+        return 1000.0 / self._service_ms_ema
+
+    @property
+    def full_rate(self) -> bool:
+        return self._full_rate
+
+    @property
+    def queue_pressured(self) -> bool:
+        return self._queue_pressure_samples > 0
+
+    def _baseline_fps(self, *, critical: bool) -> float:
+        if (
+            self._full_rate
+            and not self.queue_pressured
+            and self._service_samples >= SERVICE_WARMUP_SAMPLES
+        ):
+            return self.camera_fps
+        if self._service_samples < SERVICE_WARMUP_SAMPLES and not self.queue_pressured:
+            return self.camera_fps
+
+        capacity = self.capacity_fps
+        if capacity < MIN_BASELINE_FPS:
+            return max(1.0, capacity)
+
+        ratio = (
+            PRESSURED_BASELINE_CAPACITY_RATIO
+            if self.queue_pressured
+            else NORMAL_BASELINE_CAPACITY_RATIO
+        )
+        camera_cap = (
+            self.camera_fps * PRESSURED_CAMERA_RATE_RATIO
+            if self.queue_pressured
+            else self.camera_fps
+        )
+        ordinary = min(
+            camera_cap,
+            max(MIN_BASELINE_FPS, capacity * ratio),
+        )
+        if not critical:
+            return ordinary
+
+        # Preserve a useful motion floor, then create up to ten potential
+        # inference slots/sec for timing-window extras. The queue is free to use
+        # more instantaneous spare capacity and will flush extras if baseline
+        # debt accumulates.
+        critical_baseline = max(MIN_BASELINE_FPS, capacity - CRITICAL_EXTRA_RESERVE_FPS)
+        return min(ordinary, critical_baseline)
+
+    @property
+    def baseline_fps(self) -> float:
+        """Current ordinary (non-critical) protected baseline target."""
+        return self._baseline_fps(critical=False)
+
+    def baseline_fps_for(self, *, critical: bool) -> float:
+        return self._baseline_fps(critical=bool(critical))
+
+    def observe_queue(self, *, queue_depth: int, queue_age_seconds: float) -> None:
+        """React to sustained source/inference mismatch before latency can grow."""
+        frame_interval = 1.0 / self.camera_fps
+        pressured = (
+            int(queue_depth) >= QUEUE_PRESSURE_FRAMES
+            or float(queue_age_seconds) >= frame_interval * 1.5
+        )
+        if pressured:
+            self._full_rate = False
+            self._queue_pressure_samples = QUEUE_PRESSURE_HOLD_SAMPLES
+
+    def observe_service(self, service_ms: float) -> None:
+        sample = max(0.1, float(service_ms))
+        self._service_ms_ema = (
+            sample
+            if self._service_ms_ema <= 0.0
+            else (1.0 - SERVICE_EMA_ALPHA) * self._service_ms_ema + SERVICE_EMA_ALPHA * sample
+        )
+        self._service_samples += 1
+        if self._queue_pressure_samples > 0:
+            self._queue_pressure_samples -= 1
+        if self._service_samples < SERVICE_WARMUP_SAMPLES:
+            return
+
+        ratio = self.capacity_fps / self.camera_fps
+        if self._full_rate:
+            if ratio < FULL_RATE_EXIT_RATIO:
+                self._full_rate = False
+        elif not self.queue_pressured and ratio >= FULL_RATE_ENTER_RATIO:
+            self._full_rate = True
+
+    def decide(self, captured_at: float, *, critical: bool) -> SamplingDecision:
+        captured_at = float(captured_at)
+        critical = bool(critical)
+        baseline_fps = self.baseline_fps_for(critical=critical)
+
+        if self._last_decision_at <= 0.0:
+            self._last_decision_at = captured_at
+            self._baseline_credit = 0.0
+            return SamplingDecision(True, True, critical)
+
+        elapsed = max(0.0, captured_at - self._last_decision_at)
+        self._last_decision_at = captured_at
+
+        if self._full_rate and not self.queue_pressured:
+            self._baseline_credit = 0.0
+            return SamplingDecision(True, True, critical)
+
+        # Accumulate the desired baseline rate in real elapsed time, capped so a
+        # long camera pause cannot create a burst of artificial catch-up samples.
+        self._baseline_credit = min(
+            1.5,
+            self._baseline_credit + elapsed * max(baseline_fps, 1e-6),
+        )
+        if self._baseline_credit >= 1.0:
+            self._baseline_credit -= 1.0
+            return SamplingDecision(True, True, critical)
+        if critical:
+            return SamplingDecision(True, False, True)
+        return SamplingDecision(False, False, False)
