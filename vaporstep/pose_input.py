@@ -357,6 +357,18 @@ class PoseCameraInput:
             queue_age_seconds=queue_age,
         )
 
+    def _baseline_queue_depth_locked(self) -> int:
+        return sum(1 for frame in self._inference_queue if frame.baseline)
+
+    def _flush_all_extras_locked(self) -> None:
+        extra_indices = [
+            index
+            for index, frame in enumerate(self._inference_queue)
+            if not frame.baseline
+        ]
+        for index in reversed(extra_indices):
+            self._drop_queued_frame_locked(index)
+
     def _thin_extras_before_baseline_locked(self, captured_at: float) -> None:
         """Ensure a newly due baseline can be delayed by at most one extra."""
         last_baseline_index = -1
@@ -386,6 +398,23 @@ class PoseCameraInput:
             if index != keep_index:
                 self._drop_queued_frame_locked(index)
 
+    def _queue_frame_locked(self, frame: _QueuedFrame) -> bool:
+        """Queue one retained frame, shedding extras when baseline debt reaches two."""
+        if frame.baseline:
+            self._thin_extras_before_baseline_locked(frame.captured_at)
+            self._inference_queue.append(frame)
+            if self._baseline_queue_depth_locked() >= 2:
+                self._flush_all_extras_locked()
+            return True
+
+        if self._baseline_queue_depth_locked() >= 2:
+            self._extra_frames_flushed += 1
+            self._frames_dropped += 1
+            return False
+
+        self._inference_queue.append(frame)
+        return True
+
     def _enqueue_frame(self, bgr: np.ndarray, captured_at: float) -> None:
         critical = timing_critical()
         with self._queue_condition:
@@ -404,11 +433,10 @@ class PoseCameraInput:
         )
         with self._queue_condition:
             self._prune_stale_frames_locked(captured_at)
-            if frame.baseline:
-                self._thin_extras_before_baseline_locked(captured_at)
-            self._inference_queue.append(frame)
+            queued = self._queue_frame_locked(frame)
             self._observe_queue_pressure_locked(captured_at)
-            self._queue_condition.notify_all()
+            if queued:
+                self._queue_condition.notify_all()
 
     def _capture_loop(self) -> None:
         failed_reads = 0
