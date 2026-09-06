@@ -74,9 +74,10 @@ for candidate in (
     if candidate.is_file():
         datas.append((str(candidate), "third_party_licenses/Python"))
         break
-model = assets / "pose_landmarker_lite.task"
-if model.exists():
-    datas.append((str(model), "assets"))
+for model_name in ("pose_landmarker_lite.task", "pose_landmarker_full.task"):
+    model = assets / model_name
+    if model.exists():
+        datas.append((str(model), "assets"))
 
 hiddenimports = list(mp_hidden) + list(ffmpeg_hidden) + ["pkg_resources"]
 binaries = list(mp_binaries) + list(ffmpeg_binaries) + [(str(ffmpeg_exe), "imageio_ffmpeg/binaries")]
