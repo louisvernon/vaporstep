@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import time
 
 from .domain import BodyPoint, BodyState, HitQuality, NoteKind
 
@@ -34,8 +35,10 @@ class MotionEvent:
 class _LimbState:
     point: BodyPoint | None = None
     body_timestamp: float = 0.0
+    sample_song_time: float | None = None
     horizontal_velocity_ema: float = 0.0
     vertical_velocity_ema: float = 0.0
+    strike_speed: float = 0.0
     armed: bool = True
     last_event_body_time: float = -999.0
 
@@ -81,19 +84,46 @@ class MotionTracker:
             return max(0.0, horizontal_velocity)
         return 0.0
 
+    @staticmethod
+    def _sample_song_time(body: BodyState, song_time: float | None) -> float | None:
+        if song_time is None:
+            return None
+        if not body.timestamp_is_capture:
+            return float(song_time)
+        # The session's song clock and time.monotonic() advance at the same rate.
+        # Move the musical timestamp back by the age of this camera sample so
+        # inference latency affects feedback latency, not judgement timing.
+        age = max(0.0, time.monotonic() - body.timestamp)
+        return float(song_time) - age
+
+    @staticmethod
+    def _interpolate_time(
+        previous_time: float | None,
+        current_time: float | None,
+        fraction: float,
+    ) -> float | None:
+        if current_time is None:
+            return None
+        if previous_time is None:
+            return current_time
+        fraction = max(0.0, min(1.0, float(fraction)))
+        return previous_time + (current_time - previous_time) * fraction
+
     def update(self, body: BodyState, song_time: float | None) -> list[MotionEvent]:
         if body.timestamp <= 0.0 or body.timestamp == self._last_body_timestamp:
             return []
         self._last_body_timestamp = body.timestamp
+        current_song_time = self._sample_song_time(body, song_time)
         generated: list[MotionEvent] = []
 
         for name, kind, point in self._limbs(body):
             state = self._states[name]
             previous = state.point
             prev_time = state.body_timestamp
+            previous_song_time = state.sample_song_time
 
             entered_lane = (
-                song_time is not None
+                current_song_time is not None
                 and point.visible
                 and point.lane is not None
                 and previous is not None
@@ -129,27 +159,38 @@ class MotionTracker:
 
             event: MotionEvent | None = None
             if entered_lane:
+                # We only know that the categorical transition happened between
+                # these two pose samples. The midpoint is an unbiased estimate
+                # until lane resolvers expose a continuous boundary crossing.
+                event_time = self._interpolate_time(previous_song_time, current_song_time, 0.5)
                 event = MotionEvent(
                     kind=kind,
                     lane=int(point.lane),
-                    song_time=float(song_time),
+                    song_time=float(event_time),
                     limb=name,
                     strength=max(1.0, strike_speed / max(strike_threshold, 1e-6)),
                     source="entry",
                 )
                 state.armed = False
             elif (
-                song_time is not None
+                current_song_time is not None
                 and state.armed
                 and point.visible
                 and point.lane is not None
                 and strike_speed >= strike_threshold
                 and since_event >= MOTION_EVENT_LOCKOUT_SECONDS
             ):
+                # Interpolate the threshold crossing when the previous sample was
+                # below threshold. This avoids quantising a strike to the later
+                # inferred pose while remaining bounded by two real samples.
+                fraction = 1.0
+                if state.strike_speed < strike_threshold and strike_speed > state.strike_speed:
+                    fraction = (strike_threshold - state.strike_speed) / (strike_speed - state.strike_speed)
+                event_time = self._interpolate_time(previous_song_time, current_song_time, fraction)
                 event = MotionEvent(
                     kind=kind,
                     lane=int(point.lane),
-                    song_time=float(song_time),
+                    song_time=float(event_time),
                     limb=name,
                     strength=strike_speed / strike_threshold,
                     source="strike",
@@ -171,9 +212,11 @@ class MotionTracker:
 
             state.point = point
             state.body_timestamp = body.timestamp
+            state.sample_song_time = current_song_time
+            state.strike_speed = strike_speed
 
-        if song_time is not None:
-            cutoff = song_time - (GREAT_WINDOW_SECONDS + 0.50)
+        if current_song_time is not None:
+            cutoff = current_song_time - (GREAT_WINDOW_SECONDS + 0.50)
             self._events = [e for e in self._events if not e.consumed and e.song_time >= cutoff]
         return generated
 
