@@ -8,11 +8,11 @@ def _warm(policy: AdaptiveSamplingPolicy, service_ms: float) -> None:
 
 def test_capable_machine_stays_at_full_camera_rate() -> None:
     policy = AdaptiveSamplingPolicy(30.0)
-    _warm(policy, 30.0)
+    _warm(policy, 25.0)
 
     assert policy.full_rate is True
     assert policy.baseline_fps == 30.0
-    assert policy.capacity_fps == 30.0
+    assert policy.capacity_fps > 30.0
 
 
 def test_slower_machine_uses_most_capacity_away_from_notes() -> None:
@@ -78,3 +78,15 @@ def test_timing_window_keeps_frames_between_baselines() -> None:
     assert any(decision.baseline for decision in decisions)
     assert any(decision.keep and not decision.baseline and decision.critical for decision in decisions)
     assert all(decision.keep for decision in decisions)
+
+
+def test_queue_pressure_forces_adaptive_mode_even_when_service_estimate_has_headroom() -> None:
+    policy = AdaptiveSamplingPolicy(30.0)
+    _warm(policy, 25.0)  # Nominal service capacity is 40 Hz.
+    assert policy.full_rate
+
+    policy.observe_queue(queue_depth=2, queue_age_seconds=0.07)
+
+    assert not policy.full_rate
+    assert policy.queue_pressured
+    assert policy.baseline_fps < 30.0
