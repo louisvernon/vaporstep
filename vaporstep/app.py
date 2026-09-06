@@ -51,13 +51,13 @@ from .menu import (
     SongMenu,
     action_for_event,
 )
-from .model_asset import ensure_pose_model
+from .model_asset import ensure_pose_model, normalize_pose_model_mode
 from .performance import AdaptiveFrameRate, RuntimeProfiler
 from .preview import SongPreviewPlayer
 from .records import ChartRecord, RecordStore, chart_key, song_key
 from .readiness import camera_ready_prompt, readiness_for_session
 from .recording import RunRecorder, recording_backend_status
-from .character_renderer import Renderer
+from .calibration_renderer import Renderer
 from .resources import resource_path
 from .session import GameSession
 from .settings import (
@@ -141,12 +141,14 @@ def _profile_lines(
 
     if pose_snapshot is not None:
         captured = max(0, int(pose_snapshot.frames_captured))
-        dropped = max(0, int(pose_snapshot.frames_dropped))
-        drop_ratio = 100.0 * dropped / max(captured, 1)
+        omitted = max(0, int(pose_snapshot.frames_intentionally_skipped))
+        flushed = max(0, int(pose_snapshot.frames_dropped))
+        omitted_ratio = 100.0 * omitted / max(captured, 1)
+        flushed_ratio = 100.0 * flushed / max(captured, 1)
         lines.append(
             f"INFERENCE  results={pose_snapshot.pose_fps:.1f}fps  "
             f"latency={pose_snapshot.inference_latency_ms:.1f}ms  "
-            f"skipped={dropped} ({drop_ratio:.0f}%)"
+            f"omitted={omitted_ratio:.0f}%  flushed={flushed_ratio:.0f}%"
         )
     else:
         lines.append("INFERENCE  unavailable (keyboard input)")
@@ -179,8 +181,22 @@ def _profile_lines(
             )
         )
         lines.append(
-            f"INFERENCE COUNTS  frames captured={captured}  "
-            f"submitted={pose_snapshot.frames_submitted}  skipped={dropped} ({drop_ratio:.0f}%)"
+            (
+                f"SAMPLER  baseline={pose_snapshot.baseline_fps:.1f}fps  "
+                f"capacity={pose_snapshot.inference_capacity_fps:.1f}fps  "
+                f"service={pose_snapshot.inference_service_ms:.1f}ms  "
+                f"queue={pose_snapshot.inference_queue_depth}  "
+                f"queue age={pose_snapshot.inference_queue_age_ms:.0f}ms  "
+                f"pose age={pose_snapshot.pose_age_ms:.0f}ms"
+            )
+        )
+        lines.append(
+            (
+                f"INFERENCE COUNTS  captured={captured}  submitted={pose_snapshot.frames_submitted}  "
+                f"omitted={omitted}  flushed={flushed}  "
+                f"extras submitted/flushed={pose_snapshot.extra_frames_submitted}/{pose_snapshot.extra_frames_flushed}  "
+                f"baselines flushed={pose_snapshot.baseline_frames_flushed}"
+            )
         )
     return tuple(lines)
 
@@ -211,6 +227,10 @@ def _profile_toggle_requested(mode: str, event) -> bool:
 
 def _next_player_visual(value: object) -> str:
     return "character" if normalize_player_visual(value) == "silhouette" else "silhouette"
+
+
+def _next_pose_model_mode(value: object) -> str:
+    return "accuracy" if normalize_pose_model_mode(value) == "speed" else "speed"
 
 
 def _load_pose_components():
@@ -363,9 +383,6 @@ def main(argv: list[str] | None = None) -> int:
     if args.player_visual is not None:
         settings_store.settings.player_visual = normalize_player_visual(args.player_visual)
 
-    # Configure the mixer before pygame.init() opens the audio device. A modest
-    # 1024-sample buffer gives older CPUs more scheduling headroom without the
-    # much larger rhythm-game latency of a 2048-sample buffer.
     pygame.mixer.pre_init(
         frequency=SFX_SAMPLE_RATE,
         size=-16,
@@ -647,7 +664,7 @@ def main(argv: list[str] | None = None) -> int:
             camera_error = "Keyboard only"
             return
         try:
-            model_path = ensure_pose_model()
+            model_path = ensure_pose_model(settings_store.settings.pose_model_mode)
             camera = PoseCameraInput(
                 str(model_path),
                 camera_index=settings_store.settings.camera_index,
@@ -846,8 +863,6 @@ def main(argv: list[str] | None = None) -> int:
             loop_work_started = time.perf_counter()
             frame_dt = min(clock.get_time() / 1000.0, 0.10)
             now = time.monotonic()
-            # Keep a start tap through this frame's events, but never latch the
-            # keyboard override into subsequent calibration loops.
             calibration_start_requested = False
             scan_snapshot = library_indexer.snapshot()
             if scan_snapshot.complete and not applied_scan_complete:
@@ -1021,9 +1036,7 @@ def main(argv: list[str] | None = None) -> int:
                                 stats_week = next_week
                                 menu_sounds.tick()
                         elif event.key in (pygame.K_UP, pygame.K_w, pygame.K_DOWN, pygame.K_s):
-                            stats_input_mode = (
-                                "keyboard" if stats_input_mode == "camera" else "camera"
-                            )
+                            stats_input_mode = "keyboard" if stats_input_mode == "camera" else "camera"
                             save_profile_preferences()
                             menu_sounds.tick()
                     continue
@@ -1081,6 +1094,17 @@ def main(argv: list[str] | None = None) -> int:
                             renderer.set_player_horizontal_zoom(settings_store.settings.horizontal_reach)
                             if camera is not None:
                                 camera.set_horizontal_zoom(settings_store.settings.horizontal_reach)
+                            menu_sounds.tick()
+                        elif event.key == pygame.K_m:
+                            settings_store.settings.pose_model_mode = _next_pose_model_mode(
+                                settings_store.settings.pose_model_mode
+                            )
+                            _safe_settings_save(settings_store)
+                            restart_camera()
+                            calibration_session.restart()
+                            calibration_session.set_keyboard_mode(True)
+                            keyboard.reset()
+                            renderer.reset_game_effects()
                             menu_sounds.tick()
                         elif event.key == pygame.K_v:
                             settings_store.settings.player_visual = _next_player_visual(
@@ -1143,21 +1167,14 @@ def main(argv: list[str] | None = None) -> int:
                     if event.type == pygame.KEYDOWN:
                         if event.key in (pygame.K_PAGEUP, pygame.K_PAGEDOWN):
                             speed_taps.clear()
-                            menu.enter_letter_paging(
-                                -1 if event.key == pygame.K_PAGEUP else 1
-                            )
+                            menu.enter_letter_paging(-1 if event.key == pygame.K_PAGEUP else 1)
                             repeater.clear()
                             preview.stop(reset_selection=True)
                             menu_sounds.select()
                             continue
                         if event.key == pygame.K_d:
-                            if (
-                                not getattr(event, "repeat", False)
-                                and speed_taps.register(now)
-                            ):
-                                note_travel_speed = (
-                                    1.0 if note_travel_speed > 1.0 else 2.0
-                                )
+                            if not getattr(event, "repeat", False) and speed_taps.register(now):
+                                note_travel_speed = 1.0 if note_travel_speed > 1.0 else 2.0
                                 menu_sounds.select()
                             continue
                         speed_taps.clear()
@@ -1200,10 +1217,7 @@ def main(argv: list[str] | None = None) -> int:
                                     record_play_enabled = True
                                     load_error = None
                                 else:
-                                    load_error = (
-                                        "Recording unavailable in this build. "
-                                        f"{backend_error}"
-                                    )
+                                    load_error = "Recording unavailable in this build. " + backend_error
                             menu_sounds.tick()
                             continue
                         if event.key == pygame.K_v:
@@ -1248,11 +1262,7 @@ def main(argv: list[str] | None = None) -> int:
                     keyboard_start_requested = True
 
                 if event.type == pygame.KEYDOWN:
-                    if (
-                        event.key == pygame.K_RETURN
-                        and session is not None
-                        and session.finish_music_outro()
-                    ):
+                    if event.key == pygame.K_RETURN and session is not None and session.finish_music_outro():
                         continue
                     if event.key == pygame.K_v and session is not None and not session.running:
                         chain_mode = chain_mode.shifted()
@@ -1359,9 +1369,7 @@ def main(argv: list[str] | None = None) -> int:
                     if scan_snapshot.phase == "discovering":
                         status_text += f"  ·  library scan {scan_snapshot.folders_scanned:,} folders"
                     else:
-                        status_text += (
-                            f"  ·  library {scan_snapshot.files_processed:,}/{scan_snapshot.stepfiles_found:,}"
-                        )
+                        status_text += f"  ·  library {scan_snapshot.files_processed:,}/{scan_snapshot.stepfiles_found:,}"
                 draw_home(
                     renderer,
                     main_index,
@@ -1445,11 +1453,7 @@ def main(argv: list[str] | None = None) -> int:
                 body = keyboard_body
                 mask = None
                 if mode == "game" and session is not None and not session.running:
-                    status = (
-                        "STARTING…"
-                        if keyboard_start_requested
-                        else "PRESS INPUT KEY TO START"
-                    )
+                    status = "STARTING…" if keyboard_start_requested else "PRESS INPUT KEY TO START"
                 else:
                     status = "KEYBOARD ONLY"
                 pose_fps = 0.0
@@ -1473,11 +1477,7 @@ def main(argv: list[str] | None = None) -> int:
                 if settings_store.settings.player_visual == "character":
                     pose_figure = snap.figure
                 readiness_session = (
-                    session
-                    if mode == "game"
-                    else calibration_session
-                    if mode == "calibration"
-                    else None
+                    session if mode == "game" else calibration_session if mode == "calibration" else None
                 )
                 camera_status_text = (
                     readiness_for_session(body, readiness_session)
@@ -1495,9 +1495,7 @@ def main(argv: list[str] | None = None) -> int:
 
             if mode == "calibration":
                 update_started = time.perf_counter()
-                calibration_ready = (
-                    keyboard_only or camera_ready or calibration_start_requested
-                )
+                calibration_ready = keyboard_only or camera_ready or calibration_start_requested
                 calibration_session.set_keyboard_mode(True)
                 calibration_session.update(
                     body,
@@ -1564,12 +1562,14 @@ def main(argv: list[str] | None = None) -> int:
                     pose_figure=pose_figure,
                     detailed_debug=profile_level == 2,
                     start_ready_progress=calibration_session.ready_progress,
+                    overlay_alpha=72,
                 )
                 renderer.draw_calibration_overlay(
                     displayed_camera_index(),
                     settings_store.settings.horizontal_reach,
                     camera_status(),
                     settings_store.settings.player_visual,
+                    pose_model_mode=settings_store.settings.pose_model_mode,
                     inference_percent=_inference_completion_percent(pose_snapshot),
                 )
                 draw_lower_body_tracking_overlay(renderer, body)
