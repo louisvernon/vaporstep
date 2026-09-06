@@ -59,11 +59,13 @@ def test_early_great_emits_confirmation_at_the_note_time(monkeypatch):
     session = GameSession(demo_notes=[GameNote(time=1.0, lanes=(1,), kind=NoteKind.FOOT)])
     session.running = True
 
-    # Establish a different lane, then enter the target lane 250 ms early.
-    clock[0] = 0.60
-    session.update(_body(0.60, 2), True)
-    clock[0] = 0.75
-    session.update(_body(0.75, 1), True)
+    # Establish a different lane, then cross into the target between samples at
+    # 0.70 and 0.80. Midpoint interpolation estimates the entry at 0.75, 250 ms
+    # before the authored beat.
+    clock[0] = 0.70
+    session.update(_body(0.70, 2), True)
+    clock[0] = 0.80
+    session.update(_body(0.80, 1), True)
     assert session.drain_gameplay_events() == ()
 
     # At the authored beat the stored lane-entry impulse resolves to GREAT and
