@@ -137,6 +137,46 @@ def test_inflight_extra_forces_all_pending_extras_out_before_baseline():
     assert camera._extra_frames_flushed == 2
 
 
+def test_second_queued_baseline_flushes_every_pending_extra():
+    camera = PoseCameraInput("unused.task", camera_index=0)
+    camera._inference_queue.extend(
+        (
+            pose_input._QueuedFrame(object(), 1.00, True, True),
+            pose_input._QueuedFrame(object(), 1.03, False, True),
+            pose_input._QueuedFrame(object(), 1.06, False, True),
+        )
+    )
+
+    queued = camera._queue_frame_locked(
+        pose_input._QueuedFrame(object(), 1.10, True, True)
+    )
+
+    assert queued
+    assert [frame.captured_at for frame in camera._inference_queue] == [1.00, 1.10]
+    assert all(frame.baseline for frame in camera._inference_queue)
+    assert camera._extra_frames_flushed == 2
+    assert camera._frames_dropped == 2
+
+
+def test_new_extra_is_rejected_while_two_baselines_are_queued():
+    camera = PoseCameraInput("unused.task", camera_index=0)
+    camera._inference_queue.extend(
+        (
+            pose_input._QueuedFrame(object(), 1.00, True, True),
+            pose_input._QueuedFrame(object(), 1.10, True, True),
+        )
+    )
+
+    queued = camera._queue_frame_locked(
+        pose_input._QueuedFrame(object(), 1.13, False, True)
+    )
+
+    assert not queued
+    assert [frame.captured_at for frame in camera._inference_queue] == [1.00, 1.10]
+    assert camera._extra_frames_flushed == 1
+    assert camera._frames_dropped == 1
+
+
 def test_queue_age_limit_flushes_stale_baseline_as_well_as_extra():
     camera = PoseCameraInput("unused.task", camera_index=0)
     camera._inference_queue.extend(
