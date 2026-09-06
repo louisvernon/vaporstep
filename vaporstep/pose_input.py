@@ -157,6 +157,7 @@ class PoseCameraInput:
         self._last_submit_time = 0.0
         self._submitted_fps_ema = 0.0
         self._inference_started_at = 0.0
+        self._inference_capture_at = 0.0
         self._inference_latency_ms = 0.0
         self._frames_captured = 0
         self._frames_submitted = 0
@@ -312,7 +313,7 @@ class PoseCameraInput:
 
             rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
             mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
-            timestamp_ms = _strict_timestamp_ms(time.monotonic() - t0, last_timestamp_ms)
+            timestamp_ms = _strict_timestamp_ms(captured_at - t0, last_timestamp_ms)
             last_timestamp_ms = timestamp_ms
             submitted_at = time.monotonic()
             if self._last_submit_time:
@@ -324,6 +325,7 @@ class PoseCameraInput:
                 )
             self._last_submit_time = submitted_at
             self._inference_started_at = submitted_at
+            self._inference_capture_at = captured_at
             self._frames_submitted += 1
             self._inference_busy.set()
             try:
@@ -454,6 +456,7 @@ class PoseCameraInput:
 
     def _handle_result(self, result, output_image, timestamp_ms: int) -> None:
         now = time.monotonic()
+        captured_at = self._inference_capture_at or now
         if self._inference_started_at:
             latency = max(0.0, (now - self._inference_started_at) * 1000.0)
             self._inference_latency_ms = (
@@ -478,7 +481,7 @@ class PoseCameraInput:
             for tracker in self._lower_leg_filters.values():
                 tracker.reset()
             snapshot = PoseSnapshot(
-                body=BodyState(timestamp=now),
+                body=BodyState(timestamp=captured_at, timestamp_is_capture=True),
                 mask=None,
                 camera_ok=True,
                 message="Move into view so your wrists, shoulders and lower legs are visible",
@@ -537,7 +540,8 @@ class PoseCameraInput:
             left_foot_control=lfc,
             right_foot_control=rfc,
             pose_visible=True,
-            timestamp=now,
+            timestamp=captured_at,
+            timestamp_is_capture=True,
         )
 
         mask = None
