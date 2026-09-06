@@ -20,6 +20,7 @@ QUEUE_PRESSURE_HOLD_SAMPLES = 18
 # inference slots per second for disposable 30 Hz samples.
 NORMAL_BASELINE_CAPACITY_RATIO = 0.90
 PRESSURED_BASELINE_CAPACITY_RATIO = 0.85
+PRESSURED_CAMERA_RATE_RATIO = 0.90
 CRITICAL_EXTRA_RESERVE_FPS = 10.0
 
 
@@ -107,8 +108,13 @@ class AdaptiveSamplingPolicy:
             if self.queue_pressured
             else NORMAL_BASELINE_CAPACITY_RATIO
         )
+        camera_cap = (
+            self.camera_fps * PRESSURED_CAMERA_RATE_RATIO
+            if self.queue_pressured
+            else self.camera_fps
+        )
         ordinary = min(
-            self.camera_fps,
+            camera_cap,
             max(MIN_BASELINE_FPS, capacity * ratio),
         )
         if not critical:
