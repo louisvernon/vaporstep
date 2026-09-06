@@ -30,6 +30,7 @@ def test_timing_window_reserves_explicit_extra_capacity() -> None:
 
     assert 24.0 < policy.capacity_fps < 26.0
     assert 14.0 < policy.baseline_fps_for(critical=True) < 16.0
+    assert 24.0 < policy.total_fps_for(critical=True) < 25.0
 
 
 def test_critical_baseline_keeps_ten_fps_floor_on_slower_machine() -> None:
@@ -39,6 +40,7 @@ def test_critical_baseline_keeps_ten_fps_floor_on_slower_machine() -> None:
     assert 14.0 < policy.capacity_fps < 16.0
     assert 13.0 < policy.baseline_fps < 14.0
     assert policy.baseline_fps_for(critical=True) == 10.0
+    assert 14.0 < policy.total_fps_for(critical=True) < 15.0
 
 
 def test_very_slow_machine_cannot_reserve_capacity_it_does_not_have() -> None:
@@ -49,6 +51,7 @@ def test_very_slow_machine_cannot_reserve_capacity_it_does_not_have() -> None:
     assert 7.5 < policy.capacity_fps < 8.5
     assert policy.baseline_fps == policy.capacity_fps
     assert policy.baseline_fps_for(critical=True) == policy.capacity_fps
+    assert policy.total_fps_for(critical=True) == policy.capacity_fps
 
 
 def test_fractional_baseline_does_not_collapse_to_every_other_frame() -> None:
@@ -65,19 +68,24 @@ def test_fractional_baseline_does_not_collapse_to_every_other_frame() -> None:
     assert 21 <= baseline_count <= 24
 
 
-def test_timing_window_keeps_frames_between_baselines() -> None:
+def test_timing_window_spends_only_reserved_capacity_on_extras() -> None:
     policy = AdaptiveSamplingPolicy(30.0)
-    _warm(policy, 50.0)  # 20 Hz capacity -> 10 Hz critical protected baseline.
+    _warm(policy, 40.0)  # 25 Hz capacity -> 15 Hz baseline + ~9.5 Hz extras.
 
     decisions = []
     timestamp = 1.0
-    for _ in range(8):
+    for _ in range(30):
         decisions.append(policy.decide(timestamp, critical=True))
         timestamp += 1.0 / 30.0
 
-    assert any(decision.baseline for decision in decisions)
-    assert any(decision.keep and not decision.baseline and decision.critical for decision in decisions)
-    assert all(decision.keep for decision in decisions)
+    baseline_count = sum(decision.keep and decision.baseline for decision in decisions)
+    extra_count = sum(decision.keep and not decision.baseline for decision in decisions)
+    kept_count = sum(decision.keep for decision in decisions)
+
+    assert 14 <= baseline_count <= 16
+    assert 8 <= extra_count <= 11
+    assert 23 <= kept_count <= 26
+    assert kept_count < 30
 
 
 def test_queue_pressure_forces_adaptive_mode_even_when_service_estimate_has_headroom() -> None:
@@ -90,3 +98,4 @@ def test_queue_pressure_forces_adaptive_mode_even_when_service_estimate_has_head
     assert not policy.full_rate
     assert policy.queue_pressured
     assert policy.baseline_fps < 30.0
+    assert policy.total_fps_for(critical=True) <= 27.0
