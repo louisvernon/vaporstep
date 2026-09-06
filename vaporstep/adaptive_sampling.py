@@ -5,17 +5,21 @@ from dataclasses import dataclass
 
 
 MIN_BASELINE_FPS = 10.0
-FULL_RATE_ENTER_RATIO = 0.98
-FULL_RATE_EXIT_RATIO = 0.90
+# Full-rate mode should have real service headroom. Queue pressure can still
+# force adaptive mode immediately if non-inference overhead makes this estimate
+# optimistic.
+FULL_RATE_ENTER_RATIO = 1.08
+FULL_RATE_EXIT_RATIO = 1.00
 SERVICE_EMA_ALPHA = 0.10
 SERVICE_WARMUP_SAMPLES = 12
-EXTRA_MAX_AGE_SECONDS = 0.20
+MAX_QUEUE_AGE_SECONDS = 0.20
+QUEUE_PRESSURE_FRAMES = 2
+QUEUE_PRESSURE_HOLD_SAMPLES = 18
 # Away from scoring windows, use most of sustainable inference throughput so
 # motion remains naturally smooth. In timing-critical windows, reserve up to ten
-# inference slots per second for disposable 30 Hz samples. Unlike the original
-# 50% rule, this reserve is an explicit amount of useful temporal resolution,
-# not a fixed fraction of every machine's capacity.
+# inference slots per second for disposable 30 Hz samples.
 NORMAL_BASELINE_CAPACITY_RATIO = 0.90
+PRESSURED_BASELINE_CAPACITY_RATIO = 0.85
 CRITICAL_EXTRA_RESERVE_FPS = 10.0
 
 
@@ -45,15 +49,16 @@ class AdaptiveSamplingPolicy:
     """Choose protected baseline samples and disposable timing-window extras.
 
     The policy begins at full camera rate while it measures complete inference
-    service time. Machines that can sustain essentially the full camera rate keep
-    every frame. When capacity is lower, ordinary gameplay keeps a high protected
-    baseline near sustainable throughput. During timing-critical chart windows,
-    only the *protected* baseline is reduced aggressively, reserving up to 10 Hz
-    of measured service capacity for disposable 30 Hz samples.
+    service time. Machines with genuine headroom keep every frame. When capacity
+    is lower, ordinary gameplay keeps a high protected baseline near sustainable
+    throughput. During timing-critical chart windows, only the *protected*
+    baseline is reduced aggressively, reserving up to 10 Hz of measured service
+    capacity for disposable 30 Hz samples.
 
-    Fractional baseline targets are scheduled with a time-based accumulator. This
-    matters at a 30 Hz camera: a naive minimum-interval test turns many targets in
-    the 20s into an accidental every-other-frame 15 Hz cadence.
+    Queue growth is direct evidence that the source stream is outrunning the
+    complete inference cycle, so pressure immediately disables full-rate mode
+    and temporarily increases headroom. Fractional baseline targets are scheduled
+    with a time-based accumulator instead of collapsing to every-other-frame.
     """
 
     def __init__(self, camera_fps: float) -> None:
@@ -63,6 +68,7 @@ class AdaptiveSamplingPolicy:
         self._full_rate = True
         self._last_decision_at = 0.0
         self._baseline_credit = 1.0
+        self._queue_pressure_samples = 0
 
     @property
     def service_ms(self) -> float:
@@ -72,22 +78,38 @@ class AdaptiveSamplingPolicy:
     def capacity_fps(self) -> float:
         if self._service_ms_ema <= 0.0:
             return self.camera_fps
-        return min(self.camera_fps, 1000.0 / self._service_ms_ema)
+        return 1000.0 / self._service_ms_ema
 
     @property
     def full_rate(self) -> bool:
         return self._full_rate
 
+    @property
+    def queue_pressured(self) -> bool:
+        return self._queue_pressure_samples > 0
+
     def _baseline_fps(self, *, critical: bool) -> float:
-        if self._full_rate or self._service_samples < SERVICE_WARMUP_SAMPLES:
+        if (
+            self._full_rate
+            and not self.queue_pressured
+            and self._service_samples >= SERVICE_WARMUP_SAMPLES
+        ):
             return self.camera_fps
+        if self._service_samples < SERVICE_WARMUP_SAMPLES and not self.queue_pressured:
+            return self.camera_fps
+
         capacity = self.capacity_fps
         if capacity < MIN_BASELINE_FPS:
             return max(1.0, capacity)
 
+        ratio = (
+            PRESSURED_BASELINE_CAPACITY_RATIO
+            if self.queue_pressured
+            else NORMAL_BASELINE_CAPACITY_RATIO
+        )
         ordinary = min(
             self.camera_fps,
-            max(MIN_BASELINE_FPS, capacity * NORMAL_BASELINE_CAPACITY_RATIO),
+            max(MIN_BASELINE_FPS, capacity * ratio),
         )
         if not critical:
             return ordinary
@@ -106,6 +128,17 @@ class AdaptiveSamplingPolicy:
     def baseline_fps_for(self, *, critical: bool) -> float:
         return self._baseline_fps(critical=bool(critical))
 
+    def observe_queue(self, *, queue_depth: int, queue_age_seconds: float) -> None:
+        """React to sustained source/inference mismatch before latency can grow."""
+        frame_interval = 1.0 / self.camera_fps
+        pressured = (
+            int(queue_depth) >= QUEUE_PRESSURE_FRAMES
+            or float(queue_age_seconds) >= frame_interval * 1.5
+        )
+        if pressured:
+            self._full_rate = False
+            self._queue_pressure_samples = QUEUE_PRESSURE_HOLD_SAMPLES
+
     def observe_service(self, service_ms: float) -> None:
         sample = max(0.1, float(service_ms))
         self._service_ms_ema = (
@@ -114,6 +147,8 @@ class AdaptiveSamplingPolicy:
             else (1.0 - SERVICE_EMA_ALPHA) * self._service_ms_ema + SERVICE_EMA_ALPHA * sample
         )
         self._service_samples += 1
+        if self._queue_pressure_samples > 0:
+            self._queue_pressure_samples -= 1
         if self._service_samples < SERVICE_WARMUP_SAMPLES:
             return
 
@@ -121,7 +156,7 @@ class AdaptiveSamplingPolicy:
         if self._full_rate:
             if ratio < FULL_RATE_EXIT_RATIO:
                 self._full_rate = False
-        elif ratio >= FULL_RATE_ENTER_RATIO:
+        elif not self.queue_pressured and ratio >= FULL_RATE_ENTER_RATIO:
             self._full_rate = True
 
     def decide(self, captured_at: float, *, critical: bool) -> SamplingDecision:
@@ -136,7 +171,7 @@ class AdaptiveSamplingPolicy:
         elapsed = max(0.0, captured_at - self._last_decision_at)
         self._last_decision_at = captured_at
 
-        if self._full_rate:
+        if self._full_rate and not self.queue_pressured:
             self._baseline_credit = 0.0
             return SamplingDecision(True, True, bool(critical))
 
