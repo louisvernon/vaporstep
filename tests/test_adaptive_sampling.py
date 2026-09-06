@@ -15,13 +15,30 @@ def test_capable_machine_stays_at_full_camera_rate() -> None:
     assert policy.capacity_fps == 30.0
 
 
-def test_slower_machine_uses_half_capacity_with_ten_fps_floor() -> None:
+def test_slower_machine_uses_most_capacity_away_from_notes() -> None:
     policy = AdaptiveSamplingPolicy(30.0)
     _warm(policy, 40.0)
 
     assert policy.full_rate is False
     assert 24.0 < policy.capacity_fps < 26.0
-    assert 12.0 < policy.baseline_fps < 13.0
+    assert 22.0 < policy.baseline_fps < 23.0
+
+
+def test_timing_window_reserves_explicit_extra_capacity() -> None:
+    policy = AdaptiveSamplingPolicy(30.0)
+    _warm(policy, 40.0)
+
+    assert 24.0 < policy.capacity_fps < 26.0
+    assert 14.0 < policy.baseline_fps_for(critical=True) < 16.0
+
+
+def test_critical_baseline_keeps_ten_fps_floor_on_slower_machine() -> None:
+    policy = AdaptiveSamplingPolicy(30.0)
+    _warm(policy, 66.6666667)
+
+    assert 14.0 < policy.capacity_fps < 16.0
+    assert 13.0 < policy.baseline_fps < 14.0
+    assert policy.baseline_fps_for(critical=True) == 10.0
 
 
 def test_very_slow_machine_cannot_reserve_capacity_it_does_not_have() -> None:
@@ -31,18 +48,33 @@ def test_very_slow_machine_cannot_reserve_capacity_it_does_not_have() -> None:
     assert policy.full_rate is False
     assert 7.5 < policy.capacity_fps < 8.5
     assert policy.baseline_fps == policy.capacity_fps
+    assert policy.baseline_fps_for(critical=True) == policy.capacity_fps
+
+
+def test_fractional_baseline_does_not_collapse_to_every_other_frame() -> None:
+    policy = AdaptiveSamplingPolicy(30.0)
+    _warm(policy, 40.0)  # 25 Hz capacity -> 22.5 Hz ordinary baseline.
+
+    decisions = []
+    timestamp = 1.0
+    for _ in range(30):
+        decisions.append(policy.decide(timestamp, critical=False))
+        timestamp += 1.0 / 30.0
+
+    baseline_count = sum(decision.baseline for decision in decisions)
+    assert 21 <= baseline_count <= 24
 
 
 def test_timing_window_keeps_frames_between_baselines() -> None:
     policy = AdaptiveSamplingPolicy(30.0)
-    _warm(policy, 50.0)  # 20 Hz capacity -> 10 Hz protected baseline.
+    _warm(policy, 50.0)  # 20 Hz capacity -> 10 Hz critical protected baseline.
 
-    first = policy.decide(1.000, critical=False)
-    ordinary = policy.decide(1.033, critical=False)
-    extra = policy.decide(1.066, critical=True)
-    next_baseline = policy.decide(1.100, critical=True)
+    decisions = []
+    timestamp = 1.0
+    for _ in range(8):
+        decisions.append(policy.decide(timestamp, critical=True))
+        timestamp += 1.0 / 30.0
 
-    assert first.keep and first.baseline
-    assert not ordinary.keep
-    assert extra.keep and not extra.baseline and extra.critical
-    assert next_baseline.keep and next_baseline.baseline
+    assert any(decision.baseline for decision in decisions)
+    assert any(decision.keep and not decision.baseline and decision.critical for decision in decisions)
+    assert all(decision.keep for decision in decisions)
