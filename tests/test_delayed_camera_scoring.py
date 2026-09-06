@@ -109,6 +109,38 @@ def test_camera_miss_waits_for_completed_input_watermark(monkeypatch):
     assert not session.notes[0].hit
 
 
+def test_dense_delayed_camera_notes_keep_historical_order(monkeypatch):
+    import vaporstep.session as session_module
+
+    notes = (
+        GameNote(time=1.00, lanes=(2,), kind=NoteKind.FOOT),
+        GameNote(time=1.12, lanes=(3,), kind=NoteKind.FOOT),
+        GameNote(time=1.24, lanes=(2,), kind=NoteKind.FOOT),
+    )
+    monotonic = [20.0]
+    chart_time = [0.0]
+    monkeypatch.setattr(session_module.time, "monotonic", lambda: monotonic[0])
+    monkeypatch.setattr(GameSession, "time", property(lambda self: chart_time[0]))
+    session = GameSession(demo_notes=notes)
+    session.running = True
+    session.audio_started = True
+
+    # Each result arrives 180 ms after capture, but the body samples themselves
+    # hit three closely spaced authored notes in chronological order.
+    for note, lane in zip(notes, (2, 3, 2), strict=True):
+        chart_time[0] = note.time + 0.18
+        monotonic[0] = 20.0 + note.time + 0.18
+        session.update(_camera_body(20.0 + note.time, lane=lane), ready_to_start=True)
+
+    # Advance the completed-input watermark far enough to settle provisional
+    # occupancy on the final note without changing the historical lane.
+    chart_time[0] = 1.42 + 0.18
+    monotonic[0] = 20.0 + 1.42 + 0.18
+    session.update(_camera_body(20.0 + 1.42, lane=2), ready_to_start=True)
+
+    assert all(note.judged and note.hit for note in session.notes)
+
+
 def test_sustain_break_uses_historical_camera_time(monkeypatch):
     session, monotonic, chart_time = _running_session(monkeypatch)
     definition = ImplicitChain(
