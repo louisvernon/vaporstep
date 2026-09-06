@@ -3,6 +3,8 @@ from __future__ import annotations
 import sys
 from types import SimpleNamespace
 
+import pytest
+
 
 class _FakeMusic:
     @staticmethod
@@ -75,7 +77,7 @@ def test_delayed_occupancy_is_scored_at_capture_time(monkeypatch):
     session.update(_camera_body(10.00), ready_to_start=True)
 
     assert not session.notes[0].judged
-    assert session.notes[0].last_occupancy_at == 1.0
+    assert session.notes[0].last_occupancy_at == pytest.approx(1.0)
 
     # Advancing the completed-input watermark past the late occupancy window
     # settles that historical occupancy to HIT rather than having missed at 1.20.
