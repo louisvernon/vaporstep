@@ -113,6 +113,19 @@ def test_result_callback_releases_backpressure_gate():
     assert camera.snapshot().inference_latency_ms >= 0.0
 
 
+def test_result_body_uses_source_capture_timestamp():
+    camera = PoseCameraInput("unused.task", camera_index=0)
+    camera._inference_busy.set()
+    camera._inference_started_at = pose_input.time.monotonic()
+    camera._inference_capture_at = 123.456
+
+    camera._on_result(SimpleNamespace(pose_landmarks=[]), None, 0)
+
+    body = camera.snapshot().body
+    assert body.timestamp == 123.456
+    assert body.timestamp_is_capture is True
+
+
 def test_pose_figure_reuses_landmarks_without_segmentation():
     camera = PoseCameraInput("unused.task", output_segmentation_masks=False)
     landmarks = [
