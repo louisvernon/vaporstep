@@ -108,6 +108,12 @@ class PoseSnapshot:
     frames_captured: int = 0
     frames_submitted: int = 0
     frames_dropped: int = 0
+    camera_requested_width: int = CAMERA_WIDTH
+    camera_requested_height: int = CAMERA_HEIGHT
+    camera_requested_fps: float = float(CAMERA_FPS)
+    camera_reported_width: int = 0
+    camera_reported_height: int = 0
+    camera_reported_fps: float = 0.0
 
 
 @dataclass
@@ -157,10 +163,14 @@ class PoseCameraInput:
         self._last_submit_time = 0.0
         self._submitted_fps_ema = 0.0
         self._inference_started_at = 0.0
+        self._inference_capture_at = 0.0
         self._inference_latency_ms = 0.0
         self._frames_captured = 0
         self._frames_submitted = 0
         self._frames_dropped = 0
+        self._camera_reported_width = 0
+        self._camera_reported_height = 0
+        self._camera_reported_fps = 0.0
         self._inference_busy = threading.Event()
         self._snapshot = PoseSnapshot(body=BodyState())
         self._lower_leg_filters = {
@@ -230,6 +240,9 @@ class PoseCameraInput:
                 frames_captured=self._frames_captured,
                 frames_submitted=self._frames_submitted,
                 frames_dropped=self._frames_dropped,
+                camera_reported_width=self._camera_reported_width,
+                camera_reported_height=self._camera_reported_height,
+                camera_reported_fps=self._camera_reported_fps,
             )
 
     def _open_camera(self):
@@ -266,6 +279,20 @@ class PoseCameraInput:
                 self._capture = cap
                 retry_count = 0
                 failed_reads = 0
+                try:
+                    self._camera_reported_width = int(round(cap.get(cv2.CAP_PROP_FRAME_WIDTH)))
+                    self._camera_reported_height = int(round(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)))
+                    self._camera_reported_fps = float(cap.get(cv2.CAP_PROP_FPS))
+                except Exception:
+                    self._camera_reported_width = 0
+                    self._camera_reported_height = 0
+                    self._camera_reported_fps = 0.0
+                print(
+                    "Camera mode: "
+                    f"requested {CAMERA_WIDTH}x{CAMERA_HEIGHT}@{CAMERA_FPS}fps; "
+                    f"reported {self._camera_reported_width}x{self._camera_reported_height}"
+                    f"@{self._camera_reported_fps:.1f}fps"
+                )
                 with self._lock:
                     self._snapshot = PoseSnapshot(
                         body=BodyState(),
@@ -312,7 +339,7 @@ class PoseCameraInput:
 
             rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
             mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
-            timestamp_ms = _strict_timestamp_ms(time.monotonic() - t0, last_timestamp_ms)
+            timestamp_ms = _strict_timestamp_ms(captured_at - t0, last_timestamp_ms)
             last_timestamp_ms = timestamp_ms
             submitted_at = time.monotonic()
             if self._last_submit_time:
@@ -324,6 +351,7 @@ class PoseCameraInput:
                 )
             self._last_submit_time = submitted_at
             self._inference_started_at = submitted_at
+            self._inference_capture_at = captured_at
             self._frames_submitted += 1
             self._inference_busy.set()
             try:
@@ -454,6 +482,7 @@ class PoseCameraInput:
 
     def _handle_result(self, result, output_image, timestamp_ms: int) -> None:
         now = time.monotonic()
+        captured_at = self._inference_capture_at or now
         if self._inference_started_at:
             latency = max(0.0, (now - self._inference_started_at) * 1000.0)
             self._inference_latency_ms = (
@@ -478,7 +507,7 @@ class PoseCameraInput:
             for tracker in self._lower_leg_filters.values():
                 tracker.reset()
             snapshot = PoseSnapshot(
-                body=BodyState(timestamp=now),
+                body=BodyState(timestamp=captured_at, timestamp_is_capture=True),
                 mask=None,
                 camera_ok=True,
                 message="Move into view so your wrists, shoulders and lower legs are visible",
@@ -537,7 +566,8 @@ class PoseCameraInput:
             left_foot_control=lfc,
             right_foot_control=rfc,
             pose_visible=True,
-            timestamp=now,
+            timestamp=captured_at,
+            timestamp_is_capture=True,
         )
 
         mask = None

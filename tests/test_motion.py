@@ -1,8 +1,9 @@
+import vaporstep.motion as motion_module
 from vaporstep.domain import BodyPoint, BodyState, HitQuality, NoteKind
 from vaporstep.motion import MotionTracker
 
 
-def body(ts, *, lk=None, rk=None, lw=None, rw=None):
+def body(ts, *, lk=None, rk=None, lw=None, rw=None, timestamp_is_capture=False):
     return BodyState(
         left_knee=lk or BodyPoint(),
         right_knee=rk or BodyPoint(),
@@ -10,6 +11,7 @@ def body(ts, *, lk=None, rk=None, lw=None, rw=None):
         right_wrist=rw or BodyPoint(),
         pose_visible=True,
         timestamp=ts,
+        timestamp_is_capture=timestamp_is_capture,
     )
 
 
@@ -141,3 +143,44 @@ def test_subtle_in_lane_stomp_now_registers():
     assert len(events) == 1
     assert events[0].source == "strike"
     assert events[0].lane == 2
+
+
+def test_lane_entry_time_is_interpolated_between_pose_samples():
+    tracker = MotionTracker()
+    tracker.update(body(1.000, lk=point(0.40, 0.70, 2)), 7.90)
+    events = tracker.update(body(1.100, lk=point(0.60, 0.70, 3)), 8.00)
+
+    assert len(events) == 1
+    assert events[0].source == "entry"
+    assert abs(events[0].song_time - 7.95) < 1e-9
+
+
+def test_capture_timestamp_removes_inference_delay_from_event_time(monkeypatch):
+    tracker = MotionTracker()
+    clock = [10.050]
+    monkeypatch.setattr(motion_module.time, "monotonic", lambda: clock[0])
+
+    tracker.update(
+        body(
+            10.000,
+            lk=point(0.40, 0.60, 2),
+            timestamp_is_capture=True,
+        ),
+        5.000,
+    )
+
+    # The second pose arrives 50 ms after its camera frame. Its musical sample
+    # time is therefore 5.050, not the 5.100 callback/update time.
+    clock[0] = 10.100
+    events = tracker.update(
+        body(
+            10.050,
+            lk=point(0.40, 0.65, 2),
+            timestamp_is_capture=True,
+        ),
+        5.100,
+    )
+
+    assert len(events) == 1
+    assert events[0].song_time < 5.100
+    assert 4.950 <= events[0].song_time <= 5.050
