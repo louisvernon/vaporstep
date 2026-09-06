@@ -74,7 +74,7 @@ def test_pose_timestamps_remain_strictly_increasing_with_same_millisecond():
     assert later == 1236
 
 
-def test_busy_inference_skips_frame_before_rgb_conversion(monkeypatch):
+def test_busy_inference_buffers_frame_before_rgb_conversion(monkeypatch):
     camera = PoseCameraInput("unused.task", camera_index=0)
 
     class OneFrameCapture:
@@ -99,7 +99,42 @@ def test_busy_inference_skips_frame_before_rgb_conversion(monkeypatch):
     assert conversions == []
     assert snapshot.frames_captured == 1
     assert snapshot.frames_submitted == 0
-    assert snapshot.frames_dropped == 1
+    assert snapshot.frames_dropped == 0
+    assert snapshot.inference_queue_depth == 1
+
+
+def test_new_baseline_keeps_at_most_one_pending_extra():
+    camera = PoseCameraInput("unused.task", camera_index=0)
+    camera._last_baseline_submitted_at = 1.0
+    camera._inference_queue.extend(
+        (
+            pose_input._QueuedFrame(object(), 1.03, False, True),
+            pose_input._QueuedFrame(object(), 1.08, False, True),
+        )
+    )
+
+    camera._thin_extras_before_baseline_locked(1.10)
+
+    assert len(camera._inference_queue) == 1
+    assert camera._inference_queue[0].captured_at == 1.03
+    assert camera._extra_frames_flushed == 1
+
+
+def test_inflight_extra_forces_all_pending_extras_out_before_baseline():
+    camera = PoseCameraInput("unused.task", camera_index=0)
+    camera._inflight_extra = True
+    camera._last_baseline_submitted_at = 1.0
+    camera._inference_queue.extend(
+        (
+            pose_input._QueuedFrame(object(), 1.03, False, True),
+            pose_input._QueuedFrame(object(), 1.06, False, True),
+        )
+    )
+
+    camera._thin_extras_before_baseline_locked(1.10)
+
+    assert len(camera._inference_queue) == 0
+    assert camera._extra_frames_flushed == 2
 
 
 def test_result_callback_releases_backpressure_gate():
@@ -111,6 +146,7 @@ def test_result_callback_releases_backpressure_gate():
 
     assert not camera._inference_busy.is_set()
     assert camera.snapshot().inference_latency_ms >= 0.0
+    assert camera.snapshot().inference_service_ms >= 0.0
 
 
 def test_result_body_uses_source_capture_timestamp():
