@@ -11,7 +11,7 @@ import mediapipe as mp
 import numpy as np
 
 from .adaptive_sampling import (
-    EXTRA_MAX_AGE_SECONDS,
+    MAX_QUEUE_AGE_SECONDS,
     AdaptiveSamplingPolicy,
     timing_critical,
 )
@@ -117,12 +117,14 @@ class PoseSnapshot:
     sampling_full_rate: bool = True
     inference_queue_depth: int = 0
     inference_queue_age_ms: float = 0.0
+    pose_age_ms: float = 0.0
     frames_captured: int = 0
     frames_submitted: int = 0
     frames_dropped: int = 0
     frames_intentionally_skipped: int = 0
     extra_frames_submitted: int = 0
     extra_frames_flushed: int = 0
+    baseline_frames_flushed: int = 0
     camera_requested_width: int = CAMERA_WIDTH
     camera_requested_height: int = CAMERA_HEIGHT
     camera_requested_fps: float = float(CAMERA_FPS)
@@ -188,6 +190,7 @@ class PoseCameraInput:
         self._last_submit_time = 0.0
         self._submitted_fps_ema = 0.0
         self._inference_started_at = 0.0
+        self._inference_service_started_at = 0.0
         self._inference_capture_at = 0.0
         self._inference_latency_ms = 0.0
         self._inference_service_ms = 0.0
@@ -197,6 +200,7 @@ class PoseCameraInput:
         self._frames_intentionally_skipped = 0
         self._extra_frames_submitted = 0
         self._extra_frames_flushed = 0
+        self._baseline_frames_flushed = 0
         self._camera_reported_width = 0
         self._camera_reported_height = 0
         self._camera_reported_fps = 0.0
@@ -282,31 +286,40 @@ class PoseCameraInput:
             self._inflight_extra = False
 
     def snapshot(self) -> PoseSnapshot:
+        now = time.monotonic()
         with self._queue_condition:
             queue_depth = len(self._inference_queue)
             queue_age_ms = (
-                max(0.0, (time.monotonic() - self._inference_queue[0].captured_at) * 1000.0)
+                max(0.0, (now - self._inference_queue[0].captured_at) * 1000.0)
                 if self._inference_queue
                 else 0.0
             )
         with self._lock:
+            body = self._snapshot.body
+            pose_age_ms = (
+                max(0.0, (now - body.timestamp) * 1000.0)
+                if body.timestamp_is_capture and body.timestamp > 0.0
+                else 0.0
+            )
             return replace(
                 self._snapshot,
                 capture_fps=self._capture_fps_ema,
                 submitted_fps=self._submitted_fps_ema,
                 inference_latency_ms=self._inference_latency_ms,
                 inference_service_ms=self._inference_service_ms,
-                baseline_fps=self._policy.baseline_fps,
+                baseline_fps=self._policy.baseline_fps_for(critical=timing_critical()),
                 inference_capacity_fps=self._policy.capacity_fps,
                 sampling_full_rate=self._policy.full_rate,
                 inference_queue_depth=queue_depth,
                 inference_queue_age_ms=queue_age_ms,
+                pose_age_ms=pose_age_ms,
                 frames_captured=self._frames_captured,
                 frames_submitted=self._frames_submitted,
                 frames_dropped=self._frames_dropped,
                 frames_intentionally_skipped=self._frames_intentionally_skipped,
                 extra_frames_submitted=self._extra_frames_submitted,
                 extra_frames_flushed=self._extra_frames_flushed,
+                baseline_frames_flushed=self._baseline_frames_flushed,
                 camera_reported_width=self._camera_reported_width,
                 camera_reported_height=self._camera_reported_height,
                 camera_reported_fps=self._camera_reported_fps,
@@ -315,22 +328,34 @@ class PoseCameraInput:
     def _open_camera(self):
         return _open_camera_capture(self.camera_index)
 
-    def _drop_extra_locked(self, index: int) -> None:
+    def _drop_queued_frame_locked(self, index: int) -> None:
         frame = self._inference_queue[index]
-        if frame.baseline:
-            return
         del self._inference_queue[index]
-        self._extra_frames_flushed += 1
+        if frame.baseline:
+            self._baseline_frames_flushed += 1
+        else:
+            self._extra_frames_flushed += 1
         self._frames_dropped += 1
 
-    def _prune_stale_extras_locked(self, now: float) -> None:
+    def _prune_stale_frames_locked(self, now: float) -> None:
         stale = [
             index
             for index, frame in enumerate(self._inference_queue)
-            if not frame.baseline and now - frame.captured_at > EXTRA_MAX_AGE_SECONDS
+            if now - frame.captured_at > MAX_QUEUE_AGE_SECONDS
         ]
         for index in reversed(stale):
-            self._drop_extra_locked(index)
+            self._drop_queued_frame_locked(index)
+
+    def _observe_queue_pressure_locked(self, now: float) -> None:
+        queue_age = (
+            max(0.0, now - self._inference_queue[0].captured_at)
+            if self._inference_queue
+            else 0.0
+        )
+        self._policy.observe_queue(
+            queue_depth=len(self._inference_queue),
+            queue_age_seconds=queue_age,
+        )
 
     def _thin_extras_before_baseline_locked(self, captured_at: float) -> None:
         """Ensure a newly due baseline can be delayed by at most one extra."""
@@ -359,10 +384,13 @@ class PoseCameraInput:
             )
         for index in reversed(extra_indices):
             if index != keep_index:
-                self._drop_extra_locked(index)
+                self._drop_queued_frame_locked(index)
 
     def _enqueue_frame(self, bgr: np.ndarray, captured_at: float) -> None:
         critical = timing_critical()
+        with self._queue_condition:
+            self._prune_stale_frames_locked(captured_at)
+            self._observe_queue_pressure_locked(captured_at)
         decision = self._policy.decide(captured_at, critical=critical)
         if not decision.keep:
             self._frames_intentionally_skipped += 1
@@ -375,10 +403,11 @@ class PoseCameraInput:
             critical=decision.critical,
         )
         with self._queue_condition:
-            self._prune_stale_extras_locked(captured_at)
+            self._prune_stale_frames_locked(captured_at)
             if frame.baseline:
                 self._thin_extras_before_baseline_locked(captured_at)
             self._inference_queue.append(frame)
+            self._observe_queue_pressure_locked(captured_at)
             self._queue_condition.notify_all()
 
     def _capture_loop(self) -> None:
@@ -467,18 +496,25 @@ class PoseCameraInput:
         last_timestamp_ms = -1
         while not self._stop.is_set():
             with self._queue_condition:
-                self._prune_stale_extras_locked(time.monotonic())
+                now = time.monotonic()
+                self._prune_stale_frames_locked(now)
+                self._observe_queue_pressure_locked(now)
                 while (
                     not self._stop.is_set()
                     and (not self._inference_queue or self._inference_busy.is_set())
                 ):
                     self._queue_condition.wait(timeout=0.05)
-                    self._prune_stale_extras_locked(time.monotonic())
+                    now = time.monotonic()
+                    self._prune_stale_frames_locked(now)
+                    self._observe_queue_pressure_locked(now)
                 if self._stop.is_set():
                     return
                 frame = self._inference_queue.popleft()
                 self._inflight_extra = not frame.baseline
 
+            # Full service time includes the conversion required to prepare the
+            # retained frame, not just MediaPipe's detect_async interval.
+            self._inference_service_started_at = time.monotonic()
             rgb = cv2.cvtColor(frame.bgr, cv2.COLOR_BGR2RGB)
             mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
             timestamp_ms = _strict_timestamp_ms(frame.captured_at - t0, last_timestamp_ms)
@@ -628,14 +664,16 @@ class PoseCameraInput:
             self._handle_result(result, output_image, timestamp_ms)
         finally:
             completed_at = time.monotonic()
-            if self._inference_started_at:
-                service_ms = max(0.0, (completed_at - self._inference_started_at) * 1000.0)
+            if self._inference_service_started_at:
+                service_ms = max(
+                    0.0,
+                    (completed_at - self._inference_service_started_at) * 1000.0,
+                )
                 self._inference_service_ms = (
                     service_ms
                     if not self._inference_service_ms
                     else 0.9 * self._inference_service_ms + 0.1 * service_ms
                 )
-                was_full_rate = self._policy.full_rate
                 self._policy.observe_service(service_ms)
                 mode = (self._policy.full_rate, int(round(self._policy.baseline_fps)))
                 if mode != self._last_sampling_mode:
@@ -654,6 +692,7 @@ class PoseCameraInput:
             self._inference_busy.clear()
             with self._queue_condition:
                 self._inflight_extra = False
+                self._observe_queue_pressure_locked(completed_at)
                 self._queue_condition.notify_all()
 
     def _handle_result(self, result, output_image, timestamp_ms: int) -> None:
