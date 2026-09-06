@@ -10,12 +10,13 @@ FULL_RATE_EXIT_RATIO = 0.90
 SERVICE_EMA_ALPHA = 0.10
 SERVICE_WARMUP_SAMPLES = 12
 EXTRA_MAX_AGE_SECONDS = 0.20
-# Outside scoring windows, keep the protected baseline close to measured
-# sustainable capacity so presentation remains smooth. Inside a scoring window,
-# deliberately lower only the protected baseline so disposable 30 Hz samples can
-# consume the remaining service capacity without risking baseline starvation.
+# Away from scoring windows, use most of sustainable inference throughput so
+# motion remains naturally smooth. In timing-critical windows, reserve up to ten
+# inference slots per second for disposable 30 Hz samples. Unlike the original
+# 50% rule, this reserve is an explicit amount of useful temporal resolution,
+# not a fixed fraction of every machine's capacity.
 NORMAL_BASELINE_CAPACITY_RATIO = 0.90
-CRITICAL_BASELINE_CAPACITY_RATIO = 0.60
+CRITICAL_EXTRA_RESERVE_FPS = 10.0
 
 
 _timing_critical = threading.Event()
@@ -47,9 +48,12 @@ class AdaptiveSamplingPolicy:
     service time. Machines that can sustain essentially the full camera rate keep
     every frame. When capacity is lower, ordinary gameplay keeps a high protected
     baseline near sustainable throughput. During timing-critical chart windows,
-    only the *protected* baseline is reduced aggressively so spare service slots
-    can be filled by disposable 30 Hz samples. This preserves smooth motion away
-    from notes while reserving priority headroom for denser timing evidence.
+    only the *protected* baseline is reduced aggressively, reserving up to 10 Hz
+    of measured service capacity for disposable 30 Hz samples.
+
+    Fractional baseline targets are scheduled with a time-based accumulator. This
+    matters at a 30 Hz camera: a naive minimum-interval test turns many targets in
+    the 20s into an accidental every-other-frame 15 Hz cadence.
     """
 
     def __init__(self, camera_fps: float) -> None:
@@ -57,7 +61,8 @@ class AdaptiveSamplingPolicy:
         self._service_ms_ema = 0.0
         self._service_samples = 0
         self._full_rate = True
-        self._last_baseline_at = 0.0
+        self._last_decision_at = 0.0
+        self._baseline_credit = 1.0
 
     @property
     def service_ms(self) -> float:
@@ -79,12 +84,19 @@ class AdaptiveSamplingPolicy:
         capacity = self.capacity_fps
         if capacity < MIN_BASELINE_FPS:
             return max(1.0, capacity)
-        ratio = (
-            CRITICAL_BASELINE_CAPACITY_RATIO
-            if critical
-            else NORMAL_BASELINE_CAPACITY_RATIO
+
+        ordinary = min(
+            self.camera_fps,
+            max(MIN_BASELINE_FPS, capacity * NORMAL_BASELINE_CAPACITY_RATIO),
         )
-        return min(self.camera_fps, max(MIN_BASELINE_FPS, capacity * ratio))
+        if not critical:
+            return ordinary
+
+        # Preserve a useful motion floor, then devote up to 10 inferences/sec to
+        # timing-window extras. If the machine has less spare capacity than that,
+        # the reserve naturally shrinks rather than starving the protected stream.
+        critical_baseline = max(MIN_BASELINE_FPS, capacity - CRITICAL_EXTRA_RESERVE_FPS)
+        return min(ordinary, critical_baseline)
 
     @property
     def baseline_fps(self) -> float:
@@ -115,14 +127,27 @@ class AdaptiveSamplingPolicy:
     def decide(self, captured_at: float, *, critical: bool) -> SamplingDecision:
         captured_at = float(captured_at)
         baseline_fps = self.baseline_fps_for(critical=critical)
-        interval = 1.0 / max(baseline_fps, 1e-6)
-        baseline_due = (
-            self._full_rate
-            or self._last_baseline_at <= 0.0
-            or captured_at - self._last_baseline_at >= interval * 0.92
+
+        if self._last_decision_at <= 0.0:
+            self._last_decision_at = captured_at
+            self._baseline_credit = 0.0
+            return SamplingDecision(True, True, bool(critical))
+
+        elapsed = max(0.0, captured_at - self._last_decision_at)
+        self._last_decision_at = captured_at
+
+        if self._full_rate:
+            self._baseline_credit = 0.0
+            return SamplingDecision(True, True, bool(critical))
+
+        # Accumulate the desired baseline rate in real elapsed time, capped so a
+        # long camera pause cannot create a burst of artificial catch-up samples.
+        self._baseline_credit = min(
+            1.5,
+            self._baseline_credit + elapsed * max(baseline_fps, 1e-6),
         )
-        if baseline_due:
-            self._last_baseline_at = captured_at
+        if self._baseline_credit >= 1.0:
+            self._baseline_credit -= 1.0
             return SamplingDecision(True, True, bool(critical))
         if critical:
             return SamplingDecision(True, False, True)
