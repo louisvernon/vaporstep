@@ -109,38 +109,6 @@ def test_camera_miss_waits_for_completed_input_watermark(monkeypatch):
     assert not session.notes[0].hit
 
 
-def test_dense_delayed_camera_notes_keep_historical_order(monkeypatch):
-    import vaporstep.session as session_module
-
-    notes = (
-        GameNote(time=1.00, lanes=(2,), kind=NoteKind.FOOT),
-        GameNote(time=1.12, lanes=(3,), kind=NoteKind.FOOT),
-        GameNote(time=1.24, lanes=(2,), kind=NoteKind.FOOT),
-    )
-    monotonic = [20.0]
-    chart_time = [0.0]
-    monkeypatch.setattr(session_module.time, "monotonic", lambda: monotonic[0])
-    monkeypatch.setattr(GameSession, "time", property(lambda self: chart_time[0]))
-    session = GameSession(demo_notes=notes)
-    session.running = True
-    session.audio_started = True
-
-    # Each result arrives 180 ms after capture, but the body samples themselves
-    # hit three closely spaced authored notes in chronological order.
-    for note, lane in zip(notes, (2, 3, 2), strict=True):
-        chart_time[0] = note.time + 0.18
-        monotonic[0] = 20.0 + note.time + 0.18
-        session.update(_camera_body(20.0 + note.time, lane=lane), ready_to_start=True)
-
-    # Advance the completed-input watermark far enough to settle provisional
-    # occupancy on the final note without changing the historical lane.
-    chart_time[0] = 1.42 + 0.18
-    monotonic[0] = 20.0 + 1.42 + 0.18
-    session.update(_camera_body(20.0 + 1.42, lane=2), ready_to_start=True)
-
-    assert all(note.judged and note.hit for note in session.notes)
-
-
 def test_sustain_break_uses_historical_camera_time(monkeypatch):
     session, monotonic, chart_time = _running_session(monkeypatch)
     definition = ImplicitChain(
@@ -175,3 +143,33 @@ def test_sustain_break_uses_historical_camera_time(monkeypatch):
     captured_at = monotonic[0] - (chart_time[0] - sample_time)
     session.update(_camera_body(captured_at, lane=3), ready_to_start=True)
     assert chain.state == ChainState.BROKEN
+
+
+def test_dense_delayed_camera_samples_score_each_note_at_capture_time(monkeypatch):
+    notes = [
+        GameNote(time=1.00, lanes=(1,), kind=NoteKind.FOOT),
+        GameNote(time=1.12, lanes=(2,), kind=NoteKind.FOOT),
+        GameNote(time=1.24, lanes=(3,), kind=NoteKind.FOOT),
+    ]
+    session, monotonic, chart_time = _running_session(monkeypatch)
+    session._source_notes = tuple(notes)
+    session.restart()
+    session.running = True
+    session.audio_started = True
+
+    for note_time, lane in ((1.00, 1), (1.12, 2), (1.24, 3)):
+        # Each completed pose arrives 180 ms after capture. The watermark should
+        # walk through the dense sequence rather than applying every body to the
+        # visibly newer playfield time.
+        chart_time[0] = note_time + 0.18
+        monotonic[0] = 10.0 + note_time + 0.18
+        captured_at = monotonic[0] - 0.18
+        session.update(_camera_body(captured_at, lane=lane), ready_to_start=True)
+
+    # Advance the completed input beyond the last late occupancy deadline so all
+    # provisional occupancies settle.
+    chart_time[0] = 1.42
+    monotonic[0] = 11.42
+    session.update(_camera_body(11.24, lane=3), ready_to_start=True)
+
+    assert all(note.judged and note.hit for note in session.notes)
