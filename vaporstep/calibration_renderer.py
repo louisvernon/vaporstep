@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import time
+
 import pygame
 
 from .character_renderer import Renderer as CharacterRenderer
+from .pose_presentation import PosePresentationExtrapolator
 from .renderer import AMBER, BG, CYAN, DIM, GREEN, RED, WHITE
 
 
@@ -10,11 +13,16 @@ CALIBRATION_OVERLAY_ALPHA = 72
 
 
 class Renderer(CharacterRenderer):
-    """Character renderer with calibration-only translucent diagnostic overlays."""
+    """Character renderer with presentation extrapolation and calibration overlays."""
 
     def __init__(self, screen: pygame.Surface) -> None:
         super().__init__(screen)
         self._overlay_alpha_override: int | None = None
+        self._pose_presentation = PosePresentationExtrapolator()
+
+    def reset_game_effects(self) -> None:
+        super().reset_game_effects()
+        self._pose_presentation.reset()
 
     def draw(self, *args, **kwargs) -> None:
         overlay_alpha = kwargs.pop("overlay_alpha", None)
@@ -24,6 +32,29 @@ class Renderer(CharacterRenderer):
             if overlay_alpha is None
             else max(0, min(255, int(overlay_alpha)))
         )
+
+        body = kwargs.get("body")
+        if body is None and args:
+            body = args[0]
+        pose_figure = kwargs.get("pose_figure")
+        now = time.monotonic()
+        if (
+            pose_figure is not None
+            and body is not None
+            and body.timestamp_is_capture
+            and body.timestamp > 0.0
+        ):
+            self._pose_presentation.observe(
+                pose_figure,
+                captured_at=body.timestamp,
+                observed_at=now,
+            )
+            kwargs["pose_figure"] = self._pose_presentation.figure_at(now)
+        else:
+            # Silhouette/keyboard modes should retain today's exact presentation
+            # and must not resurrect stale character state when toggled back on.
+            self._pose_presentation.reset()
+
         try:
             super().draw(*args, **kwargs)
         finally:
