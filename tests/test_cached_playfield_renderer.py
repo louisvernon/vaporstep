@@ -60,19 +60,16 @@ def test_cached_playfield_rasters_are_reused_and_cleared_on_resize() -> None:
     body = _body()
 
     _draw_playfields(renderer, body)
-    foot_static = renderer._foot_static_raster(True)
     foot_fill = renderer._foot_fill_raster(body.foot_lanes)
-    hand_static = renderer._hand_static_raster(True)
+    hand_rings = renderer._hand_ring_raster(True)
     hand_fill = renderer._hand_fill_raster(True, body.hand_lanes)
 
-    assert renderer._foot_static_raster(True) is foot_static
     assert renderer._foot_fill_raster(body.foot_lanes) is foot_fill
-    assert renderer._hand_static_raster(True) is hand_static
+    assert renderer._hand_ring_raster(True) is hand_rings
     assert renderer._hand_fill_raster(True, body.hand_lanes) is hand_fill
 
     renderer.replace_screen(pygame.Surface((800, 450), depth=32))
 
-    assert renderer._foot_static_rasters == {}
     assert renderer._foot_fill_rasters == {}
-    assert renderer._hand_static_rasters == {}
+    assert renderer._hand_ring_rasters == {}
     assert renderer._hand_fill_rasters == {}
