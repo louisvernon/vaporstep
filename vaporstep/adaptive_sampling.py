@@ -16,10 +16,12 @@ SERVICE_WARMUP_SAMPLES = 12
 MAX_QUEUE_AGE_SECONDS = 0.20
 QUEUE_PRESSURE_FRAMES = 2
 QUEUE_PRESSURE_HOLD_SAMPLES = 18
-# Keep a little steady-state headroom for service-time jitter. Timing-critical
-# sampling must never reduce this protected stream: intervening camera frames
-# become disposable extras on top of the same sustainable baseline.
+# Normal gameplay keeps a little steady-state headroom for service-time jitter.
+# If a timing-critical burst leaves backlog behind, non-critical sampling drops
+# further for a short recovery period so the worker can pay that latency debt
+# back quickly. Timing-critical sampling always keeps the normal protected rate.
 NORMAL_BASELINE_CAPACITY_RATIO = 0.90
+RECOVERY_BASELINE_CAPACITY_RATIO = 0.75
 
 
 _timing_critical = threading.Event()
@@ -63,6 +65,10 @@ class AdaptiveSamplingPolicy:
     can spend bounded queue latency on additional temporal evidence. The queue
     sheds extras first if protected baseline debt proves the worker is falling
     behind.
+
+    Outside timing-critical windows, recent queue pressure temporarily lowers
+    the baseline further so any retained backlog drains faster. This recovery
+    rate is intentionally a separate tuning knob from the normal protected rate.
 
     Fractional baseline targets are scheduled with a time-based accumulator. This
     matters at a 30 Hz camera: a naive minimum-interval test turns many targets in
@@ -120,13 +126,18 @@ class AdaptiveSamplingPolicy:
         if capacity < MIN_BASELINE_FPS:
             return max(1.0, capacity)
 
-        # Queue pressure may force us out of optimistic full-rate mode, but it
-        # must not reduce the protected stream below the normal sustainable
-        # baseline merely because optional extras accumulated. At 90% of measured
-        # capacity there is already steady-state headroom to drain baseline debt.
+        # Queue pressure from optional critical extras must never make the
+        # protected stream worse while timing still matters. Once the chart is
+        # outside a timing-critical window, deliberately lower new baseline work
+        # for a short recovery period so buffered evidence can drain quickly.
+        ratio = (
+            RECOVERY_BASELINE_CAPACITY_RATIO
+            if self.queue_pressured and not critical
+            else NORMAL_BASELINE_CAPACITY_RATIO
+        )
         return min(
             source_fps,
-            max(MIN_BASELINE_FPS, capacity * NORMAL_BASELINE_CAPACITY_RATIO),
+            max(MIN_BASELINE_FPS, capacity * ratio),
         )
 
     @property
