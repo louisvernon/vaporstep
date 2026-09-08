@@ -1,4 +1,8 @@
-from vaporstep.adaptive_sampling import AdaptiveSamplingPolicy, SERVICE_WARMUP_SAMPLES
+from vaporstep.adaptive_sampling import (
+    AdaptiveSamplingPolicy,
+    QUEUE_PRESSURE_HOLD_SAMPLES,
+    SERVICE_WARMUP_SAMPLES,
+)
 
 
 def _warm(policy: AdaptiveSamplingPolicy, service_ms: float) -> None:
@@ -130,23 +134,38 @@ def test_queue_pressure_forces_adaptive_mode_without_throttling_headroom() -> No
 
     assert not policy.full_rate
     assert policy.queue_pressured
-    # The measured worker can comfortably process every 30 Hz source frame, so
-    # pressure from a transient backlog must not arbitrarily cut the baseline.
+    # Even the recovery target is 30 Hz here (75% of 40 Hz), so a machine with
+    # enough headroom to process every source frame should still keep them all.
     assert policy.baseline_fps == 30.0
 
 
-def test_queue_pressure_does_not_reduce_sustainable_baseline() -> None:
+def test_queue_pressure_uses_lower_recovery_rate_only_outside_timing_window() -> None:
     policy = AdaptiveSamplingPolicy(30.0)
-    _warm(policy, 40.0)  # 25 Hz capacity -> 22.5 Hz protected baseline.
-    before = policy.baseline_fps
+    _warm(policy, 40.0)  # 25 Hz capacity -> 22.5 Hz normal protected baseline.
+    normal = policy.baseline_fps
 
     policy.observe_queue(queue_depth=2, queue_age_seconds=0.07)
 
     assert policy.queue_pressured
-    assert policy.baseline_fps == before
+    assert 18.0 < policy.baseline_fps < 19.5  # 75% of ~25 Hz capacity.
+    assert policy.baseline_fps_for(critical=True) == normal
 
 
-def test_queue_pressure_does_not_thin_slow_source_that_fits_capacity() -> None:
+def test_recovery_rate_returns_to_normal_after_pressure_hold_expires() -> None:
+    policy = AdaptiveSamplingPolicy(30.0)
+    _warm(policy, 40.0)
+    normal = policy.baseline_fps
+    policy.observe_queue(queue_depth=2, queue_age_seconds=0.07)
+    assert policy.baseline_fps < normal
+
+    for _ in range(QUEUE_PRESSURE_HOLD_SAMPLES):
+        policy.observe_service(40.0)
+
+    assert not policy.queue_pressured
+    assert policy.baseline_fps == normal
+
+
+def test_queue_pressure_does_not_thin_slow_source_that_fits_recovery_capacity() -> None:
     policy = AdaptiveSamplingPolicy(30.0)
     _deliver(policy, 15.0)
     _warm(policy, 50.0)  # 20 Hz inference capacity, 15 Hz source.
@@ -154,4 +173,5 @@ def test_queue_pressure_does_not_thin_slow_source_that_fits_capacity() -> None:
     policy.observe_queue(queue_depth=2, queue_age_seconds=0.11)
 
     assert policy.queue_pressured
+    # 75% of 20 Hz is still the full 15 Hz delivered source rate.
     assert 14.5 < policy.baseline_fps < 15.5
