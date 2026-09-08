@@ -4,7 +4,7 @@ import time
 
 import pygame
 
-from .character_renderer import Renderer as CharacterRenderer
+from .cached_character_renderer import Renderer as CharacterRenderer
 from .pose_presentation import PosePresentationExtrapolator
 from .renderer import AMBER, BG, CYAN, DIM, GREEN, RED, WHITE
 
