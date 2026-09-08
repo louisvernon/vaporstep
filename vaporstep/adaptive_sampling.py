@@ -11,6 +11,7 @@ MIN_BASELINE_FPS = 10.0
 FULL_RATE_ENTER_RATIO = 1.08
 FULL_RATE_EXIT_RATIO = 1.00
 SERVICE_EMA_ALPHA = 0.10
+SOURCE_FPS_EMA_ALPHA = 0.10
 SERVICE_WARMUP_SAMPLES = 12
 MAX_QUEUE_AGE_SECONDS = 0.20
 QUEUE_PRESSURE_FRAMES = 2
@@ -50,11 +51,18 @@ class SamplingDecision:
 class AdaptiveSamplingPolicy:
     """Choose protected baseline samples and opportunistic timing-window extras.
 
-    The policy begins at full camera rate while it measures complete inference
-    service time. Machines with genuine headroom keep every frame. When capacity
-    is lower, ordinary gameplay keeps a high protected baseline near sustainable
-    throughput. During timing-critical chart windows, only the *protected*
-    baseline is reduced aggressively, creating room for extra camera samples.
+    ``camera_fps`` is the requested/canonical camera ceiling. The policy also
+    measures the rate at which frames are actually delivered from capture
+    timestamps. Full-rate mode means keeping every *delivered* camera frame,
+    not requiring the inference worker to match a camera mode the device did
+    not actually provide.
+
+    Inference capacity is measured independently from complete inference
+    service time. Machines with genuine headroom over the delivered source rate
+    keep every frame. When capacity is lower, ordinary gameplay keeps a high
+    protected baseline near sustainable throughput. During timing-critical chart
+    windows, only the *protected* baseline is reduced aggressively, creating room
+    for extra camera samples.
 
     Every non-baseline camera frame in a critical window remains eligible. We do
     not pre-throttle extras from an imperfect capacity estimate: the inference
@@ -68,6 +76,7 @@ class AdaptiveSamplingPolicy:
 
     def __init__(self, camera_fps: float) -> None:
         self.camera_fps = max(1.0, float(camera_fps))
+        self._source_fps_ema = 0.0
         self._service_ms_ema = 0.0
         self._service_samples = 0
         self._full_rate = True
@@ -76,13 +85,21 @@ class AdaptiveSamplingPolicy:
         self._queue_pressure_samples = 0
 
     @property
+    def source_fps(self) -> float:
+        """Measured delivered camera rate, capped by the requested rate."""
+        if self._source_fps_ema <= 0.0:
+            return self.camera_fps
+        return min(self.camera_fps, self._source_fps_ema)
+
+    @property
     def service_ms(self) -> float:
         return self._service_ms_ema
 
     @property
     def capacity_fps(self) -> float:
+        """Measured serialized inference capacity, independent of camera FPS."""
         if self._service_ms_ema <= 0.0:
-            return self.camera_fps
+            return self.source_fps
         return 1000.0 / self._service_ms_ema
 
     @property
@@ -94,14 +111,15 @@ class AdaptiveSamplingPolicy:
         return self._queue_pressure_samples > 0
 
     def _baseline_fps(self, *, critical: bool) -> float:
+        source_fps = self.source_fps
         if (
             self._full_rate
             and not self.queue_pressured
             and self._service_samples >= SERVICE_WARMUP_SAMPLES
         ):
-            return self.camera_fps
+            return source_fps
         if self._service_samples < SERVICE_WARMUP_SAMPLES and not self.queue_pressured:
-            return self.camera_fps
+            return source_fps
 
         capacity = self.capacity_fps
         if capacity < MIN_BASELINE_FPS:
@@ -113,9 +131,9 @@ class AdaptiveSamplingPolicy:
             else NORMAL_BASELINE_CAPACITY_RATIO
         )
         camera_cap = (
-            self.camera_fps * PRESSURED_CAMERA_RATE_RATIO
+            source_fps * PRESSURED_CAMERA_RATE_RATIO
             if self.queue_pressured
-            else self.camera_fps
+            else source_fps
         )
         ordinary = min(
             camera_cap,
@@ -141,7 +159,7 @@ class AdaptiveSamplingPolicy:
 
     def observe_queue(self, *, queue_depth: int, queue_age_seconds: float) -> None:
         """React to sustained source/inference mismatch before latency can grow."""
-        frame_interval = 1.0 / self.camera_fps
+        frame_interval = 1.0 / self.source_fps
         pressured = (
             int(queue_depth) >= QUEUE_PRESSURE_FRAMES
             or float(queue_age_seconds) >= frame_interval * 1.5
@@ -163,17 +181,30 @@ class AdaptiveSamplingPolicy:
         if self._service_samples < SERVICE_WARMUP_SAMPLES:
             return
 
-        ratio = self.capacity_fps / self.camera_fps
+        ratio = self.capacity_fps / self.source_fps
         if self._full_rate:
             if ratio < FULL_RATE_EXIT_RATIO:
                 self._full_rate = False
         elif not self.queue_pressured and ratio >= FULL_RATE_ENTER_RATIO:
             self._full_rate = True
 
+    def _observe_source_interval(self, elapsed: float) -> None:
+        if elapsed <= 0.0:
+            return
+        # Do not let timestamp jitter imply a source rate above the canonical
+        # requested camera rate. A slower delivered rate, however, is real input
+        # availability and should redefine what "full rate" means.
+        sample = min(self.camera_fps, 1.0 / max(elapsed, 1e-6))
+        self._source_fps_ema = (
+            sample
+            if self._source_fps_ema <= 0.0
+            else (1.0 - SOURCE_FPS_EMA_ALPHA) * self._source_fps_ema
+            + SOURCE_FPS_EMA_ALPHA * sample
+        )
+
     def decide(self, captured_at: float, *, critical: bool) -> SamplingDecision:
         captured_at = float(captured_at)
         critical = bool(critical)
-        baseline_fps = self.baseline_fps_for(critical=critical)
 
         if self._last_decision_at <= 0.0:
             self._last_decision_at = captured_at
@@ -182,6 +213,8 @@ class AdaptiveSamplingPolicy:
 
         elapsed = max(0.0, captured_at - self._last_decision_at)
         self._last_decision_at = captured_at
+        self._observe_source_interval(elapsed)
+        baseline_fps = self.baseline_fps_for(critical=critical)
 
         if self._full_rate and not self.queue_pressured:
             self._baseline_credit = 0.0
