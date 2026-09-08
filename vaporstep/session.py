@@ -11,6 +11,13 @@ from .session_base import *  # noqa: F401,F403
 _stop_music = _base._stop_music
 
 
+def _sync_base_hooks() -> None:
+    # Existing tests and callers monkeypatch vaporstep.session._stop_music. The
+    # preserved implementation now lives in session_base, so mirror that hook
+    # before entering any base method that can stop audio.
+    _base._stop_music = _stop_music
+
+
 class GameSession(_base.GameSession):
     """Game session that consumes every completed camera inference result.
 
@@ -20,8 +27,17 @@ class GameSession(_base.GameSession):
     """
 
     def restart(self) -> None:
+        _sync_base_hooks()
         clear_capture_bodies()
         super().restart()
+
+    def stop(self) -> None:
+        _sync_base_hooks()
+        super().stop()
+
+    def finish_music_outro(self) -> bool:
+        _sync_base_hooks()
+        return super().finish_music_outro()
 
     def _input_scoring_time(self, body: BodyState, current_time: float, now: float) -> float:
         """Map completed camera evidence to capture-time song position.
@@ -68,6 +84,8 @@ class GameSession(_base.GameSession):
         *,
         start_immediately: bool = False,
     ) -> None:
+        _sync_base_hooks()
+
         # Keyboard/synthetic input remains one immediate sample per game-loop
         # update. Clear any stale camera evidence left by a mode/camera switch.
         if not body.timestamp_is_capture:
