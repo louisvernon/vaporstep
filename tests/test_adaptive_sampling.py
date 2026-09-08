@@ -6,6 +6,14 @@ def _warm(policy: AdaptiveSamplingPolicy, service_ms: float) -> None:
         policy.observe_service(service_ms)
 
 
+def _deliver(policy: AdaptiveSamplingPolicy, fps: float, frames: int = 24) -> None:
+    timestamp = 1.0
+    policy.decide(timestamp, critical=False)
+    for _ in range(frames - 1):
+        timestamp += 1.0 / fps
+        policy.decide(timestamp, critical=False)
+
+
 def test_capable_machine_stays_at_full_camera_rate() -> None:
     policy = AdaptiveSamplingPolicy(30.0)
     _warm(policy, 25.0)
@@ -13,6 +21,31 @@ def test_capable_machine_stays_at_full_camera_rate() -> None:
     assert policy.full_rate is True
     assert policy.baseline_fps == 30.0
     assert policy.capacity_fps > 30.0
+
+
+def test_measured_source_rate_does_not_cap_inference_capacity() -> None:
+    policy = AdaptiveSamplingPolicy(30.0)
+    _deliver(policy, 15.0)
+    _warm(policy, 50.0)  # 20 Hz inference capacity on a 15 Hz delivered camera.
+
+    assert 14.5 < policy.source_fps < 15.5
+    assert 19.5 < policy.capacity_fps < 20.5
+    assert policy.full_rate is True
+    assert 14.5 < policy.baseline_fps < 15.5
+
+
+def test_slow_delivered_camera_keeps_every_frame_when_inference_can_keep_up() -> None:
+    policy = AdaptiveSamplingPolicy(30.0)
+    _deliver(policy, 15.0)
+    _warm(policy, 50.0)
+
+    decisions = []
+    timestamp = 5.0
+    for _ in range(30):
+        decisions.append(policy.decide(timestamp, critical=False))
+        timestamp += 1.0 / 15.0
+
+    assert all(decision.keep and decision.baseline for decision in decisions)
 
 
 def test_slower_machine_uses_most_capacity_away_from_notes() -> None:
