@@ -57,24 +57,25 @@ def test_slower_machine_uses_most_capacity_away_from_notes() -> None:
     assert 22.0 < policy.baseline_fps < 23.0
 
 
-def test_timing_window_reserves_explicit_extra_capacity() -> None:
+def test_timing_window_never_reduces_protected_baseline() -> None:
     policy = AdaptiveSamplingPolicy(30.0)
     _warm(policy, 40.0)
 
     assert 24.0 < policy.capacity_fps < 26.0
-    assert 14.0 < policy.baseline_fps_for(critical=True) < 16.0
+    assert 22.0 < policy.baseline_fps < 23.0
+    assert policy.baseline_fps_for(critical=True) == policy.baseline_fps
 
 
-def test_critical_baseline_keeps_ten_fps_floor_on_slower_machine() -> None:
+def test_critical_baseline_stays_at_normal_rate_on_slower_machine() -> None:
     policy = AdaptiveSamplingPolicy(30.0)
     _warm(policy, 66.6666667)
 
     assert 14.0 < policy.capacity_fps < 16.0
     assert 13.0 < policy.baseline_fps < 14.0
-    assert policy.baseline_fps_for(critical=True) == 10.0
+    assert policy.baseline_fps_for(critical=True) == policy.baseline_fps
 
 
-def test_very_slow_machine_cannot_reserve_capacity_it_does_not_have() -> None:
+def test_very_slow_machine_uses_all_capacity_as_protected_baseline() -> None:
     policy = AdaptiveSamplingPolicy(30.0)
     _warm(policy, 125.0)
 
@@ -86,7 +87,7 @@ def test_very_slow_machine_cannot_reserve_capacity_it_does_not_have() -> None:
 
 def test_fractional_baseline_does_not_collapse_to_every_other_frame() -> None:
     policy = AdaptiveSamplingPolicy(30.0)
-    _warm(policy, 40.0)  # 25 Hz capacity -> 22.5 Hz ordinary baseline.
+    _warm(policy, 40.0)  # 25 Hz capacity -> 22.5 Hz protected baseline.
 
     decisions = []
     timestamp = 1.0
@@ -98,9 +99,9 @@ def test_fractional_baseline_does_not_collapse_to_every_other_frame() -> None:
     assert 21 <= baseline_count <= 24
 
 
-def test_timing_window_keeps_all_camera_frames_eligible_as_extras() -> None:
+def test_timing_window_keeps_remaining_camera_frames_eligible_as_extras() -> None:
     policy = AdaptiveSamplingPolicy(30.0)
-    _warm(policy, 40.0)  # 25 Hz capacity -> 15 Hz protected baseline.
+    _warm(policy, 40.0)  # 25 Hz capacity -> 22.5 Hz protected baseline.
 
     decisions = []
     timestamp = 1.0
@@ -111,14 +112,16 @@ def test_timing_window_keeps_all_camera_frames_eligible_as_extras() -> None:
     baseline_count = sum(decision.keep and decision.baseline for decision in decisions)
     extra_count = sum(decision.keep and not decision.baseline for decision in decisions)
 
-    # Critical sampling deliberately requests all camera frames. Queue pressure,
-    # rather than this policy, decides which optional extras must be discarded.
-    assert 14 <= baseline_count <= 16
-    assert 14 <= extra_count <= 16
+    # Dense sections preserve the same sustainable protected stream. Every
+    # intervening camera frame is requested as an optional refinement, and the
+    # queue decides which extras survive.
+    assert 21 <= baseline_count <= 24
+    assert 6 <= extra_count <= 9
+    assert baseline_count + extra_count == 30
     assert all(decision.keep for decision in decisions)
 
 
-def test_queue_pressure_forces_adaptive_mode_even_when_service_estimate_has_headroom() -> None:
+def test_queue_pressure_forces_adaptive_mode_without_throttling_headroom() -> None:
     policy = AdaptiveSamplingPolicy(30.0)
     _warm(policy, 25.0)  # Nominal service capacity is 40 Hz.
     assert policy.full_rate
@@ -127,4 +130,28 @@ def test_queue_pressure_forces_adaptive_mode_even_when_service_estimate_has_head
 
     assert not policy.full_rate
     assert policy.queue_pressured
-    assert policy.baseline_fps < 30.0
+    # The measured worker can comfortably process every 30 Hz source frame, so
+    # pressure from a transient backlog must not arbitrarily cut the baseline.
+    assert policy.baseline_fps == 30.0
+
+
+def test_queue_pressure_does_not_reduce_sustainable_baseline() -> None:
+    policy = AdaptiveSamplingPolicy(30.0)
+    _warm(policy, 40.0)  # 25 Hz capacity -> 22.5 Hz protected baseline.
+    before = policy.baseline_fps
+
+    policy.observe_queue(queue_depth=2, queue_age_seconds=0.07)
+
+    assert policy.queue_pressured
+    assert policy.baseline_fps == before
+
+
+def test_queue_pressure_does_not_thin_slow_source_that_fits_capacity() -> None:
+    policy = AdaptiveSamplingPolicy(30.0)
+    _deliver(policy, 15.0)
+    _warm(policy, 50.0)  # 20 Hz inference capacity, 15 Hz source.
+
+    policy.observe_queue(queue_depth=2, queue_age_seconds=0.11)
+
+    assert policy.queue_pressured
+    assert 14.5 < policy.baseline_fps < 15.5

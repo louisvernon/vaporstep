@@ -16,14 +16,10 @@ SERVICE_WARMUP_SAMPLES = 12
 MAX_QUEUE_AGE_SECONDS = 0.20
 QUEUE_PRESSURE_FRAMES = 2
 QUEUE_PRESSURE_HOLD_SAMPLES = 18
-# Away from scoring windows, use most of sustainable inference throughput so
-# motion remains naturally smooth. In timing-critical windows, lower the
-# protected baseline to create room for opportunistic higher-resolution samples.
-# The queue, not a predicted extra-rate cap, decides how many extras survive.
+# Keep a little steady-state headroom for service-time jitter. Timing-critical
+# sampling must never reduce this protected stream: intervening camera frames
+# become disposable extras on top of the same sustainable baseline.
 NORMAL_BASELINE_CAPACITY_RATIO = 0.90
-PRESSURED_BASELINE_CAPACITY_RATIO = 0.85
-PRESSURED_CAMERA_RATE_RATIO = 0.90
-CRITICAL_EXTRA_RESERVE_FPS = 10.0
 
 
 _timing_critical = threading.Event()
@@ -49,7 +45,7 @@ class SamplingDecision:
 
 
 class AdaptiveSamplingPolicy:
-    """Choose protected baseline samples and opportunistic timing-window extras.
+    """Choose a sustainable protected stream plus opportunistic extras.
 
     ``camera_fps`` is the requested/canonical camera ceiling. The policy also
     measures the rate at which frames are actually delivered from capture
@@ -59,15 +55,14 @@ class AdaptiveSamplingPolicy:
 
     Inference capacity is measured independently from complete inference
     service time. Machines with genuine headroom over the delivered source rate
-    keep every frame. When capacity is lower, ordinary gameplay keeps a high
-    protected baseline near sustainable throughput. During timing-critical chart
-    windows, only the *protected* baseline is reduced aggressively, creating room
-    for extra camera samples.
+    keep every frame. When capacity is lower, gameplay keeps a protected
+    baseline close to sustainable throughput.
 
-    Every non-baseline camera frame in a critical window remains eligible. We do
-    not pre-throttle extras from an imperfect capacity estimate: the inference
-    queue keeps them while capacity is available and sheds them when protected
-    baseline debt proves the worker is falling behind.
+    Timing-critical windows do not lower that protected baseline. Every
+    intervening camera frame remains eligible as an extra, so short dense bursts
+    can spend bounded queue latency on additional temporal evidence. The queue
+    sheds extras first if protected baseline debt proves the worker is falling
+    behind.
 
     Fractional baseline targets are scheduled with a time-based accumulator. This
     matters at a 30 Hz camera: a naive minimum-interval test turns many targets in
@@ -125,29 +120,14 @@ class AdaptiveSamplingPolicy:
         if capacity < MIN_BASELINE_FPS:
             return max(1.0, capacity)
 
-        ratio = (
-            PRESSURED_BASELINE_CAPACITY_RATIO
-            if self.queue_pressured
-            else NORMAL_BASELINE_CAPACITY_RATIO
+        # Queue pressure may force us out of optimistic full-rate mode, but it
+        # must not reduce the protected stream below the normal sustainable
+        # baseline merely because optional extras accumulated. At 90% of measured
+        # capacity there is already steady-state headroom to drain baseline debt.
+        return min(
+            source_fps,
+            max(MIN_BASELINE_FPS, capacity * NORMAL_BASELINE_CAPACITY_RATIO),
         )
-        camera_cap = (
-            source_fps * PRESSURED_CAMERA_RATE_RATIO
-            if self.queue_pressured
-            else source_fps
-        )
-        ordinary = min(
-            camera_cap,
-            max(MIN_BASELINE_FPS, capacity * ratio),
-        )
-        if not critical:
-            return ordinary
-
-        # Preserve a useful motion floor, then create up to ten potential
-        # inference slots/sec for timing-window extras. The queue is free to use
-        # more instantaneous spare capacity and will flush extras if baseline
-        # debt accumulates.
-        critical_baseline = max(MIN_BASELINE_FPS, capacity - CRITICAL_EXTRA_RESERVE_FPS)
-        return min(ordinary, critical_baseline)
 
     @property
     def baseline_fps(self) -> float:
