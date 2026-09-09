@@ -45,7 +45,7 @@ The easiest way to use VaporStep is with a packaged build from the project relea
 
 1. Download the build for your platform and launch VaporStep.
 2. Put your compatible song library in `~/VaporStep/Songs`, or choose **Song Folder** to use another location.
-3. Open **Calibration** if you want to check camera position or adjust reach. Press **V** there to choose the real silhouette or the lower-cost procedural character.
+3. Open **Calibration** if you want to check camera position or adjust reach. Press **V** there to cycle the real silhouette, built-in character and any custom characters in `~/VaporStep/Characters/`.
 4. Choose **Play**, pick a song and move into position.
 
 On first launch your operating system may ask for camera access. VaporStep releases the camera whenever you are browsing menus or results and acquires it only for calibration and gameplay. If you later choose a song folder in an operating-system protected location, the OS may separately ask for permission to access it.
@@ -54,7 +54,9 @@ macOS releases are signed and notarized. Windows releases are also signed but st
 
 ## Custom characters
 
-Character mode uses VaporStep's built-in procedural character by default. To make your own, start with the [reference robot SVG and character authoring guide](docs/characters/README.md). Draw over the template, position its visible joint anchors on your character, and save the finished SVG in `~/VaporStep/Characters/`. The built-in character remains available simply by removing the custom file.
+VaporStep puts an editable reference robot SVG in `~/VaporStep/Characters/`. To make your own, open that file or use the [reference robot SVG and character authoring guide](docs/characters/README.md), draw over the template, position its visible joint anchors on your character, and save your character as another SVG in the same directory. Press **V** in Calibration to cycle through the silhouette, built-in character and each SVG alphabetically.
+
+Custom SVG artwork is parsed into vector primitives when selected. The live pose transforms those vector points each frame and Pygame rasterizes only the final transformed geometry, so character artwork is not cached as a bitmap.
 
 ## Song libraries
 
