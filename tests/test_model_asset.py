@@ -29,5 +29,5 @@ def test_accuracy_pose_model_manifest_is_version_pinned_and_hashed():
 def test_pose_model_mode_aliases_and_default():
     assert normalize_pose_model_mode("lite") == "speed"
     assert normalize_pose_model_mode("full") == "accuracy"
-    assert normalize_pose_model_mode("unknown") == "speed"
-    assert load_pose_model_spec().filename == "pose_landmarker_lite.task"
+    assert normalize_pose_model_mode("unknown") == "accuracy"
+    assert load_pose_model_spec().filename == "pose_landmarker_full.task"
