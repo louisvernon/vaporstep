@@ -14,5 +14,16 @@ This file is generated from `assets/models.json`. Edit the manifest, then run
 - Upstream project: Google MediaPipe / Google AI Edge
 - License: Apache-2.0
 
+## MediaPipe Pose Landmarker Full
+
+- Model variant: float16
+- Pinned upstream version: `1`
+- Filename: `pose_landmarker_full.task`
+- Upstream URL: `https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/1/pose_landmarker_full.task`
+- Expected size: `9,398,198` bytes
+- SHA-256: `5134a3aad27a58b93da0088d431f366da362b44e3ccfbe3462b3827a839011b1`
+- Upstream project: Google MediaPipe / Google AI Edge
+- License: Apache-2.0
+
 Both source-mode downloads and release builds use the same manifest and verify
-the exact size and SHA-256 before accepting the model.
+the exact size and SHA-256 before accepting either model.

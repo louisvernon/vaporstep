@@ -47,14 +47,14 @@ def test_character_setting_round_trips(tmp_path: Path) -> None:
     assert reloaded.settings.player_visual == "character"
 
 
-def test_visual_toggle_cycles_silhouette_and_character(tmp_path: Path) -> None:
+def test_visual_toggle_cycles_character_and_silhouette(tmp_path: Path) -> None:
     store = SettingsStore(tmp_path / "settings.json")
 
-    assert store.settings.player_visual == "silhouette"
-    store.settings.player_visual = _next_player_visual(store.settings.player_visual)
     assert store.settings.player_visual == "character"
     store.settings.player_visual = _next_player_visual(store.settings.player_visual)
     assert store.settings.player_visual == "silhouette"
+    store.settings.player_visual = _next_player_visual(store.settings.player_visual)
+    assert store.settings.player_visual == "character"
 
 
 def test_character_visual_draws_from_pose_landmarks() -> None:
