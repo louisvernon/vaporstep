@@ -210,7 +210,6 @@ class PoseCameraInput:
         self._inflight_extra = False
         self._last_baseline_submitted_at = 0.0
         self._policy = AdaptiveSamplingPolicy(CAMERA_FPS)
-        self._last_sampling_mode: tuple[bool, int] | None = None
         self._snapshot = PoseSnapshot(body=BodyState())
         self._lower_leg_filters = {
             "left": _LowerLegFilter(),
@@ -706,20 +705,6 @@ class PoseCameraInput:
                     else 0.9 * self._inference_service_ms + 0.1 * service_ms
                 )
                 self._policy.observe_service(service_ms)
-                mode = (self._policy.full_rate, int(round(self._policy.baseline_fps)))
-                if mode != self._last_sampling_mode:
-                    self._last_sampling_mode = mode
-                    if self._policy.full_rate:
-                        print(
-                            "Pose sampling: full rate "
-                            f"({self._policy.baseline_fps:.1f}fps, service {self._policy.service_ms:.1f}ms)"
-                        )
-                    else:
-                        print(
-                            "Pose sampling: adaptive baseline "
-                            f"{self._policy.baseline_fps:.1f}fps "
-                            f"(capacity {self._policy.capacity_fps:.1f}fps, service {self._policy.service_ms:.1f}ms)"
-                        )
             self._inference_busy.clear()
             with self._queue_condition:
                 self._inflight_extra = False
