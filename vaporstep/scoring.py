@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 import math
 from typing import Iterable
 
+from .debug_state import log_buffered_scoring_hit
 from .domain import HitQuality
 
 BASE_POINTS = 1000
@@ -194,6 +195,7 @@ class RunStats:
             self.basic_hits += 1
         points = hit_points(self.combo, quality, score_weight)
         self.score += points
+        log_buffered_scoring_hit(quality, points)
         return points
 
     def register_miss(self, *, break_combo: bool = True) -> None:
