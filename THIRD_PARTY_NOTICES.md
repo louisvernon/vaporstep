@@ -19,6 +19,7 @@ collects those files where they are provided by the packages.
 | Pygame | Rendering, input and audio | LGPL-2.1 |
 | NumPy | Numeric arrays | BSD-3-Clause and bundled notices |
 | simfile | SM/SSC parsing | MIT |
+| resvg_py / resvg | Rasterization of user-authored SVG character artwork | MIT |
 | setuptools / pkg_resources | Compatibility dependency used by simfile | MIT and bundled notices |
 | imageio-ffmpeg | FFmpeg process discovery/wrapping for recording export | BSD-2-Clause; the bundled FFmpeg executable retains its own license |
 | VaporStep Emoji Symbols (modified Noto Emoji subset) | Monochrome hand/foot capability glyphs | SIL Open Font License 1.1 |
