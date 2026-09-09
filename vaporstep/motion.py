@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 import time
 
+from .camera_samples import consume_buffered_scoring_age_ms
+from .debug_state import set_scoring_sample_context
 from .domain import BodyPoint, BodyState, HitQuality, NoteKind
 
 
@@ -55,6 +57,7 @@ class MotionTracker:
         self._states = {name: _LimbState() for name in ("lw", "rw", "lk", "rk")}
         self._events.clear()
         self._last_body_timestamp = -1.0
+        set_scoring_sample_context(None)
 
     @staticmethod
     def _limbs(body: BodyState):
@@ -110,6 +113,12 @@ class MotionTracker:
         return previous_time + (current_time - previous_time) * fraction
 
     def update(self, body: BodyState, song_time: float | None) -> list[MotionEvent]:
+        buffered_age_ms = (
+            consume_buffered_scoring_age_ms(body.timestamp)
+            if body.timestamp_is_capture and body.timestamp > 0.0
+            else None
+        )
+        set_scoring_sample_context(buffered_age_ms)
         if body.timestamp <= 0.0 or body.timestamp == self._last_body_timestamp:
             return []
         self._last_body_timestamp = body.timestamp
@@ -230,6 +239,7 @@ class MotionTracker:
         limb: str,
         strength: float = 1.0,
     ) -> MotionEvent:
+        set_scoring_sample_context(None)
         event = MotionEvent(
             kind=NoteKind(kind),
             lane=int(lane),
