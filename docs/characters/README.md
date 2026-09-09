@@ -1,20 +1,22 @@
 # Custom VaporStep characters
 
-VaporStep custom characters are a single rigged SVG file. The built-in procedural character remains the default and does not depend on any external asset.
+VaporStep custom characters are a single rigged SVG file. The built-in procedural character remains available and does not depend on an external asset.
 
-Start with [`reference-robot.svg`](reference-robot.svg). It is both a working character and an authoring template.
+VaporStep installs an editable `reference-robot.svg` into `~/VaporStep/Characters/` the first time the character renderer is created. If you edit or replace that file, VaporStep does not overwrite it on later launches. The repository copy at [`reference-robot.svg`](reference-robot.svg) is the same authoring template.
 
 ## Make a character
 
-1. Download `reference-robot.svg` and open it in Inkscape, Illustrator, Affinity Designer, or another SVG editor.
-2. Replace the shapes inside the named artwork groups (`head`, `torso`, `left-upper-arm`, and so on) with your own art. Keep the group IDs unchanged.
-3. Move the visible anchor circles so they sit on your character's joints. Keep every `anchor-*` ID unchanged and edit the circles with `cx`/`cy` coordinates rather than applying a transform to the circle itself.
-4. Save as plain SVG.
-5. Put the SVG in `~/VaporStep/Characters/`.
+1. Open `~/VaporStep/Characters/reference-robot.svg` in Inkscape, Illustrator, Affinity Designer, or another SVG editor.
+2. Save a copy under a new `.svg` filename if you want to keep the reference robot too.
+3. Replace the shapes inside the named artwork groups (`head`, `torso`, `left-upper-arm`, and so on) with your own art. Keep the group IDs unchanged.
+4. Move the visible anchor circles so they sit on your character's joints. Keep every `anchor-*` ID unchanged and edit the circles with `cx`/`cy` coordinates rather than applying a transform to the circle itself.
+5. Save as plain SVG in `~/VaporStep/Characters/`.
 
-With exactly one SVG in that directory, VaporStep uses it whenever **Character** visual mode is selected. If you keep several SVGs there, name the one you want to use `active.svg`. If several SVGs exist and none is named `active.svg`, VaporStep keeps using the built-in character.
+In **Calibration**, press **V** to cycle through:
 
-Remove/rename `active.svg` (or remove the sole SVG) to return to the built-in character. Silhouette mode is unchanged.
+`Silhouette → built-in Character → each SVG in ~/VaporStep/Characters (alphabetically) → Silhouette`
+
+The active SVG name is shown in the calibration controls. VaporStep rescans the directory when you cycle, so newly added files can be picked up without a special `active.svg` filename.
 
 ## Version 1 rig
 
@@ -43,22 +45,36 @@ Required anchor circles:
 - `anchor-left-ankle`, `anchor-right-ankle`
 - `anchor-left-toe`, `anchor-right-toe`
 
-The SVG root must contain `data-vaporstep-version="1"`. `data-vaporstep-name` is optional.
+The SVG root must contain `data-vaporstep-version="1"`. `data-vaporstep-name` is optional and supplies the display name shown while cycling.
 
-## How the rig moves
+## How rendering works
 
-The SVG replaces the drawing only; VaporStep still owns the pose rig.
+The SVG is an authoring/import format, but the artwork stays vector all the way to the final screen draw.
 
-- Upper/lower arms and legs attach to the same tracked joint pairs as the built-in character. Their length follows those joints while their thickness follows camera viewport scale.
-- The torso maps its four SVG shoulder/hip anchors onto the same adjusted shoulder/hip quadrilateral used by the built-in procedural torso.
+When a character is selected, VaporStep parses its supported SVG shapes once into a small retained vector representation: point geometry, fills, strokes and stroke widths. Curves and circles are tessellated into vector points once at load time. No character bitmap is cached.
+
+Every display frame:
+
+- Upper/lower arms and legs map their vector points onto the same tracked joint pairs as the built-in character. Length follows the live joints while thickness remains tied to the camera viewport scale.
+- The torso's vector points map from its four SVG shoulder/hip anchors onto the same adjusted shoulder/hip quadrilateral used by the built-in procedural torso.
 - The head uses the built-in head center/size calculation (ears first, then the existing nose/shoulder fallbacks) and remains upright like the built-in head.
 - Hands stay centered on wrists.
 - Shoes follow ankle-to-toe direction using the same tracked foot-index landmarks as the built-in character.
+- Only after those live transformations are calculated does Pygame rasterize the resulting polygons and lines to the screen.
 
-The guide and rig layers in `reference-robot.svg` are authoring aids and are never rendered in game; only the named artwork groups are rasterized.
+The guide and rig layers in the reference SVG are authoring aids and are never part of the rendered artwork.
 
 ## SVG compatibility and safety
 
-Keep character SVGs intentionally simple: vector paths/shapes, fills, strokes, simple gradients, and internal definitions. Avoid scripts, embedded/external images, animation, filters, external fonts, and linked resources.
+Version 1 intentionally supports a small SVG subset so character rendering stays predictable and cheap:
 
-VaporStep rasterizes each body part once when the renderer starts, then reuses those surfaces during play. External links/resources and active SVG content are rejected. Character files are also size/complexity limited. A malformed or unsupported custom SVG falls back to the built-in character instead of stopping gameplay.
+- groups
+- `path` commands `M/L/H/V/C/S/Q/T/Z` (absolute or relative)
+- `rect`, `circle`, `ellipse`, `line`, `polygon`, `polyline`
+- solid `#RGB`, `#RRGGBB`, or `rgb()` fills and strokes
+- fill/stroke opacity, overall opacity, stroke width
+- basic `matrix`, `translate`, `scale`, `rotate`, `skewX`, and `skewY` transforms
+
+Version 1 does **not** support SVG arc path commands (`A/a`), gradients/patterns, filters, embedded or external images, `<use>`, scripts, animation, linked resources, or external fonts. Unsupported files are rejected and VaporStep falls back to the built-in character instead of stopping gameplay.
+
+Character files are also size/complexity limited. Keeping the format deliberately small means the SVG is parsed only when selected while the per-frame work is just transforming and drawing retained vector primitives.
