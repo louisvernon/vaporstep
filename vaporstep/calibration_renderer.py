@@ -5,6 +5,7 @@ import time
 import pygame
 
 from .cached_character_renderer import Renderer as CharacterRenderer
+from .debug_state import set_debug_enabled
 from .pose_presentation import PosePresentationExtrapolator
 from .renderer import AMBER, BG, CYAN, DIM, GREEN, RED, WHITE
 
@@ -25,6 +26,10 @@ class Renderer(CharacterRenderer):
         self._pose_presentation.reset()
 
     def draw(self, *args, **kwargs) -> None:
+        # Either visible F3 level arrives here as debug=True. Publish it once so
+        # runtime diagnostics can follow F3 without threading another flag
+        # through gameplay and scoring APIs.
+        set_debug_enabled(bool(kwargs.get("debug", False)))
         overlay_alpha = kwargs.pop("overlay_alpha", None)
         previous = self._overlay_alpha_override
         self._overlay_alpha_override = (
@@ -110,9 +115,9 @@ class Renderer(CharacterRenderer):
         camera_index: int | None,
         horizontal_reach: float,
         camera_status: str,
-        player_visual: str = "silhouette",
+        player_visual: str = "character",
         *,
-        pose_model_mode: str = "speed",
+        pose_model_mode: str = "accuracy",
         inference_percent: int | None = None,
     ) -> None:
         w, h = self.size
