@@ -5,7 +5,7 @@ from pathlib import Path
 import pygame
 import pytest
 
-from vaporstep.svg_character_renderer import (
+from vaporstep.svg_character_runtime import (
     REQUIRED_ANCHORS,
     REQUIRED_PARTS,
     SvgCharacter,
