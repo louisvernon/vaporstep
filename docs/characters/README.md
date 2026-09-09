@@ -12,7 +12,7 @@ VaporStep installs an editable `reference-robot.svg` into `~/VaporStep/Character
 4. Move the visible anchor circles so they sit on your character's joints. Keep every `anchor-*` ID unchanged and edit the circles with `cx`/`cy` coordinates rather than applying a transform to the circle itself.
 5. Save as plain SVG in `~/VaporStep/Characters/`.
 
-Characters are drawn directly over the playfield, so **outline-first artwork is strongly recommended**. Thin strokes with transparent interiors preserve note visibility much better than large filled or opaque shapes. The reference robot intentionally demonstrates this style; small filled accents are fine where they do not obscure gameplay.
+Characters are drawn directly over the playfield, so **outline-first artwork is strongly recommended**. Thin, dim strokes with transparent interiors preserve note visibility much better than large filled or opaque shapes. The reference robot intentionally demonstrates this style: its main outlines are about `0.75` SVG units wide at a 600-unit viewBox and use roughly 50% opacity. Small filled accents are fine where they do not obscure gameplay.
 
 In **Calibration**, press **V** to cycle through:
 
@@ -47,6 +47,13 @@ Required anchor circles:
 - `anchor-left-ankle`, `anchor-right-ankle`
 - `anchor-left-toe`, `anchor-right-toe`
 
+Optional hand-orientation anchors:
+
+- `anchor-left-hand-tip`
+- `anchor-right-hand-tip`
+
+These define the direction the hand artwork points in the source SVG, from wrist to hand-tip. At runtime VaporStep rotates the hand toward the midpoint of MediaPipe's index and pinky landmarks. If the orientation anchor is absent, older v1 characters remain compatible and VaporStep assumes the hand artwork points downward from the wrist.
+
 The SVG root must contain `data-vaporstep-version="1"`. `data-vaporstep-name` is optional metadata for the character file.
 
 ## How rendering works
@@ -60,7 +67,7 @@ Every display frame:
 - Upper/lower arms and legs map their vector points onto the same tracked joint pairs as the built-in character. Length follows the live joints while thickness remains tied to the camera viewport scale.
 - The torso's vector points map from its four SVG shoulder/hip anchors onto the same adjusted shoulder/hip quadrilateral used by the built-in procedural torso.
 - The head uses the built-in head center/size calculation (ears first, then the existing nose/shoulder fallbacks) and remains upright like the built-in head.
-- Hands stay centered on wrists.
+- Hands stay centered on wrists and rotate with the live palm/finger direction when MediaPipe exposes the index/pinky landmarks.
 - Shoes follow ankle-to-toe direction using the same tracked foot-index landmarks as the built-in character.
 - Only after those live transformations are calculated does Pygame rasterize the resulting polygons and lines to the screen.
 
