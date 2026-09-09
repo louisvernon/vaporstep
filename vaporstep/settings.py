@@ -15,6 +15,7 @@ MAX_HORIZONTAL_REACH = 2.00
 HORIZONTAL_REACH_STEP = 0.05
 PRIVACY_NOTICE_VERSION = 2
 PLAYER_VISUALS = ("silhouette", "character")
+DEFAULT_PLAYER_VISUAL = "character"
 
 
 def default_settings_path() -> Path:
@@ -35,7 +36,7 @@ def normalize_player_visual(value: object) -> str:
     visual = str(value or "").strip().casefold()
     if visual == "skeleton":
         return "character"
-    return visual if visual in PLAYER_VISUALS else "silhouette"
+    return visual if visual in PLAYER_VISUALS else DEFAULT_PLAYER_VISUAL
 
 
 @dataclass
@@ -44,7 +45,7 @@ class AppSettings:
     camera_index: int = 0
     camera_enabled: bool = True
     horizontal_reach: float = PLAYER_HORIZONTAL_ZOOM
-    player_visual: str = "silhouette"
+    player_visual: str = DEFAULT_PLAYER_VISUAL
     pose_model_mode: str = DEFAULT_POSE_MODEL_MODE
     favorite_song_keys: list[str] = field(default_factory=list)
     played_song_keys: list[str] = field(default_factory=list)
@@ -108,7 +109,9 @@ class SettingsStore:
                 camera_index=int(raw.get("camera_index", 0)),
                 camera_enabled=bool(raw.get("camera_enabled", True)),
                 horizontal_reach=float(raw.get("horizontal_reach", PLAYER_HORIZONTAL_ZOOM)),
-                player_visual=normalize_player_visual(raw.get("player_visual", "silhouette")),
+                player_visual=normalize_player_visual(
+                    raw.get("player_visual", DEFAULT_PLAYER_VISUAL)
+                ),
                 pose_model_mode=normalize_pose_model_mode(
                     raw.get("pose_model_mode", DEFAULT_POSE_MODEL_MODE)
                 ),
