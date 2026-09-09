@@ -90,6 +90,7 @@
       <circle id="anchor-left-shoulder" cx="240" cy="220" r="9"/>
       <circle id="anchor-left-elbow" cx="150" cy="340" r="9"/>
       <circle id="anchor-left-wrist" cx="90" cy="460" r="9"/>
+      <circle id="anchor-left-hand-tip" cx="60" cy="460" r="7"/>
       <circle id="anchor-left-hip" cx="260" cy="470" r="9"/>
       <circle id="anchor-left-knee" cx="240" cy="650" r="9"/>
       <circle id="anchor-left-ankle" cx="225" cy="820" r="9"/>
@@ -100,6 +101,7 @@
       <circle id="anchor-right-shoulder" cx="360" cy="220" r="9"/>
       <circle id="anchor-right-elbow" cx="450" cy="340" r="9"/>
       <circle id="anchor-right-wrist" cx="510" cy="460" r="9"/>
+      <circle id="anchor-right-hand-tip" cx="540" cy="460" r="7"/>
       <circle id="anchor-right-hip" cx="340" cy="470" r="9"/>
       <circle id="anchor-right-knee" cx="360" cy="650" r="9"/>
       <circle id="anchor-right-ankle" cx="375" cy="820" r="9"/>
