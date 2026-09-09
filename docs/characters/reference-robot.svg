@@ -3,20 +3,10 @@
      width="600" height="900" viewBox="0 0 600 900"
      data-vaporstep-version="1"
      data-vaporstep-name="Reference Robot">
-  <defs>
-    <linearGradient id="robot-cyan" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#62f7ff"/>
-      <stop offset="1" stop-color="#176b83"/>
-    </linearGradient>
-    <linearGradient id="robot-magenta" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#ff75ee"/>
-      <stop offset="1" stop-color="#7d2b90"/>
-    </linearGradient>
-  </defs>
 
   <!-- ARTWORK: keep these group ids unchanged; replace their contents with your own art. -->
   <g id="left-upper-leg">
-    <path d="M245 466 L276 470 L261 654 L220 650 Z" fill="url(#robot-cyan)" stroke="#b9fbff" stroke-width="4"/>
+    <path d="M245 466 L276 470 L261 654 L220 650 Z" fill="#176b83" stroke="#b9fbff" stroke-width="4"/>
     <path d="M259 478 L269 480 L254 636 L244 635 Z" fill="#d5feff" opacity="0.38"/>
   </g>
   <g id="left-lower-leg">
@@ -24,7 +14,7 @@
     <path d="M234 662 L245 663 L233 804 L221 803 Z" fill="#62f7ff" opacity="0.38"/>
   </g>
   <g id="right-upper-leg">
-    <path d="M324 470 L355 466 L380 650 L339 654 Z" fill="url(#robot-magenta)" stroke="#ffd0f8" stroke-width="4"/>
+    <path d="M324 470 L355 466 L380 650 L339 654 Z" fill="#7d2b90" stroke="#ffd0f8" stroke-width="4"/>
     <path d="M333 480 L343 478 L365 635 L355 636 Z" fill="#fff0fd" opacity="0.35"/>
   </g>
   <g id="right-lower-leg">
@@ -62,7 +52,7 @@
     <rect x="252" y="122" width="96" height="52" rx="12" fill="#071625" stroke="#62f7ff" stroke-width="3"/>
     <rect x="270" y="139" width="18" height="9" rx="4" fill="#62f7ff"/>
     <rect x="312" y="139" width="18" height="9" rx="4" fill="#ff75ee"/>
-    <path d="M300 92 L300 64 L326 45" fill="none" stroke="#ff75ee" stroke-width="4" stroke-linecap="round"/>
+    <path d="M300 92 L300 64 L326 45" fill="none" stroke="#ff75ee" stroke-width="4"/>
     <circle cx="330" cy="42" r="8" fill="#62f7ff" stroke="#d8ffff" stroke-width="2"/>
   </g>
 
@@ -76,11 +66,11 @@
   </g>
   <g id="left-shoe">
     <path d="M210 802 L243 817 L220 852 L158 860 L154 840 Z" fill="#102f42" stroke="#62f7ff" stroke-width="4"/>
-    <path d="M173 842 L214 834" stroke="#d8ffff" stroke-width="4" stroke-linecap="round"/>
+    <path d="M173 842 L214 834" fill="none" stroke="#d8ffff" stroke-width="4"/>
   </g>
   <g id="right-shoe">
     <path d="M357 817 L390 802 L446 840 L442 860 L380 852 Z" fill="#42133f" stroke="#ff75ee" stroke-width="4"/>
-    <path d="M386 834 L427 842" stroke="#fff0fd" stroke-width="4" stroke-linecap="round"/>
+    <path d="M386 834 L427 842" fill="none" stroke="#fff0fd" stroke-width="4"/>
   </g>
 
   <!-- GUIDE SKELETON: ignored by VaporStep at runtime. -->
