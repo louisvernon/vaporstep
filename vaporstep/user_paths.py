@@ -11,6 +11,10 @@ def songs_dir() -> Path:
     return vaporstep_home() / "Songs"
 
 
+def characters_dir() -> Path:
+    return vaporstep_home() / "Characters"
+
+
 def state_dir() -> Path:
     return vaporstep_home() / "State"
 
