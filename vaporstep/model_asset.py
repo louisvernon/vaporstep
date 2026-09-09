@@ -10,7 +10,7 @@ from .resources import resource_path
 from .user_paths import cache_dir
 
 
-DEFAULT_POSE_MODEL_MODE = "speed"
+DEFAULT_POSE_MODEL_MODE = "accuracy"
 POSE_MODEL_MODES = ("speed", "accuracy")
 POSE_MODEL_KEYS = {
     "speed": "pose_landmarker_lite",
