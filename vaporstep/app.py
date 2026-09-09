@@ -226,7 +226,9 @@ def _profile_toggle_requested(mode: str, event) -> bool:
 
 
 def _next_player_visual(value: object) -> str:
-    return "character" if normalize_player_visual(value) == "silhouette" else "silhouette"
+    from .svg_character_renderer import cycle_player_visual
+
+    return cycle_player_visual(normalize_player_visual(value))
 
 
 def _next_pose_model_mode(value: object) -> str:
