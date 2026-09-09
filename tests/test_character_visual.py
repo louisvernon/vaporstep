@@ -9,6 +9,10 @@ from vaporstep.app import _next_player_visual
 from vaporstep.character_renderer import Renderer
 from vaporstep.domain import BodyPoint, PoseFigure
 from vaporstep.settings import SettingsStore
+from vaporstep.svg_character_renderer import (
+    active_character_filename,
+    set_active_character_filename,
+)
 
 
 def _pose() -> PoseFigure:
@@ -47,14 +51,28 @@ def test_character_setting_round_trips(tmp_path: Path) -> None:
     assert reloaded.settings.player_visual == "character"
 
 
-def test_visual_toggle_cycles_character_and_silhouette(tmp_path: Path) -> None:
-    store = SettingsStore(tmp_path / "settings.json")
+def test_app_visual_toggle_cycles_through_custom_character(
+    tmp_path: Path, monkeypatch
+) -> None:
+    reference = Path(__file__).parents[1] / "assets" / "characters" / "reference-robot.svg"
+    (tmp_path / "robot.svg").write_text(reference.read_text(encoding="utf-8"), encoding="utf-8")
+    monkeypatch.setattr("vaporstep.svg_character_renderer.characters_dir", lambda: tmp_path)
+    set_active_character_filename(None)
+    try:
+        # Character starts with the built-in renderer; V advances to the SVG
+        # while keeping the persisted visual family as "character".
+        assert _next_player_visual("character") == "character"
+        assert active_character_filename() == "robot.svg"
 
-    assert store.settings.player_visual == "character"
-    store.settings.player_visual = _next_player_visual(store.settings.player_visual)
-    assert store.settings.player_visual == "silhouette"
-    store.settings.player_visual = _next_player_visual(store.settings.player_visual)
-    assert store.settings.player_visual == "character"
+        # The next V completes the cycle back to silhouette.
+        assert _next_player_visual("character") == "silhouette"
+        assert active_character_filename() is None
+
+        # Silhouette then returns to the built-in character first.
+        assert _next_player_visual("silhouette") == "character"
+        assert active_character_filename() is None
+    finally:
+        set_active_character_filename(None)
 
 
 def test_character_visual_draws_from_pose_landmarks() -> None:

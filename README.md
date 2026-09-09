@@ -32,6 +32,7 @@ VaporStep has out of the box support for StepMania style step/sim files, so you 
 - Browse songs by difficulty, BPM and hand/foot information.
 - Favorite songs, filter previously played songs and keep local high scores.
 - Record each run as a local shareable video with the rendered player visual and game audio.
+- Create your own pose-driven character artwork from a rigged SVG template.
 - Play on macOS, Windows and Linux.
 
 VaporStep does **not** include songs or song-pack artwork. You provide your own compatible song library.
@@ -44,12 +45,18 @@ The easiest way to use VaporStep is with a packaged build from the project relea
 
 1. Download the build for your platform and launch VaporStep.
 2. Put your compatible song library in `~/VaporStep/Songs`, or choose **Song Folder** to use another location.
-3. Open **Calibration** if you want to check camera position or adjust reach. Press **V** there to choose the real silhouette or the lower-cost procedural character.
+3. Open **Calibration** if you want to check camera position or adjust reach. Press **V** there to cycle the real silhouette, built-in character and any custom characters in `~/VaporStep/Characters/`.
 4. Choose **Play**, pick a song and move into position.
 
 On first launch your operating system may ask for camera access. VaporStep releases the camera whenever you are browsing menus or results and acquires it only for calibration and gameplay. If you later choose a song folder in an operating-system protected location, the OS may separately ask for permission to access it.
 
 macOS releases are signed and notarized. Windows releases are also signed but still may trigger a SmartScreen warning until the app is better known. 
+
+## Custom characters
+
+VaporStep puts an editable reference robot SVG in `~/VaporStep/Characters/`. To make your own, open that file or use the [reference robot SVG and character authoring guide](docs/characters/README.md), draw over the template, position its visible joint anchors on your character, and save your character as another SVG in the same directory. Press **V** in Calibration to cycle through the silhouette, built-in character and each SVG alphabetically.
+
+Custom SVG artwork is parsed into vector primitives when selected. The live pose transforms those vector points each frame and Pygame rasterizes only the final transformed geometry, so character artwork is not cached as a bitmap.
 
 ## Song libraries
 

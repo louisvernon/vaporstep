@@ -226,7 +226,9 @@ def _profile_toggle_requested(mode: str, event) -> bool:
 
 
 def _next_player_visual(value: object) -> str:
-    return "character" if normalize_player_visual(value) == "silhouette" else "silhouette"
+    from .svg_character_renderer import cycle_player_visual
+
+    return cycle_player_visual(normalize_player_visual(value))
 
 
 def _next_pose_model_mode(value: object) -> str:
@@ -1107,15 +1109,23 @@ def main(argv: list[str] | None = None) -> int:
                             renderer.reset_game_effects()
                             menu_sounds.tick()
                         elif event.key == pygame.K_v:
-                            settings_store.settings.player_visual = _next_player_visual(
+                            previous_visual = normalize_player_visual(
                                 settings_store.settings.player_visual
                             )
+                            settings_store.settings.player_visual = _next_player_visual(
+                                previous_visual
+                            )
                             _safe_settings_save(settings_store)
-                            restart_camera()
-                            calibration_session.restart()
-                            calibration_session.set_keyboard_mode(True)
-                            keyboard.reset()
-                            renderer.reset_game_effects()
+                            # MediaPipe only needs rebuilding when crossing the
+                            # silhouette/character boundary because that changes
+                            # segmentation-mask output. Built-in/custom character
+                            # changes reuse the live pose stream and calibration state.
+                            if settings_store.settings.player_visual != previous_visual:
+                                restart_camera()
+                                calibration_session.restart()
+                                calibration_session.set_keyboard_mode(True)
+                                keyboard.reset()
+                                renderer.reset_game_effects()
                             menu_sounds.tick()
                         elif event.key == pygame.K_UP:
                             if not force_keyboard:
