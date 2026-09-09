@@ -16,6 +16,10 @@ from vaporstep.svg_character_renderer import (
     parse_svg_character,
     set_active_character_filename,
 )
+from vaporstep.svg_character_orientation import (
+    SvgCharacter as OrientedSvgCharacter,
+    _map_oriented_point,
+)
 
 
 REFERENCE = Path(__file__).parents[1] / "assets" / "characters" / "reference-robot.svg"
@@ -40,6 +44,28 @@ def test_reference_robot_builds_vector_character() -> None:
 
     assert character.definition.name == "Reference Robot"
     assert character.definition.parts["torso"].primitives
+
+
+def test_reference_robot_defines_hand_orientation_anchors() -> None:
+    character = OrientedSvgCharacter.from_file(REFERENCE)
+
+    assert character._hand_tip_anchors["left-hand"] == (60.0, 460.0)
+    assert character._hand_tip_anchors["right-hand"] == (540.0, 460.0)
+
+
+def test_hand_orientation_mapping_rotates_before_rasterization() -> None:
+    # Source art points right from the wrist. A live hand pointing upward should
+    # rotate source geometry 90 degrees while preserving its vector scale.
+    mapped = _map_oriented_point(
+        point=(12.0, 10.0),
+        source_anchor=(10.0, 10.0),
+        source_tip=(20.0, 10.0),
+        live_anchor=(100.0, 100.0),
+        live_tip=(100.0, 80.0),
+        scale=2.0,
+    )
+
+    assert mapped == pytest.approx((100.0, 96.0))
 
 
 def test_reference_robot_is_installed_once_without_overwriting(tmp_path: Path) -> None:
@@ -113,7 +139,7 @@ def test_parser_reports_missing_rig_parts(tmp_path: Path) -> None:
 
 def test_parser_rejects_unsupported_vector_features(tmp_path: Path) -> None:
     text = REFERENCE.read_text(encoding="utf-8").replace(
-        'fill="#176b83"',
+        'fill="#62f7ff"',
         'fill="url(#gradient)"',
         1,
     )
