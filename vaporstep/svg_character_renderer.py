@@ -1,25 +1,30 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from io import BytesIO
-import copy
 import math
 from pathlib import Path
+import re
+import shutil
 import sys
 import xml.etree.ElementTree as ET
 
+import cv2
+import numpy as np
 import pygame
 
 from .cached_character_renderer import Renderer as CachedCharacterRenderer
 from .domain import PoseFigure
+from .renderer import BG
+from .resources import resource_path
 from .user_paths import characters_dir
 
 
 FORMAT_VERSION = "1"
-RASTER_WIDTH = 768
-MAX_RASTER_HEIGHT = 2048
 MAX_SVG_BYTES = 2_000_000
 MAX_SVG_ELEMENTS = 5000
+REFERENCE_FILENAME = "reference-robot.svg"
+_CURVE_STEPS = 10
+_CIRCLE_STEPS = 28
 
 BONE_PARTS = {
     "left-upper-arm": ("left-shoulder", "left-elbow"),
@@ -79,49 +84,51 @@ class SvgCharacterError(ValueError):
     pass
 
 
+Color = tuple[int, int, int, int]
+Matrix = tuple[float, float, float, float, float, float]
+Point = tuple[float, float]
+
+
+@dataclass(frozen=True)
+class VectorPrimitive:
+    points: tuple[Point, ...]
+    closed: bool
+    fill: Color | None
+    stroke: Color | None
+    stroke_width: float
+
+
+@dataclass(frozen=True)
+class VectorPart:
+    primitives: tuple[VectorPrimitive, ...]
+
+
 @dataclass(frozen=True)
 class SvgCharacterDefinition:
     path: Path
     name: str
-    root: ET.Element
     view_box: tuple[float, float, float, float]
-    anchors: dict[str, tuple[float, float]]
-    parts: dict[str, ET.Element]
+    anchors: dict[str, Point]
+    parts: dict[str, VectorPart]
 
 
-@dataclass(frozen=True)
-class _RasterPart:
-    surface: pygame.Surface
-    anchors: dict[str, tuple[float, float]]
-    full_raster_width: int
-
-
-@dataclass(frozen=True)
-class _BonePart:
-    surface: pygame.Surface
-    anchor: tuple[float, float]
-    bone_length: float
-    full_raster_width: int
-
-
-@dataclass(frozen=True)
-class _TorsoPart:
-    surface: pygame.Surface
-    rgba: object
-    anchors: tuple[
-        tuple[float, float],
-        tuple[float, float],
-        tuple[float, float],
-        tuple[float, float],
-    ]
+_IDENTITY: Matrix = (1.0, 0.0, 0.0, 1.0, 0.0, 0.0)
+_PATH_TOKEN_RE = re.compile(
+    r"[MmLlHhVvCcSsQqTtAaZz]|[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?"
+)
+_TRANSFORM_RE = re.compile(r"([A-Za-z]+)\s*\(([^)]*)\)")
 
 
 def _local_name(tag: str) -> str:
     return tag.rsplit("}", 1)[-1]
 
 
-def _number(value: object, *, field: str) -> float:
+def _number(value: object, *, field: str, default: float | None = None) -> float:
     text = str(value or "").strip()
+    if not text:
+        if default is not None:
+            return default
+        raise SvgCharacterError(f"missing numeric SVG value for {field}")
     if text.endswith("px"):
         text = text[:-2]
     try:
@@ -141,6 +148,405 @@ def _view_box(root: ET.Element) -> tuple[float, float, float, float]:
     return values  # type: ignore[return-value]
 
 
+def _matrix_multiply(left: Matrix, right: Matrix) -> Matrix:
+    la, lb, lc, ld, le, lf = left
+    ra, rb, rc, rd, re_, rf = right
+    return (
+        la * ra + lc * rb,
+        lb * ra + ld * rb,
+        la * rc + lc * rd,
+        lb * rc + ld * rd,
+        la * re_ + lc * rf + le,
+        lb * re_ + ld * rf + lf,
+    )
+
+
+def _transform_point(matrix: Matrix, point: Point) -> Point:
+    a, b, c, d, e, f = matrix
+    x, y = point
+    return (a * x + c * y + e, b * x + d * y + f)
+
+
+def _parse_transform(text: str) -> Matrix:
+    matrix = _IDENTITY
+    for name, raw_args in _TRANSFORM_RE.findall(text or ""):
+        try:
+            args = [float(value) for value in re.split(r"[\s,]+", raw_args.strip()) if value]
+        except ValueError as exc:
+            raise SvgCharacterError(f"invalid SVG transform {name}({raw_args})") from exc
+        op = _IDENTITY
+        lower = name.casefold()
+        if lower == "matrix" and len(args) == 6:
+            op = tuple(args)  # type: ignore[assignment]
+        elif lower == "translate" and len(args) in (1, 2):
+            op = (1.0, 0.0, 0.0, 1.0, args[0], args[1] if len(args) == 2 else 0.0)
+        elif lower == "scale" and len(args) in (1, 2):
+            op = (args[0], 0.0, 0.0, args[1] if len(args) == 2 else args[0], 0.0, 0.0)
+        elif lower == "rotate" and len(args) in (1, 3):
+            radians = math.radians(args[0])
+            cos_a, sin_a = math.cos(radians), math.sin(radians)
+            rotate = (cos_a, sin_a, -sin_a, cos_a, 0.0, 0.0)
+            if len(args) == 3:
+                cx, cy = args[1], args[2]
+                op = _matrix_multiply(
+                    _matrix_multiply((1.0, 0.0, 0.0, 1.0, cx, cy), rotate),
+                    (1.0, 0.0, 0.0, 1.0, -cx, -cy),
+                )
+            else:
+                op = rotate
+        elif lower == "skewx" and len(args) == 1:
+            op = (1.0, 0.0, math.tan(math.radians(args[0])), 1.0, 0.0, 0.0)
+        elif lower == "skewy" and len(args) == 1:
+            op = (1.0, math.tan(math.radians(args[0])), 0.0, 1.0, 0.0, 0.0)
+        else:
+            raise SvgCharacterError(f"unsupported SVG transform {name}({raw_args})")
+        matrix = _matrix_multiply(matrix, op)
+    return matrix
+
+
+def _parse_style(element: ET.Element, parent: dict[str, str]) -> dict[str, str]:
+    style = dict(parent)
+    inline = element.attrib.get("style", "")
+    for item in inline.split(";"):
+        if ":" in item:
+            key, value = item.split(":", 1)
+            style[key.strip()] = value.strip()
+    for key in (
+        "fill",
+        "fill-opacity",
+        "stroke",
+        "stroke-opacity",
+        "stroke-width",
+        "opacity",
+        "display",
+        "visibility",
+    ):
+        if key in element.attrib:
+            style[key] = element.attrib[key]
+    return style
+
+
+def _parse_color(value: str | None, opacity: float) -> Color | None:
+    text = str(value or "").strip()
+    if not text or text.casefold() == "none":
+        return None
+    if text.casefold().startswith("url("):
+        raise SvgCharacterError("SVG gradients/pattern fills are not supported in character format v1")
+    if text.startswith("#"):
+        raw = text[1:]
+        if len(raw) == 3:
+            raw = "".join(ch * 2 for ch in raw)
+        if len(raw) != 6:
+            raise SvgCharacterError(f"unsupported SVG color {text!r}")
+        try:
+            rgb = tuple(int(raw[index : index + 2], 16) for index in (0, 2, 4))
+        except ValueError as exc:
+            raise SvgCharacterError(f"unsupported SVG color {text!r}") from exc
+    else:
+        match = re.fullmatch(r"rgb\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)", text)
+        if not match:
+            raise SvgCharacterError(
+                f"unsupported SVG color {text!r}; use #RGB, #RRGGBB, rgb(), or none"
+            )
+        rgb = tuple(max(0, min(255, int(value))) for value in match.groups())
+    alpha = max(0, min(255, int(round(255.0 * opacity))))
+    return (rgb[0], rgb[1], rgb[2], alpha)
+
+
+def _primitive_style(style: dict[str, str]) -> tuple[Color | None, Color | None, float]:
+    opacity = max(0.0, min(1.0, _number(style.get("opacity", "1"), field="opacity")))
+    fill_opacity = max(
+        0.0,
+        min(1.0, _number(style.get("fill-opacity", "1"), field="fill-opacity")),
+    )
+    stroke_opacity = max(
+        0.0,
+        min(1.0, _number(style.get("stroke-opacity", "1"), field="stroke-opacity")),
+    )
+    fill = _parse_color(style.get("fill", "#000000"), opacity * fill_opacity)
+    stroke = _parse_color(style.get("stroke", "none"), opacity * stroke_opacity)
+    stroke_width = max(
+        0.0,
+        _number(style.get("stroke-width", "1"), field="stroke-width"),
+    )
+    return fill, stroke, stroke_width
+
+
+def _rounded_rect_points(x: float, y: float, width: float, height: float, rx: float, ry: float) -> tuple[Point, ...]:
+    rx = max(0.0, min(abs(rx), abs(width) * 0.5))
+    ry = max(0.0, min(abs(ry), abs(height) * 0.5))
+    if rx <= 0.0 or ry <= 0.0:
+        return ((x, y), (x + width, y), (x + width, y + height), (x, y + height))
+    points: list[Point] = []
+    for cx, cy, start in (
+        (x + width - rx, y + ry, -90.0),
+        (x + width - rx, y + height - ry, 0.0),
+        (x + rx, y + height - ry, 90.0),
+        (x + rx, y + ry, 180.0),
+    ):
+        for step in range(5):
+            angle = math.radians(start + 90.0 * step / 4.0)
+            points.append((cx + rx * math.cos(angle), cy + ry * math.sin(angle)))
+    return tuple(points)
+
+
+def _ellipse_points(cx: float, cy: float, rx: float, ry: float) -> tuple[Point, ...]:
+    return tuple(
+        (
+            cx + rx * math.cos(2.0 * math.pi * index / _CIRCLE_STEPS),
+            cy + ry * math.sin(2.0 * math.pi * index / _CIRCLE_STEPS),
+        )
+        for index in range(_CIRCLE_STEPS)
+    )
+
+
+def _points_attribute(value: str) -> tuple[Point, ...]:
+    try:
+        numbers = [float(token) for token in re.findall(r"[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?", value)]
+    except ValueError as exc:
+        raise SvgCharacterError("invalid SVG point list") from exc
+    if len(numbers) < 4 or len(numbers) % 2:
+        raise SvgCharacterError("SVG point list must contain x/y pairs")
+    return tuple((numbers[index], numbers[index + 1]) for index in range(0, len(numbers), 2))
+
+
+def _curve_point_cubic(p0: Point, p1: Point, p2: Point, p3: Point, t: float) -> Point:
+    u = 1.0 - t
+    return (
+        u * u * u * p0[0] + 3 * u * u * t * p1[0] + 3 * u * t * t * p2[0] + t * t * t * p3[0],
+        u * u * u * p0[1] + 3 * u * u * t * p1[1] + 3 * u * t * t * p2[1] + t * t * t * p3[1],
+    )
+
+
+def _curve_point_quad(p0: Point, p1: Point, p2: Point, t: float) -> Point:
+    u = 1.0 - t
+    return (
+        u * u * p0[0] + 2 * u * t * p1[0] + t * t * p2[0],
+        u * u * p0[1] + 2 * u * t * p1[1] + t * t * p2[1],
+    )
+
+
+def _path_subpaths(data: str) -> tuple[tuple[tuple[Point, ...], bool], ...]:
+    tokens = _PATH_TOKEN_RE.findall(data)
+    if not tokens:
+        return ()
+    index = 0
+    command: str | None = None
+    current = (0.0, 0.0)
+    start = (0.0, 0.0)
+    last_cubic_control: Point | None = None
+    last_quad_control: Point | None = None
+    points: list[Point] = []
+    subpaths: list[tuple[tuple[Point, ...], bool]] = []
+
+    def is_command(token: str) -> bool:
+        return len(token) == 1 and token.isalpha()
+
+    def require(count: int) -> list[float]:
+        nonlocal index
+        if index + count > len(tokens) or any(is_command(token) for token in tokens[index : index + count]):
+            raise SvgCharacterError(f"SVG path command {command!r} has too few coordinates")
+        values = [float(token) for token in tokens[index : index + count]]
+        index += count
+        return values
+
+    def absolute(x: float, y: float, relative: bool) -> Point:
+        return (current[0] + x, current[1] + y) if relative else (x, y)
+
+    while index < len(tokens):
+        if is_command(tokens[index]):
+            command = tokens[index]
+            index += 1
+        elif command is None:
+            raise SvgCharacterError("SVG path must begin with a command")
+        assert command is not None
+        lower = command.casefold()
+        relative = command.islower()
+
+        if lower == "z":
+            if points:
+                subpaths.append((tuple(points), True))
+                points = []
+            current = start
+            last_cubic_control = None
+            last_quad_control = None
+            command = None
+            continue
+        if lower == "a":
+            raise SvgCharacterError("SVG arc path command A/a is not supported in character format v1")
+
+        if lower == "m":
+            x, y = require(2)
+            target = absolute(x, y, relative)
+            if points:
+                subpaths.append((tuple(points), False))
+            points = [target]
+            current = start = target
+            command = "l" if relative else "L"
+            last_cubic_control = last_quad_control = None
+            continue
+        if lower == "l":
+            x, y = require(2)
+            current = absolute(x, y, relative)
+            points.append(current)
+            last_cubic_control = last_quad_control = None
+            continue
+        if lower == "h":
+            (x,) = require(1)
+            current = (current[0] + x if relative else x, current[1])
+            points.append(current)
+            last_cubic_control = last_quad_control = None
+            continue
+        if lower == "v":
+            (y,) = require(1)
+            current = (current[0], current[1] + y if relative else y)
+            points.append(current)
+            last_cubic_control = last_quad_control = None
+            continue
+        if lower == "c":
+            x1, y1, x2, y2, x, y = require(6)
+            p0 = current
+            p1 = absolute(x1, y1, relative)
+            p2 = absolute(x2, y2, relative)
+            p3 = absolute(x, y, relative)
+            points.extend(_curve_point_cubic(p0, p1, p2, p3, step / _CURVE_STEPS) for step in range(1, _CURVE_STEPS + 1))
+            current = p3
+            last_cubic_control = p2
+            last_quad_control = None
+            continue
+        if lower == "s":
+            x2, y2, x, y = require(4)
+            p0 = current
+            p1 = (
+                (2 * p0[0] - last_cubic_control[0], 2 * p0[1] - last_cubic_control[1])
+                if last_cubic_control is not None
+                else p0
+            )
+            p2 = absolute(x2, y2, relative)
+            p3 = absolute(x, y, relative)
+            points.extend(_curve_point_cubic(p0, p1, p2, p3, step / _CURVE_STEPS) for step in range(1, _CURVE_STEPS + 1))
+            current = p3
+            last_cubic_control = p2
+            last_quad_control = None
+            continue
+        if lower == "q":
+            x1, y1, x, y = require(4)
+            p0 = current
+            p1 = absolute(x1, y1, relative)
+            p2 = absolute(x, y, relative)
+            points.extend(_curve_point_quad(p0, p1, p2, step / _CURVE_STEPS) for step in range(1, _CURVE_STEPS + 1))
+            current = p2
+            last_quad_control = p1
+            last_cubic_control = None
+            continue
+        if lower == "t":
+            x, y = require(2)
+            p0 = current
+            p1 = (
+                (2 * p0[0] - last_quad_control[0], 2 * p0[1] - last_quad_control[1])
+                if last_quad_control is not None
+                else p0
+            )
+            p2 = absolute(x, y, relative)
+            points.extend(_curve_point_quad(p0, p1, p2, step / _CURVE_STEPS) for step in range(1, _CURVE_STEPS + 1))
+            current = p2
+            last_quad_control = p1
+            last_cubic_control = None
+            continue
+        raise SvgCharacterError(f"unsupported SVG path command {command!r}")
+
+    if points:
+        subpaths.append((tuple(points), False))
+    return tuple(subpaths)
+
+
+def _element_primitives(element: ET.Element, matrix: Matrix, style: dict[str, str]) -> tuple[VectorPrimitive, ...]:
+    tag = _local_name(element.tag)
+    fill, stroke, stroke_width = _primitive_style(style)
+    if fill is None and stroke is None:
+        return ()
+
+    raw_shapes: list[tuple[tuple[Point, ...], bool]] = []
+    if tag == "path":
+        raw_shapes.extend(_path_subpaths(element.attrib.get("d", "")))
+    elif tag == "rect":
+        x = _number(element.attrib.get("x", "0"), field="rect x")
+        y = _number(element.attrib.get("y", "0"), field="rect y")
+        width = _number(element.attrib.get("width"), field="rect width")
+        height = _number(element.attrib.get("height"), field="rect height")
+        rx = _number(element.attrib.get("rx", "0"), field="rect rx")
+        ry = _number(element.attrib.get("ry", str(rx)), field="rect ry")
+        raw_shapes.append((_rounded_rect_points(x, y, width, height, rx, ry), True))
+    elif tag == "circle":
+        cx = _number(element.attrib.get("cx", "0"), field="circle cx")
+        cy = _number(element.attrib.get("cy", "0"), field="circle cy")
+        radius = _number(element.attrib.get("r"), field="circle r")
+        raw_shapes.append((_ellipse_points(cx, cy, radius, radius), True))
+    elif tag == "ellipse":
+        cx = _number(element.attrib.get("cx", "0"), field="ellipse cx")
+        cy = _number(element.attrib.get("cy", "0"), field="ellipse cy")
+        rx = _number(element.attrib.get("rx"), field="ellipse rx")
+        ry = _number(element.attrib.get("ry"), field="ellipse ry")
+        raw_shapes.append((_ellipse_points(cx, cy, rx, ry), True))
+    elif tag == "line":
+        raw_shapes.append(
+            (
+                (
+                    (_number(element.attrib.get("x1", "0"), field="line x1"), _number(element.attrib.get("y1", "0"), field="line y1")),
+                    (_number(element.attrib.get("x2", "0"), field="line x2"), _number(element.attrib.get("y2", "0"), field="line y2")),
+                ),
+                False,
+            )
+        )
+    elif tag in {"polygon", "polyline"}:
+        raw_shapes.append((_points_attribute(element.attrib.get("points", "")), tag == "polygon"))
+    else:
+        raise SvgCharacterError(f"unsupported artwork element <{tag}> in character format v1")
+
+    primitives = []
+    for raw_points, closed in raw_shapes:
+        points = tuple(_transform_point(matrix, point) for point in raw_points)
+        if len(points) < 2:
+            continue
+        primitives.append(
+            VectorPrimitive(
+                points=points,
+                closed=closed,
+                fill=fill if closed else None,
+                stroke=stroke,
+                stroke_width=stroke_width,
+            )
+        )
+    return tuple(primitives)
+
+
+def _part_primitives(
+    element: ET.Element,
+    parent_matrix: Matrix = _IDENTITY,
+    parent_style: dict[str, str] | None = None,
+) -> tuple[VectorPrimitive, ...]:
+    style = _parse_style(element, parent_style or {})
+    if style.get("display", "").casefold() == "none" or style.get("visibility", "").casefold() == "hidden":
+        return ()
+    matrix = _matrix_multiply(parent_matrix, _parse_transform(element.attrib.get("transform", "")))
+    primitives: list[VectorPrimitive] = []
+    for child in element:
+        tag = _local_name(child.tag)
+        if tag in {"g", "svg"}:
+            primitives.extend(_part_primitives(child, matrix, style))
+        elif tag in {"path", "rect", "circle", "ellipse", "line", "polygon", "polyline"}:
+            child_style = _parse_style(child, style)
+            if child_style.get("display", "").casefold() == "none" or child_style.get("visibility", "").casefold() == "hidden":
+                continue
+            child_matrix = _matrix_multiply(matrix, _parse_transform(child.attrib.get("transform", "")))
+            primitives.extend(_element_primitives(child, child_matrix, child_style))
+        elif tag in {"title", "desc", "metadata"}:
+            continue
+        else:
+            raise SvgCharacterError(f"unsupported artwork element <{tag}> in character format v1")
+    return tuple(primitives)
+
+
 def _validate_safe_svg(root: ET.Element) -> None:
     blocked_tags = {
         "script",
@@ -150,6 +556,7 @@ def _validate_safe_svg(root: ET.Element) -> None:
         "video",
         "iframe",
         "object",
+        "use",
         "animate",
         "animateMotion",
         "animateTransform",
@@ -165,11 +572,11 @@ def _validate_safe_svg(root: ET.Element) -> None:
         for key, value in element.attrib.items():
             local_key = _local_name(key).casefold()
             text = str(value).strip()
-            if local_key == "href" and text and not text.startswith("#"):
-                raise SvgCharacterError("external SVG links/resources are not supported")
+            if local_key == "href" and text:
+                raise SvgCharacterError("SVG links/resources are not supported")
             lowered = text.casefold().replace(" ", "")
-            if "url(" in lowered and "url(#" not in lowered:
-                raise SvgCharacterError("external CSS/SVG resources are not supported")
+            if "url(" in lowered:
+                raise SvgCharacterError("SVG gradients, patterns, and external resources are not supported in character format v1")
 
 
 def parse_svg_character(path: Path) -> SvgCharacterDefinition:
@@ -199,17 +606,11 @@ def parse_svg_character(path: Path) -> SvgCharacterDefinition:
             raise SvgCharacterError(f"duplicate SVG id {element_id!r}")
         ids[element_id] = element
 
-    parts: dict[str, ET.Element] = {}
-    for part_name in ALL_PARTS:
-        element = ids.get(part_name)
-        if element is not None:
-            parts[part_name] = element
-
-    missing_parts = sorted(REQUIRED_PARTS - parts.keys())
+    missing_parts = sorted(REQUIRED_PARTS - ids.keys())
     if missing_parts:
         raise SvgCharacterError("missing artwork groups: " + ", ".join(missing_parts))
 
-    anchors: dict[str, tuple[float, float]] = {}
+    anchors: dict[str, Point] = {}
     for anchor_name in REQUIRED_ANCHORS:
         element = ids.get(f"anchor-{anchor_name}")
         if element is None:
@@ -229,15 +630,41 @@ def parse_svg_character(path: Path) -> SvgCharacterDefinition:
     if missing_anchors:
         raise SvgCharacterError("missing rig anchors: " + ", ".join(missing_anchors))
 
+    parts: dict[str, VectorPart] = {}
+    for part_name in ALL_PARTS:
+        element = ids.get(part_name)
+        if element is None:
+            continue
+        primitives = _part_primitives(element)
+        if part_name in REQUIRED_PARTS and not primitives:
+            raise SvgCharacterError(f"artwork group {part_name!r} is empty")
+        parts[part_name] = VectorPart(primitives)
+
     name = root.attrib.get("data-vaporstep-name", "").strip() or path.stem
     return SvgCharacterDefinition(
         path=path,
         name=name,
-        root=root,
         view_box=_view_box(root),
         anchors=anchors,
         parts=parts,
     )
+
+
+def ensure_reference_character(directory: Path | None = None) -> Path | None:
+    directory = Path(directory) if directory is not None else characters_dir()
+    destination = directory / REFERENCE_FILENAME
+    if destination.exists():
+        return destination
+    source = resource_path(Path("assets") / "characters" / REFERENCE_FILENAME)
+    if not source.is_file():
+        return None
+    try:
+        directory.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source, destination)
+    except OSError as exc:
+        print(f"VaporStep: could not install reference character: {exc}", file=sys.stderr)
+        return None
+    return destination
 
 
 def discover_character_files(directory: Path | None = None) -> tuple[Path, ...]:
@@ -249,148 +676,131 @@ def discover_character_files(directory: Path | None = None) -> tuple[Path, ...]:
     return tuple(sorted(files, key=lambda path: path.name.casefold()))
 
 
-def select_custom_character_file(directory: Path | None = None) -> Path | None:
-    """Select an explicitly active custom character, or the sole SVG in the folder.
+_active_character_filename: str | None = None
 
-    This keeps the built-in procedural character as the no-file/default path. A
-    single custom SVG is convenient for first-time creators; collections remain
-    inert unless one file is named active.svg, avoiding surprising selection.
+
+def active_character_filename() -> str | None:
+    return _active_character_filename
+
+
+def set_active_character_filename(filename: str | None) -> None:
+    global _active_character_filename
+    _active_character_filename = filename
+
+
+def cycle_player_visual(value: object, directory: Path | None = None) -> str:
+    """Cycle silhouette -> built-in -> each SVG -> silhouette.
+
+    player_visual remains the existing two-value setting. The selected custom
+    file is session state, so the camera/mask code keeps its existing fast path.
     """
 
+    global _active_character_filename
+    visual = str(value or "").strip().casefold()
+    if visual == "silhouette":
+        _active_character_filename = None
+        return "character"
+
     files = discover_character_files(directory)
-    for path in files:
-        if path.name.casefold() == "active.svg":
-            return path
-    return files[0] if len(files) == 1 else None
-
-
-def _fragment_svg(definition: SvgCharacterDefinition, part_name: str) -> bytes:
-    root = definition.root
-    view_x, view_y, view_w, view_h = definition.view_box
-    raster_height = max(1, int(round(RASTER_WIDTH * view_h / view_w)))
-    if raster_height > MAX_RASTER_HEIGHT:
-        raise SvgCharacterError(
-            f"SVG aspect ratio would rasterize taller than {MAX_RASTER_HEIGHT}px"
-        )
-    attrs = dict(root.attrib)
-    attrs["width"] = str(RASTER_WIDTH)
-    attrs["height"] = str(raster_height)
-    attrs["viewBox"] = f"{view_x:g} {view_y:g} {view_w:g} {view_h:g}"
-    fragment_root = ET.Element(root.tag, attrs)
-
-    # Retain internal definitions used by the selected artwork, but never copy
-    # the guide/rig layer itself into runtime output.
-    for child in root:
-        if _local_name(child.tag) == "defs":
-            fragment_root.append(copy.deepcopy(child))
-    fragment_root.append(copy.deepcopy(definition.parts[part_name]))
-    return ET.tostring(fragment_root, encoding="utf-8", xml_declaration=True)
-
-
-def _rasterize_part(definition: SvgCharacterDefinition, part_name: str) -> _RasterPart:
+    names = [path.name for path in files]
+    if _active_character_filename is None:
+        if names:
+            _active_character_filename = names[0]
+            return "character"
+        return "silhouette"
     try:
-        surface = pygame.image.load(BytesIO(_fragment_svg(definition, part_name)), f"{part_name}.svg")
-    except (pygame.error, OSError) as exc:
-        raise SvgCharacterError(f"could not rasterize {part_name}: {exc}") from exc
-
-    alpha_rect = surface.get_bounding_rect(min_alpha=1)
-    if alpha_rect.width <= 0 or alpha_rect.height <= 0:
-        raise SvgCharacterError(f"artwork group {part_name!r} is empty")
-    cropped = surface.subsurface(alpha_rect).copy()
-
-    view_x, view_y, view_w, view_h = definition.view_box
-    scale_x = surface.get_width() / view_w
-    scale_y = surface.get_height() / view_h
-    anchors = {
-        name: (
-            (x - view_x) * scale_x - alpha_rect.left,
-            (y - view_y) * scale_y - alpha_rect.top,
-        )
-        for name, (x, y) in definition.anchors.items()
-    }
-    return _RasterPart(cropped, anchors, surface.get_width())
+        index = names.index(_active_character_filename)
+    except ValueError:
+        _active_character_filename = None
+        return "silhouette"
+    if index + 1 < len(names):
+        _active_character_filename = names[index + 1]
+        return "character"
+    _active_character_filename = None
+    return "silhouette"
 
 
-def _rotate_point(
-    point: tuple[float, float],
-    old_size: tuple[int, int],
-    new_size: tuple[int, int],
-    angle_degrees: float,
-) -> tuple[float, float]:
-    # pygame.transform.rotate uses mathematical CCW rotation, while pygame's
-    # screen coordinates have +Y downward.
-    old_center = (old_size[0] * 0.5, old_size[1] * 0.5)
-    new_center = (new_size[0] * 0.5, new_size[1] * 0.5)
-    dx = point[0] - old_center[0]
-    dy = point[1] - old_center[1]
-    radians = math.radians(angle_degrees)
-    cos_a = math.cos(radians)
-    sin_a = math.sin(radians)
+def active_character_label() -> str:
+    if _active_character_filename is None:
+        return "CHARACTER"
+    path = characters_dir() / _active_character_filename
+    try:
+        return parse_svg_character(path).name.upper()
+    except SvgCharacterError:
+        return path.stem.upper()
+
+
+def _display_color(color: Color) -> tuple[int, int, int]:
+    r, g, b, alpha = color
+    if alpha >= 255:
+        return (r, g, b)
+    amount = alpha / 255.0
     return (
-        new_center[0] + cos_a * dx + sin_a * dy,
-        new_center[1] - sin_a * dx + cos_a * dy,
+        int(BG[0] + (r - BG[0]) * amount),
+        int(BG[1] + (g - BG[1]) * amount),
+        int(BG[2] + (b - BG[2]) * amount),
     )
 
 
-def _normalize_bone(part: _RasterPart, anchor_a: str, anchor_b: str) -> _BonePart:
-    a = part.anchors[anchor_a]
-    b = part.anchors[anchor_b]
-    dx = b[0] - a[0]
-    dy = b[1] - a[1]
-    distance = math.hypot(dx, dy)
-    if distance < 1.0:
-        raise SvgCharacterError(f"anchors {anchor_a} and {anchor_b} are too close together")
+def _draw_vector_part(
+    screen: pygame.Surface,
+    part: VectorPart,
+    mapper,
+    stroke_scale: float,
+) -> None:
+    for primitive in part.primitives:
+        mapped = [mapper(point) for point in primitive.points]
+        if any(not math.isfinite(value) for point in mapped for value in point):
+            continue
+        points = [(int(round(x)), int(round(y))) for x, y in mapped]
+        if primitive.closed and primitive.fill is not None and len(points) >= 3:
+            pygame.draw.polygon(screen, _display_color(primitive.fill), points)
+        if primitive.stroke is not None and len(points) >= 2:
+            width = max(1, int(round(primitive.stroke_width * stroke_scale)))
+            pygame.draw.lines(
+                screen,
+                _display_color(primitive.stroke),
+                primitive.closed,
+                points,
+                width,
+            )
 
-    source_angle = math.degrees(math.atan2(dy, dx))
-    rotated = pygame.transform.rotate(part.surface, source_angle)
-    rotated_a = _rotate_point(a, part.surface.get_size(), rotated.get_size(), source_angle)
-    alpha_rect = rotated.get_bounding_rect(min_alpha=1)
-    cropped = rotated.subsurface(alpha_rect).copy()
-    cropped_a = (rotated_a[0] - alpha_rect.left, rotated_a[1] - alpha_rect.top)
-    return _BonePart(cropped, cropped_a, distance, part.full_raster_width)
+
+def _unit_torso_part(part: VectorPart, source_quad: tuple[Point, Point, Point, Point]) -> VectorPart:
+    source = np.asarray(source_quad, dtype=np.float32)
+    target = np.asarray(((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)), dtype=np.float32)
+    matrix = cv2.getPerspectiveTransform(source, target)
+    primitives = []
+    for primitive in part.primitives:
+        points = np.asarray([primitive.points], dtype=np.float32)
+        transformed = cv2.perspectiveTransform(points, matrix)[0]
+        primitives.append(
+            VectorPrimitive(
+                points=tuple((float(point[0]), float(point[1])) for point in transformed),
+                closed=primitive.closed,
+                fill=primitive.fill,
+                stroke=primitive.stroke,
+                stroke_width=primitive.stroke_width,
+            )
+        )
+    return VectorPart(tuple(primitives))
 
 
 class SvgCharacter:
     def __init__(self, definition: SvgCharacterDefinition) -> None:
         self.definition = definition
-        rasters = {name: _rasterize_part(definition, name) for name in definition.parts}
-        self._bones = {
-            name: _normalize_bone(rasters[name], *anchors)
-            for name, anchors in BONE_PARTS.items()
-            if name in rasters
-        }
-        self._points = {name: rasters[name] for name in POINT_PARTS if name in rasters}
-        self._head = rasters["head"]
-        torso = rasters["torso"]
-
-        # Cache the source torso pixels once. Only the small perspective warp is
-        # repeated each frame.
-        import numpy as np
-
-        torso_rgb = pygame.surfarray.array3d(torso.surface).swapaxes(0, 1)
-        torso_alpha = pygame.surfarray.array_alpha(torso.surface).swapaxes(0, 1)
-        torso_rgba = np.dstack((torso_rgb, torso_alpha))
-        self._torso = _TorsoPart(
-            torso.surface,
-            torso_rgba,
-            (
-                torso.anchors["left-shoulder"],
-                torso.anchors["right-shoulder"],
-                torso.anchors["right-hip"],
-                torso.anchors["left-hip"],
-            ),
+        self._view_width = definition.view_box[2]
+        source_quad = (
+            definition.anchors["left-shoulder"],
+            definition.anchors["right-shoulder"],
+            definition.anchors["right-hip"],
+            definition.anchors["left-hip"],
         )
+        self._torso = _unit_torso_part(definition.parts["torso"], source_quad)
 
     @classmethod
     def from_file(cls, path: Path) -> "SvgCharacter":
         return cls(parse_svg_character(path))
-
-    @staticmethod
-    def _scaled_size(surface: pygame.Surface, sx: float, sy: float) -> tuple[int, int]:
-        return (
-            max(1, min(4096, int(round(surface.get_width() * sx)))),
-            max(1, min(4096, int(round(surface.get_height() * sy)))),
-        )
 
     def _draw_bone(
         self,
@@ -401,37 +811,37 @@ class SvgCharacter:
     ) -> None:
         if live_a is None or live_b is None:
             return
-        part = self._bones.get(part_name)
+        part = self.definition.parts.get(part_name)
         if part is None:
             return
-        dx = live_b[0] - live_a[0]
-        dy = live_b[1] - live_a[1]
-        length = math.hypot(dx, dy)
-        if length < 1.0:
+        anchor_a_name, anchor_b_name = BONE_PARTS[part_name]
+        source_a = self.definition.anchors[anchor_a_name]
+        source_b = self.definition.anchors[anchor_b_name]
+        source_dx = source_b[0] - source_a[0]
+        source_dy = source_b[1] - source_a[1]
+        source_length = math.hypot(source_dx, source_dy)
+        live_dx = live_b[0] - live_a[0]
+        live_dy = live_b[1] - live_a[1]
+        live_length = math.hypot(live_dx, live_dy)
+        if source_length < 1e-6 or live_length < 1e-6:
             return
+        su = (source_dx / source_length, source_dy / source_length)
+        sv = (-su[1], su[0])
+        lu = (live_dx / live_length, live_dy / live_length)
+        lv = (-lu[1], lu[0])
+        viewport_width = float(renderer._camera_rect().width)
+        stroke_scale = viewport_width / self._view_width
 
-        viewport_scale = renderer._camera_rect().width / part.full_raster_width
-        sx = length / part.bone_length
-        sy = viewport_scale
-        size = self._scaled_size(part.surface, sx, sy)
-        scaled = pygame.transform.smoothscale(part.surface, size)
-        scaled_anchor = (part.anchor[0] * sx, part.anchor[1] * sy)
+        def mapper(point: Point) -> Point:
+            rel = (point[0] - source_a[0], point[1] - source_a[1])
+            along = (rel[0] * su[0] + rel[1] * su[1]) / source_length
+            across = (rel[0] * sv[0] + rel[1] * sv[1]) / self._view_width
+            return (
+                live_a[0] + lu[0] * along * live_length + lv[0] * across * viewport_width,
+                live_a[1] + lu[1] * along * live_length + lv[1] * across * viewport_width,
+            )
 
-        live_angle = math.degrees(math.atan2(dy, dx))
-        rotated = pygame.transform.rotate(scaled, -live_angle)
-        rotated_anchor = _rotate_point(
-            scaled_anchor,
-            scaled.get_size(),
-            rotated.get_size(),
-            -live_angle,
-        )
-        renderer.screen.blit(
-            rotated,
-            (
-                int(round(live_a[0] - rotated_anchor[0])),
-                int(round(live_a[1] - rotated_anchor[1])),
-            ),
-        )
+        _draw_vector_part(renderer.screen, part, mapper, stroke_scale)
 
     def _draw_point_part(
         self,
@@ -441,53 +851,47 @@ class SvgCharacter:
     ) -> None:
         if live_anchor is None:
             return
-        part = self._points.get(part_name)
+        part = self.definition.parts.get(part_name)
         if part is None:
             return
-        anchor_name = POINT_PARTS[part_name]
-        scale = renderer._camera_rect().width / part.full_raster_width
-        size = self._scaled_size(part.surface, scale, scale)
-        scaled = pygame.transform.smoothscale(part.surface, size)
-        source_anchor = part.anchors[anchor_name]
-        anchor = (source_anchor[0] * scale, source_anchor[1] * scale)
-        renderer.screen.blit(
-            scaled,
-            (
-                int(round(live_anchor[0] - anchor[0])),
-                int(round(live_anchor[1] - anchor[1])),
-            ),
-        )
+        source_anchor = self.definition.anchors[POINT_PARTS[part_name]]
+        scale = float(renderer._camera_rect().width) / self._view_width
+
+        def mapper(point: Point) -> Point:
+            return (
+                live_anchor[0] + (point[0] - source_anchor[0]) * scale,
+                live_anchor[1] + (point[1] - source_anchor[1]) * scale,
+            )
+
+        _draw_vector_part(renderer.screen, part, mapper, scale)
 
     def _draw_head(self, renderer: CachedCharacterRenderer, figure: PoseFigure) -> None:
         geometry = renderer._head_geometry(figure)
         if geometry is None:
             return
         center, radius = geometry
-        left = self._head.anchors["left-ear"]
-        right = self._head.anchors["right-ear"]
+        left = self.definition.anchors["left-ear"]
+        right = self.definition.anchors["right-ear"]
         source_mid = ((left[0] + right[0]) * 0.5, (left[1] + right[1]) * 0.5)
-        source_span = max(1.0, math.dist(left, right))
-        # The built-in character uses radius = ear distance * 0.70. Recover
-        # that same implied ear span so custom heads inherit identical sizing
-        # and fallback behavior while remaining upright like the built-in head.
+        source_span = max(1e-6, math.dist(left, right))
+        # Built-in head radius is 0.70 * ear span. Use the same live geometry,
+        # including its nose/shoulder fallbacks, but leave the artwork upright.
         target_span = radius / 0.70
         scale = target_span / source_span
-        size = self._scaled_size(self._head.surface, scale, scale)
-        scaled = pygame.transform.smoothscale(self._head.surface, size)
-        midpoint = (source_mid[0] * scale, source_mid[1] * scale)
-        renderer.screen.blit(
-            scaled,
-            (
-                int(round(center[0] - midpoint[0])),
-                int(round(center[1] - midpoint[1])),
-            ),
-        )
+
+        def mapper(point: Point) -> Point:
+            return (
+                center[0] + (point[0] - source_mid[0]) * scale,
+                center[1] + (point[1] - source_mid[1]) * scale,
+            )
+
+        _draw_vector_part(renderer.screen, self.definition.parts["head"], mapper, scale)
 
     def _live_torso_quad(
         self,
         renderer: CachedCharacterRenderer,
         figure: PoseFigure,
-    ) -> tuple[tuple[int, int], tuple[int, int], tuple[int, int], tuple[int, int]] | None:
+    ) -> tuple[Point, Point, Point, Point] | None:
         points = [renderer._visible_screen_point(figure, index) for index in (11, 12, 24, 23)]
         if any(point is None for point in points):
             return None
@@ -500,73 +904,28 @@ class SvgCharacter:
         shoulder_inset = max(scale * 0.006, shoulder_width * 0.08)
         hip_pad = scale * 0.007
         return (
-            (
-                int(ls[0] + shoulder_dx * shoulder_inset),
-                int(ls[1] + shoulder_dy * shoulder_inset),
-            ),
-            (
-                int(rs[0] - shoulder_dx * shoulder_inset),
-                int(rs[1] - shoulder_dy * shoulder_inset),
-            ),
-            (int(rh[0] + hip_pad), int(rh[1] + scale * 0.010)),
-            (int(lh[0] - hip_pad), int(lh[1] + scale * 0.010)),
+            (ls[0] + shoulder_dx * shoulder_inset, ls[1] + shoulder_dy * shoulder_inset),
+            (rs[0] - shoulder_dx * shoulder_inset, rs[1] - shoulder_dy * shoulder_inset),
+            (rh[0] + hip_pad, rh[1] + scale * 0.010),
+            (lh[0] - hip_pad, lh[1] + scale * 0.010),
         )
 
     def _draw_torso(self, renderer: CachedCharacterRenderer, figure: PoseFigure) -> None:
-        live_quad = self._live_torso_quad(renderer, figure)
-        if live_quad is None:
+        quad = self._live_torso_quad(renderer, figure)
+        if quad is None:
             return
-        try:
-            import cv2
-            import numpy as np
-        except ImportError:
-            return
+        q0, q1, q2, q3 = quad
+        scale = float(renderer._camera_rect().width) / self._view_width
 
-        source = np.asarray(self._torso.anchors, dtype=np.float32)
-        destination = np.asarray(live_quad, dtype=np.float32)
-        matrix = cv2.getPerspectiveTransform(source, destination)
+        def mapper(point: Point) -> Point:
+            u, v = point
+            top = ((1.0 - u) * q0[0] + u * q1[0], (1.0 - u) * q0[1] + u * q1[1])
+            bottom = ((1.0 - u) * q3[0] + u * q2[0], (1.0 - u) * q3[1] + u * q2[1])
+            return ((1.0 - v) * top[0] + v * bottom[0], (1.0 - v) * top[1] + v * bottom[1])
 
-        width, height = self._torso.surface.get_size()
-        corners = np.asarray(
-            [
-                [
-                    [0.0, 0.0],
-                    [float(width), 0.0],
-                    [float(width), float(height)],
-                    [0.0, float(height)],
-                ]
-            ],
-            dtype=np.float32,
-        )
-        transformed = cv2.perspectiveTransform(corners, matrix)[0]
-        min_x = math.floor(float(transformed[:, 0].min()))
-        min_y = math.floor(float(transformed[:, 1].min()))
-        max_x = math.ceil(float(transformed[:, 0].max()))
-        max_y = math.ceil(float(transformed[:, 1].max()))
-        out_w = max_x - min_x
-        out_h = max_y - min_y
-        if out_w <= 0 or out_h <= 0 or out_w > 4096 or out_h > 4096:
-            return
-
-        translation = np.asarray(
-            [[1.0, 0.0, -min_x], [0.0, 1.0, -min_y], [0.0, 0.0, 1.0]],
-            dtype=np.float64,
-        )
-        local_matrix = translation @ matrix
-        warped = cv2.warpPerspective(
-            self._torso.rgba,
-            local_matrix,
-            (out_w, out_h),
-            flags=cv2.INTER_LINEAR,
-            borderMode=cv2.BORDER_CONSTANT,
-            borderValue=(0, 0, 0, 0),
-        )
-        surface = pygame.image.frombuffer(warped.data, (out_w, out_h), "RGBA")
-        renderer.screen.blit(surface, (min_x, min_y))
+        _draw_vector_part(renderer.screen, self._torso, mapper, scale)
 
     def draw(self, renderer: CachedCharacterRenderer, figure: PoseFigure) -> None:
-        # Preserve the built-in character's draw order: legs, torso, arms,
-        # head, then endpoint details.
         live = renderer._visible_screen_point
         for name, indices in (
             ("left-upper-leg", (23, 25)),
@@ -594,31 +953,41 @@ class SvgCharacter:
 
 
 class Renderer(CachedCharacterRenderer):
-    """Cached renderer that optionally replaces built-in character artwork with a rigged SVG."""
+    """Cached gameplay renderer with optional user-authored vector characters."""
 
     def __init__(self, screen: pygame.Surface) -> None:
+        ensure_reference_character()
         super().__init__(screen)
+        self._loaded_character_filename: str | None = None
         self._svg_character: SvgCharacter | None = None
         self._svg_character_error: str | None = None
-        path = select_custom_character_file()
-        if path is not None:
-            try:
-                self._svg_character = SvgCharacter.from_file(path)
-            except SvgCharacterError as exc:
-                self._svg_character_error = str(exc)
-                print(
-                    f"VaporStep: could not load custom character {path.name}: {exc}; using built-in character",
-                    file=sys.stderr,
-                )
+
+    def _refresh_custom_character(self) -> None:
+        desired = active_character_filename()
+        if desired == self._loaded_character_filename:
+            return
+        self._loaded_character_filename = desired
+        self._svg_character = None
+        self._svg_character_error = None
+        if desired is None:
+            return
+        path = characters_dir() / desired
+        try:
+            self._svg_character = SvgCharacter.from_file(path)
+        except SvgCharacterError as exc:
+            self._svg_character_error = str(exc)
+            print(
+                f"VaporStep: could not load custom character {path.name}: {exc}; using built-in character",
+                file=sys.stderr,
+            )
 
     def _draw_pose_figure(self, figure: PoseFigure) -> None:
+        self._refresh_custom_character()
         if self._svg_character is not None:
             try:
                 self._svg_character.draw(self, figure)
                 return
             except Exception as exc:
-                # A bad user asset should never take down gameplay. Disable it
-                # for the rest of this run and fall back to the built-in figure.
                 self._svg_character_error = str(exc)
                 self._svg_character = None
                 print(
