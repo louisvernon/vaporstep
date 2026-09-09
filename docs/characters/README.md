@@ -12,11 +12,13 @@ VaporStep installs an editable `reference-robot.svg` into `~/VaporStep/Character
 4. Move the visible anchor circles so they sit on your character's joints. Keep every `anchor-*` ID unchanged and edit the circles with `cx`/`cy` coordinates rather than applying a transform to the circle itself.
 5. Save as plain SVG in `~/VaporStep/Characters/`.
 
+Characters are drawn directly over the playfield, so **outline-first artwork is strongly recommended**. Thin strokes with transparent interiors preserve note visibility much better than large filled or opaque shapes. The reference robot intentionally demonstrates this style; small filled accents are fine where they do not obscure gameplay.
+
 In **Calibration**, press **V** to cycle through:
 
 `Silhouette → built-in Character → each SVG in ~/VaporStep/Characters (alphabetically) → Silhouette`
 
-The active SVG name is shown in the calibration controls. VaporStep rescans the directory when you cycle, so newly added files can be picked up without a special `active.svg` filename.
+The selected SVG filename is reflected in the calibration controls as soon as you cycle. VaporStep rescans the directory when you cycle, so newly added files can be picked up without a special `active.svg` filename.
 
 ## Version 1 rig
 
@@ -45,7 +47,7 @@ Required anchor circles:
 - `anchor-left-ankle`, `anchor-right-ankle`
 - `anchor-left-toe`, `anchor-right-toe`
 
-The SVG root must contain `data-vaporstep-version="1"`. `data-vaporstep-name` is optional and supplies the display name shown while cycling.
+The SVG root must contain `data-vaporstep-version="1"`. `data-vaporstep-name` is optional metadata for the character file.
 
 ## How rendering works
 
