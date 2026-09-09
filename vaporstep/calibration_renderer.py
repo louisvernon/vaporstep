@@ -4,7 +4,7 @@ import time
 
 import pygame
 
-from .svg_character_renderer import Renderer as CharacterRenderer
+from .svg_character_renderer import Renderer as CharacterRenderer, active_character_filename
 from .debug_state import set_debug_enabled
 from .pose_presentation import PosePresentationExtrapolator
 from .renderer import AMBER, BG, CYAN, DIM, GREEN, RED, WHITE
@@ -136,12 +136,11 @@ class Renderer(CharacterRenderer):
         )
         self.screen.blit(line1, (38, h - 138))
 
-        custom_character = getattr(self, "_svg_character", None)
-        visual_label = (
-            custom_character.definition.name.upper()
-            if player_visual == "character" and custom_character is not None
-            else player_visual.upper()
-        )
+        selected_filename = active_character_filename()
+        if player_visual == "character" and selected_filename is not None:
+            visual_label = selected_filename.rsplit(".", 1)[0].replace("-", " ").replace("_", " ").upper()
+        else:
+            visual_label = player_visual.upper()
         line2 = self.small_font.render(
             f"←/→ reach    ↑/↓ camera    M tracking model    V visual ({visual_label})    Esc save & return",
             True,
