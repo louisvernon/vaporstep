@@ -19,6 +19,8 @@ def test_settings_round_trip(tmp_path: Path):
     assert reloaded.settings.song_folder == "/music/Songs"
     assert reloaded.settings.camera_index == 2
     assert reloaded.settings.horizontal_reach == 1.20
+    assert reloaded.settings.player_visual == "character"
+    assert reloaded.settings.pose_model_mode == "accuracy"
 
 
 def test_keyboard_only_camera_choice_round_trips(tmp_path: Path):
@@ -33,20 +35,23 @@ def test_keyboard_only_camera_choice_round_trips(tmp_path: Path):
 def test_player_visual_round_trips_and_legacy_skeleton_migrates(tmp_path: Path):
     path = tmp_path / "settings.json"
     store = SettingsStore(path)
-    store.settings.player_visual = "character"
+    store.settings.player_visual = "silhouette"
     store.save()
 
-    assert SettingsStore(path).settings.player_visual == "character"
+    assert SettingsStore(path).settings.player_visual == "silhouette"
     path.write_text(json.dumps({"player_visual": "skeleton"}), encoding="utf-8")
     assert SettingsStore(path).settings.player_visual == "character"
-    assert normalize_player_visual("unknown") == "silhouette"
+    assert normalize_player_visual("unknown") == "character"
 
 
 def test_existing_settings_default_to_camera_enabled(tmp_path: Path):
     path = tmp_path / "settings.json"
     path.write_text(json.dumps({"camera_index": 1}), encoding="utf-8")
 
-    assert SettingsStore(path).settings.camera_enabled is True
+    settings = SettingsStore(path).settings
+    assert settings.camera_enabled is True
+    assert settings.player_visual == "character"
+    assert settings.pose_model_mode == "accuracy"
 
 
 def test_settings_are_clamped_on_load(tmp_path: Path):
