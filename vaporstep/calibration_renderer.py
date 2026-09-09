@@ -4,7 +4,7 @@ import time
 
 import pygame
 
-from .svg_character_renderer import Renderer as CharacterRenderer
+from .svg_character_runtime import Renderer as CharacterRenderer
 from .debug_state import set_debug_enabled
 from .pose_presentation import PosePresentationExtrapolator
 from .renderer import AMBER, BG, CYAN, DIM, GREEN, RED, WHITE
