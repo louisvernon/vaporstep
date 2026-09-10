@@ -2,7 +2,7 @@
 
 VaporStep custom characters are a single rigged SVG file. The built-in procedural character remains available and does not depend on an external asset.
 
-VaporStep installs an editable `reference-robot.svg` into `~/VaporStep/Characters/` the first time the character renderer is created. If you edit or replace that file, VaporStep does not overwrite it on later launches. The repository copy at [`reference-robot.svg`](reference-robot.svg) is the same authoring template.
+VaporStep installs an editable `reference-robot.svg` into `~/VaporStep/Characters/` the first time the character renderer is created. If you edit or replace that file, VaporStep does not overwrite it on later launches. The canonical repository copy at [`../../assets/characters/reference-robot.svg`](../../assets/characters/reference-robot.svg) is the authoring template.
 
 ## Make a character
 
@@ -12,7 +12,7 @@ VaporStep installs an editable `reference-robot.svg` into `~/VaporStep/Character
 4. Move the visible anchor circles so they sit on your character's joints. Keep every `anchor-*` ID unchanged and edit the circles with `cx`/`cy` coordinates rather than applying a transform to the circle itself.
 5. Save as plain SVG in `~/VaporStep/Characters/`.
 
-Characters are drawn directly over the playfield, so **outline-first artwork is strongly recommended**. Thin, dim strokes with transparent interiors preserve note visibility much better than large filled or opaque shapes. The reference robot intentionally demonstrates this style: its main outlines are about `0.4` SVG units wide at a 600-unit viewBox, use roughly 40% opacity, and avoid dense overlapping interior outlines. Small filled accents are fine where they do not obscure gameplay.
+Characters are drawn directly over the playfield, so **outline-first artwork is strongly recommended**. Thin, dim strokes preserve note visibility much better than large opaque shapes. The reference robot intentionally demonstrates this style: its main outlines are about `0.4` SVG units wide at a 600-unit viewBox, use roughly 48% opacity, avoid dense overlapping interior outlines, and add only an extremely faint color fill for body presence. Small filled accents are fine where they do not obscure gameplay.
 
 In **Calibration**, press **V** to cycle through:
 
