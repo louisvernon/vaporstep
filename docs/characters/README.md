@@ -2,7 +2,7 @@
 
 VaporStep custom characters are a single rigged SVG file. The built-in procedural character remains available and does not depend on an external asset.
 
-VaporStep installs an editable `reference-robot.svg` into `~/VaporStep/Characters/` the first time the character renderer is created. If you edit or replace that file, VaporStep does not overwrite it on later launches. The repository copy at [`reference-robot.svg`](reference-robot.svg) is the same authoring template.
+VaporStep installs an editable `reference-robot.svg` into `~/VaporStep/Characters/` the first time the character renderer is created. If you edit or replace that file, VaporStep does not overwrite it on later launches. The canonical repository copy at [`../../assets/characters/reference-robot.svg`](../../assets/characters/reference-robot.svg) is the authoring template.
 
 ## Make a character
 
