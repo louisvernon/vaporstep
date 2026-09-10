@@ -241,12 +241,14 @@ jobs:
         shell: pwsh
         timeout-minutes: 3
         run: |
+          $ErrorActionPreference = 'Stop'
           $packageRoot = Join-Path $env:RUNNER_TEMP 'artifact-signing-client'
           $installRoot = Join-Path $env:LOCALAPPDATA 'Microsoft\ArtifactSigningClientTools\bin\x64'
 
           Write-Host 'Downloading Microsoft.ArtifactSigning.Client 1.0.128 from NuGet...'
           nuget install Microsoft.ArtifactSigning.Client `
             -Version 1.0.128 `
+            -Source 'https://api.nuget.org/v3/index.json' `
             -OutputDirectory $packageRoot `
             -ExcludeVersion `
             -DirectDownload `
@@ -260,6 +262,10 @@ jobs:
           if (-not (Test-Path -LiteralPath $dlib)) {
             throw "Artifact Signing dlib was not found at '$dlib'."
           }
+
+          $dlibInfo = Get-Item -LiteralPath $dlib
+          Write-Host "Artifact Signing dlib: $($dlibInfo.FullName)"
+          Write-Host "Artifact Signing dlib version: $($dlibInfo.VersionInfo.FileVersion)"
 
           New-Item -ItemType Directory -Force -Path $installRoot | Out-Null
           Copy-Item -Path (Join-Path $sourceRoot '*') -Destination $installRoot -Recurse -Force
