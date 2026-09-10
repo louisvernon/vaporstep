@@ -239,22 +239,31 @@ jobs:
 
       - name: Install Artifact Signing client tools
         shell: pwsh
+        timeout-minutes: 3
         run: |
-          $ProgressPreference = 'SilentlyContinue'
-          $msi = Join-Path $env:RUNNER_TEMP 'ArtifactSigningClientTools.msi'
-          Invoke-WebRequest `
-            -Uri 'https://download.microsoft.com/download/70ad2c3b-761f-4aa9-a9de-e7405aa2b4c1/ArtifactSigningClientTools.msi' `
-            -OutFile $msi
-          $process = Start-Process msiexec.exe -Wait -PassThru -ArgumentList @(
-            '/I',
-            $msi,
-            '/quiet',
-            '/norestart'
-          )
-          if ($process.ExitCode -ne 0) {
-            throw "Artifact Signing Client Tools installer failed with exit code $($process.ExitCode)."
+          $packageRoot = Join-Path $env:RUNNER_TEMP 'artifact-signing-client'
+          $installRoot = Join-Path $env:LOCALAPPDATA 'Microsoft\ArtifactSigningClientTools\bin\x64'
+
+          Write-Host 'Downloading Microsoft.ArtifactSigning.Client 1.0.128 from NuGet...'
+          nuget install Microsoft.ArtifactSigning.Client `
+            -Version 1.0.128 `
+            -OutputDirectory $packageRoot `
+            -ExcludeVersion `
+            -DirectDownload `
+            -NonInteractive
+          if ($LASTEXITCODE -ne 0) {
+            throw "NuGet failed to download Artifact Signing client tools with exit code $LASTEXITCODE."
           }
-          Remove-Item $msi -Force
+
+          $sourceRoot = Join-Path $packageRoot 'Microsoft.ArtifactSigning.Client\bin\x64'
+          $dlib = Join-Path $sourceRoot 'Azure.CodeSigning.Dlib.dll'
+          if (-not (Test-Path -LiteralPath $dlib)) {
+            throw "Artifact Signing dlib was not found at '$dlib'."
+          }
+
+          New-Item -ItemType Directory -Force -Path $installRoot | Out-Null
+          Copy-Item -Path (Join-Path $sourceRoot '*') -Destination $installRoot -Recurse -Force
+          Write-Host "Artifact Signing client tools ready at '$installRoot'."
 
       - name: Sign VaporStep executable
         shell: pwsh
