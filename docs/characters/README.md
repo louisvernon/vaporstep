@@ -12,7 +12,7 @@ VaporStep installs an editable `reference-robot.svg` into `~/VaporStep/Character
 4. Move the visible anchor circles so they sit on your character's joints. Keep every `anchor-*` ID unchanged and edit the circles with `cx`/`cy` coordinates rather than applying a transform to the circle itself.
 5. Save as plain SVG in `~/VaporStep/Characters/`.
 
-Characters are drawn as the final gameplay scene layer, so **outline-first artwork is strongly recommended**. Bright, thin borders keep the body easy to track without broad filled regions hiding the playfield. The reference robot intentionally demonstrates this style: its main outlines are about `0.4` SVG units wide at a 600-unit viewBox, use roughly 82% opacity, and leave the large body panels open. Small filled accents are fine where they do not obscure gameplay.
+Characters use the original VaporStep render order, with the playfield and gameplay elements drawn over the player visual. **Outline-first artwork is strongly recommended** so the character remains easy to track through the playfield without relying on large filled regions. The reference robot intentionally demonstrates this style: its main outlines are about `0.4` SVG units wide at a 600-unit viewBox, use roughly 82% opacity, and leave the large body panels open. Small filled accents are fine where they remain readable beneath the gameplay layers.
 
 In **Calibration**, press **V** to cycle through:
 
