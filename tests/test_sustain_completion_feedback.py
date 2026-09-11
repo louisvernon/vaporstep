@@ -43,30 +43,31 @@ def _hold(*, duration: float, last_occupancy_at: float | None = None) -> Runtime
     )
 
 
-def test_sustain_charge_has_one_quiet_second_then_ramps_over_five_seconds():
-    short = _hold(duration=0.8)
-    medium = _hold(duration=3.5)
-    long = _hold(duration=6.0)
+def test_sustain_charge_starts_at_point_seven_seconds_and_full_at_two_point_five():
+    chain = _hold(duration=3.0)
 
-    assert Renderer._nominal_sustain_charge(short, 0.8) == 0.0
-    assert Renderer._nominal_sustain_charge(medium, 3.5) == pytest.approx(0.5)
-    assert Renderer._nominal_sustain_charge(long, 6.0) == pytest.approx(1.0)
-    assert Renderer._nominal_sustain_charge(long, 12.0) == pytest.approx(1.0)
+    assert Renderer._nominal_sustain_charge(chain, 0.69) == 0.0
+    assert Renderer._nominal_sustain_charge(chain, 0.70) == 0.0
+    assert Renderer._nominal_sustain_charge(chain, 1.60) == pytest.approx(0.5)
+    assert Renderer._nominal_sustain_charge(chain, 2.50) == pytest.approx(1.0)
+    assert Renderer._nominal_sustain_charge(chain, 3.00) == pytest.approx(1.0)
 
 
 def test_sustain_charge_freezes_and_drains_when_unoccupied_then_snaps_back():
-    chain = _hold(duration=6.0, last_occupancy_at=3.5)
+    chain = _hold(duration=3.0, last_occupancy_at=1.60)
 
-    frozen = Renderer._nominal_sustain_charge(chain, 3.5)
-    drained = Renderer._sustain_charge(chain, 3.75, occupied=False)
+    frozen = Renderer._nominal_sustain_charge(chain, 1.60)
+    drained = Renderer._sustain_charge(chain, 1.85, occupied=False)
     assert drained == pytest.approx(
-        frozen * Renderer._sustain_presence(chain, 3.75)
+        frozen * Renderer._sustain_presence(chain, 1.85)
     )
     assert drained < frozen
 
     # Re-entry immediately uses the current timeline charge rather than slowly
     # rebuilding from the drained visual value.
-    assert Renderer._sustain_charge(chain, 4.0, occupied=True) == pytest.approx(0.6)
+    assert Renderer._sustain_charge(chain, 2.0, occupied=True) == pytest.approx(
+        (2.0 - 0.70) / (2.50 - 0.70)
+    )
 
 
 def test_sustain_completion_feedback_outlives_the_short_event_buffer():
