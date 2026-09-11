@@ -215,8 +215,8 @@ class Renderer(CharacterRenderer):
         dim_edge = _blend(DIM, WHITE, 0.10)
         base_fill = _blend(dim_fill, _blend(BG, CYAN, 0.52), presence)
         base_edge = _blend(dim_edge, _blend(CYAN, WHITE, 0.30), presence)
-        fill = _blend(base_fill, WHITE, 0.42 * charge)
-        edge = _blend(base_edge, WHITE, 0.82 * charge)
+        fill = _blend(base_fill, WHITE, min(1.0, 0.78 * charge))
+        edge = _blend(base_edge, WHITE, min(1.0, 1.10 * charge))
 
         for lane in chain.definition.lanes:
             left0, right0 = self._lane_bounds(NoteKind.FOOT, lane, lo)
@@ -237,29 +237,29 @@ class Renderer(CharacterRenderer):
                 edge,
                 True,
                 polygon,
-                2 + int(round(3.0 * charge)),
+                2 + int(round(5.0 * charge)),
             )
 
             center0 = (left0 + right0) * 0.5
             center1 = (left1 + right1) * 0.5
             pygame.draw.line(
                 self.screen,
-                _blend(base_edge, WHITE, min(1.0, 0.35 + 0.65 * charge)),
+                _blend(base_edge, WHITE, min(1.0, 1.05 * charge)),
                 (int(center0), int(y0)),
                 (int(center1), int(y1)),
-                2 + int(round(2.0 * charge)),
+                2 + int(round(4.0 * charge)),
             )
 
             head_p = max(0.0, min(1.0, head))
             head_left, head_right = self._lane_bounds(NoteKind.FOOT, lane, head_p)
             head_y = self._field_y(NoteKind.FOOT, head_p)
             head_pad = max(2.0, (head_right - head_left) * 0.08)
-            head_thickness = max(5, int(4 + 12 * head_p)) + int(round(4.0 * charge))
+            head_thickness = max(5, int(4 + 12 * head_p)) + int(round(7.0 * charge))
             dim_head = _blend(BG, DIM, 0.72)
             base_head = _blend(dim_head, CYAN, presence)
             pygame.draw.line(
                 self.screen,
-                _blend(base_head, WHITE, 0.88 * charge),
+                _blend(base_head, WHITE, min(1.0, 1.08 * charge)),
                 (head_left + head_pad, head_y),
                 (head_right - head_pad, head_y),
                 head_thickness,
@@ -269,20 +269,20 @@ class Renderer(CharacterRenderer):
             y = self._field_y(NoteKind.FOOT, 1.0)
             cap_pad = max(2.0, (right - left) * 0.08)
             base_cap = _blend(_blend(BG, DIM, 0.72), CYAN, presence)
-            cap = _blend(base_cap, WHITE, 0.92 * charge)
+            cap = _blend(base_cap, WHITE, min(1.0, 1.12 * charge))
             pygame.draw.line(
                 self.screen,
                 cap,
                 (left + cap_pad, y),
                 (right - cap_pad, y),
-                9 + int(round(6.0 * charge)),
+                9 + int(round(9.0 * charge)),
             )
             pygame.draw.line(
                 self.screen,
                 WHITE,
                 (left + cap_pad, y),
                 (right - cap_pad, y),
-                2 + int(round(2.0 * charge)),
+                2 + int(round(4.0 * charge)),
             )
 
     def _draw_hand_sustain_charge(
@@ -301,24 +301,24 @@ class Renderer(CharacterRenderer):
         dim_color = _blend(DIM, BG, 0.25)
         active_color = _blend(base_color, WHITE, 0.25)
         normal = _blend(dim_color, active_color, presence)
-        charged = _blend(normal, WHITE, 0.82 * charge)
+        charged = _blend(normal, WHITE, min(1.0, 1.08 * charge))
 
         for lane in chain.definition.lanes:
             p0 = self._hand_target_point(lane, lo)
             p1 = self._hand_target_point(lane, hi)
             pygame.draw.line(
                 self.screen,
-                _blend(BG, charged, 0.58),
+                _blend(BG, charged, 0.70),
                 p0,
                 p1,
-                16 + int(round(10.0 * charge)),
+                16 + int(round(14.0 * charge)),
             )
             pygame.draw.line(
                 self.screen,
                 charged,
                 p0,
                 p1,
-                6 + int(round(5.0 * charge)),
+                6 + int(round(8.0 * charge)),
             )
             self._draw_hand_note_arc(
                 lane,
@@ -437,7 +437,7 @@ class Renderer(CharacterRenderer):
 
         w, h = self.size
         version = self.small_font.render(f"VaporStep {__version__}", True, DIM)
-        self.screen.blit(version, version.get_rect(topright=(w - 18, 18)))
+        self.screen.blit(version, version.get_rect(topleft=(18, 18)))
 
         if provenance.song_chart_digest:
             song_chart = self.small_font.render(
