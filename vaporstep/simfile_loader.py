@@ -8,6 +8,7 @@ import unicodedata
 
 from .chains import assign_implicit_chains, assign_sustains
 from .domain import GameNote, NoteKind, lanes_tuple
+from .provenance import register_loaded_chart
 from .song import BeatMarker, ChartInfo, LoadedChart, SongInfo, chart_sort_key
 
 
@@ -423,7 +424,7 @@ def load_chart(song: SongInfo, chart_info: ChartInfo) -> LoadedChart:
         beat_markers.append(BeatMarker(marker_time, beat))
         previous_time = marker_time
 
-    return LoadedChart(
+    loaded = LoadedChart(
         song=song,
         chart=chart_info,
         notes=tuple(notes),
@@ -435,3 +436,6 @@ def load_chart(song: SongInfo, chart_info: ChartInfo) -> LoadedChart:
         chains=chains,
         sustains=sustains,
     )
+    chart_creator = _normalized_text(getattr(chart, "credit", None)) or _normalized_text(chart.description)
+    register_loaded_chart(loaded, chart_creator=chart_creator)
+    return loaded
