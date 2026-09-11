@@ -39,6 +39,21 @@ def normalize_player_visual(value: object) -> str:
     return visual if visual in PLAYER_VISUALS else DEFAULT_PLAYER_VISUAL
 
 
+def normalize_player_character_filename(value: object) -> str:
+    """Return a safe user-character basename, or empty for built-in/fallback."""
+    filename = str(value or "").strip()
+    if (
+        not filename
+        or filename in {".", ".."}
+        or "/" in filename
+        or "\\" in filename
+        or "\x00" in filename
+        or not filename.casefold().endswith(".svg")
+    ):
+        return ""
+    return filename
+
+
 @dataclass
 class AppSettings:
     song_folder: str = field(default_factory=default_song_folder)
@@ -46,6 +61,7 @@ class AppSettings:
     camera_enabled: bool = True
     horizontal_reach: float = PLAYER_HORIZONTAL_ZOOM
     player_visual: str = DEFAULT_PLAYER_VISUAL
+    player_character_filename: str = ""
     pose_model_mode: str = DEFAULT_POSE_MODEL_MODE
     favorite_song_keys: list[str] = field(default_factory=list)
     played_song_keys: list[str] = field(default_factory=list)
@@ -71,6 +87,9 @@ class AppSettings:
             camera_enabled=bool(self.camera_enabled),
             horizontal_reach=clamp_horizontal_reach(self.horizontal_reach),
             player_visual=normalize_player_visual(self.player_visual),
+            player_character_filename=normalize_player_character_filename(
+                self.player_character_filename
+            ),
             pose_model_mode=normalize_pose_model_mode(self.pose_model_mode),
             favorite_song_keys=clean_keys(self.favorite_song_keys),
             played_song_keys=clean_keys(self.played_song_keys),
@@ -85,12 +104,67 @@ class SettingsStore:
         self.path = path or default_settings_path()
         self.settings = AppSettings()
         self.load()
+        self._restore_player_character_selection()
         default_path = Path(default_song_folder())
         if self.settings.song_path == default_path:
             try:
                 default_path.mkdir(parents=True, exist_ok=True)
             except OSError:
                 pass
+
+    def _restore_player_character_selection(self) -> None:
+        """Restore a saved SVG selection, falling back safely to built-in."""
+        from .svg_character_renderer import (
+            discover_character_files,
+            set_active_character_filename,
+        )
+
+        filename = normalize_player_character_filename(
+            self.settings.player_character_filename
+        )
+        if self.settings.player_visual != "character" or not filename:
+            self.settings.player_character_filename = ""
+            set_active_character_filename(None)
+            return
+
+        available = {path.name for path in discover_character_files()}
+        if filename in available:
+            self.settings.player_character_filename = filename
+            set_active_character_filename(filename)
+            return
+
+        # The file may have been renamed/deleted while VaporStep was closed.
+        # Keep character mode but fall back to the built-in procedural character.
+        self.settings.player_character_filename = ""
+        set_active_character_filename(None)
+
+    def _sync_player_character_selection(self) -> None:
+        """Capture the live custom-character selection before writing settings."""
+        from .svg_character_renderer import (
+            active_character_filename,
+            discover_character_files,
+            set_active_character_filename,
+        )
+
+        if self.settings.player_visual != "character":
+            self.settings.player_character_filename = ""
+            set_active_character_filename(None)
+            return
+
+        filename = normalize_player_character_filename(active_character_filename())
+        if not filename:
+            self.settings.player_character_filename = ""
+            return
+
+        available = {path.name for path in discover_character_files()}
+        if filename in available:
+            self.settings.player_character_filename = filename
+            return
+
+        # If an SVG disappears during the current run, do not persist a stale
+        # path. The next draw/save uses the built-in character instead.
+        self.settings.player_character_filename = ""
+        set_active_character_filename(None)
 
     def load(self) -> AppSettings:
         try:
@@ -112,6 +186,9 @@ class SettingsStore:
                 player_visual=normalize_player_visual(
                     raw.get("player_visual", DEFAULT_PLAYER_VISUAL)
                 ),
+                player_character_filename=normalize_player_character_filename(
+                    raw.get("player_character_filename", "")
+                ),
                 pose_model_mode=normalize_pose_model_mode(
                     raw.get("pose_model_mode", DEFAULT_POSE_MODEL_MODE)
                 ),
@@ -126,6 +203,7 @@ class SettingsStore:
         return self.settings
 
     def save(self) -> None:
+        self._sync_player_character_selection()
         self.settings = self.settings.normalized()
         self.path.parent.mkdir(parents=True, exist_ok=True)
         if os.name == "posix":

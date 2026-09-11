@@ -41,7 +41,11 @@ def _pose() -> PoseFigure:
     return PoseFigure(tuple(points))
 
 
-def test_character_setting_round_trips(tmp_path: Path) -> None:
+def test_character_setting_round_trips(tmp_path: Path, monkeypatch) -> None:
+    characters = tmp_path / "characters"
+    characters.mkdir()
+    monkeypatch.setattr("vaporstep.svg_character_renderer.characters_dir", lambda: characters)
+
     path = tmp_path / "settings.json"
     store = SettingsStore(path)
     store.settings.player_visual = "character"
@@ -49,6 +53,52 @@ def test_character_setting_round_trips(tmp_path: Path) -> None:
 
     reloaded = SettingsStore(path)
     assert reloaded.settings.player_visual == "character"
+
+
+def test_custom_character_selection_round_trips(tmp_path: Path, monkeypatch) -> None:
+    characters = tmp_path / "characters"
+    characters.mkdir()
+    (characters / "robot.svg").write_text("<svg/>", encoding="utf-8")
+    monkeypatch.setattr("vaporstep.svg_character_renderer.characters_dir", lambda: characters)
+
+    path = tmp_path / "settings.json"
+    set_active_character_filename("robot.svg")
+    try:
+        store = SettingsStore(path)
+        store.settings.player_visual = "character"
+        set_active_character_filename("robot.svg")
+        store.save()
+
+        set_active_character_filename(None)
+        reloaded = SettingsStore(path)
+        assert reloaded.settings.player_visual == "character"
+        assert reloaded.settings.player_character_filename == "robot.svg"
+        assert active_character_filename() == "robot.svg"
+    finally:
+        set_active_character_filename(None)
+
+
+def test_missing_saved_custom_character_falls_back_to_builtin(
+    tmp_path: Path, monkeypatch
+) -> None:
+    characters = tmp_path / "characters"
+    characters.mkdir()
+    monkeypatch.setattr("vaporstep.svg_character_renderer.characters_dir", lambda: characters)
+
+    path = tmp_path / "settings.json"
+    path.write_text(
+        '{"player_visual":"character","player_character_filename":"deleted.svg"}',
+        encoding="utf-8",
+    )
+
+    set_active_character_filename("deleted.svg")
+    try:
+        reloaded = SettingsStore(path)
+        assert reloaded.settings.player_visual == "character"
+        assert reloaded.settings.player_character_filename == ""
+        assert active_character_filename() is None
+    finally:
+        set_active_character_filename(None)
 
 
 def test_app_visual_toggle_cycles_through_custom_character(
