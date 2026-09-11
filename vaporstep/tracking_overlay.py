@@ -33,10 +33,3 @@ def draw_lower_body_tracking_overlay(renderer, body: BodyState) -> None:
         weight = max(0.0, float(getattr(control, "source_weight", 0.0)))
         if weight > 0.01:
             pygame.draw.circle(renderer.screen, CYAN, pos, 10, 1)
-
-    # Calibration draws this helper after its panel and gameplay scene. Complete
-    # a pending character here so the character is genuinely the final z-layer
-    # for the frame rather than merely being above the playfield.
-    finish_character = getattr(renderer, "draw_deferred_character", None)
-    if callable(finish_character):
-        finish_character()
