@@ -11,6 +11,7 @@ from .renderer import AMBER, BG, CYAN, DIM, GREEN, RED, WHITE
 
 
 CALIBRATION_OVERLAY_ALPHA = 72
+CHARACTER_PLAYFIELD_ALPHA = 128
 
 
 class Renderer(CharacterRenderer):
@@ -23,6 +24,7 @@ class Renderer(CharacterRenderer):
         self._defer_player_visual = False
         self._deferred_player_visual: tuple[str, object] | None = None
         self._deferred_player_visual_ms = 0.0
+        self._character_layer: pygame.Surface | None = None
 
     def reset_game_effects(self) -> None:
         super().reset_game_effects()
@@ -113,9 +115,33 @@ class Renderer(CharacterRenderer):
     def _render_deferred_player_visual(self, visual: tuple[str, object]) -> None:
         kind, value = visual
         if kind == "silhouette":
+            # The silhouette already carries real per-pixel alpha, so moving it
+            # above the playfield does not need another global transparency pass.
             super()._draw_silhouette(value)
-        else:
+            return
+
+        target = self.screen
+        layer = self._character_layer
+        if layer is None or layer.get_size() != self.size:
+            layer = pygame.Surface(self.size, pygame.SRCALPHA)
+            self._character_layer = layer
+
+        viewport = self._camera_rect()
+        layer.set_alpha(None)
+        layer.fill((0, 0, 0, 0), viewport)
+        self.screen = layer
+        try:
             super()._draw_pose_figure(value)
+        finally:
+            self.screen = target
+
+        # Built-in and SVG characters historically used BG-blended RGB colors
+        # to look translucent while they were underneath the playfield. Now that
+        # the character sits above the playfield, composite the whole character
+        # layer at 50% so lane/grid detail still shows through it.
+        layer.set_alpha(CHARACTER_PLAYFIELD_ALPHA)
+        target.blit(layer, viewport.topleft, viewport)
+        layer.set_alpha(None)
 
     def _correct_deferred_player_profile(
         self,
