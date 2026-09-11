@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import pygame
 
-from vaporstep.calibration_renderer import Renderer
+from vaporstep.calibration_renderer import CHARACTER_PLAYFIELD_ALPHA, Renderer
 from vaporstep.domain import BodyState, PoseFigure
+from vaporstep.svg_character_orientation import Renderer as CharacterRenderer
 
 
 def _pose() -> PoseFigure:
@@ -49,3 +50,28 @@ def test_player_visual_renders_after_playfield_and_before_notes(monkeypatch) -> 
     )
 
     assert calls.index("playfields") < calls.index("player") < calls.index("notes")
+
+
+def test_character_layer_is_half_transparent_over_playfield(monkeypatch) -> None:
+    pygame.font.init()
+    background = (24, 48, 72)
+    character = (224, 128, 64)
+    screen = pygame.Surface((640, 360))
+    screen.fill(background)
+    renderer = Renderer(screen)
+    point = renderer._camera_rect().center
+
+    def draw_character(self, _figure) -> None:
+        self.screen.set_at(point, (*character, 255))
+
+    monkeypatch.setattr(CharacterRenderer, "_draw_pose_figure", draw_character)
+
+    renderer._render_deferred_player_visual(("pose", _pose()))
+
+    actual = screen.get_at(point)[:3]
+    alpha = CHARACTER_PLAYFIELD_ALPHA / 255.0
+    expected = tuple(
+        round(bg * (1.0 - alpha) + fg * alpha)
+        for bg, fg in zip(background, character)
+    )
+    assert all(abs(a - e) <= 2 for a, e in zip(actual, expected))
