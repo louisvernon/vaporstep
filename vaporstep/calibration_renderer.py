@@ -20,6 +20,9 @@ class Renderer(CharacterRenderer):
         super().__init__(screen)
         self._overlay_alpha_override: int | None = None
         self._pose_presentation = PosePresentationExtrapolator()
+        self._defer_player_visual = False
+        self._deferred_player_visual: tuple[str, object] | None = None
+        self._deferred_player_visual_ms = 0.0
 
     def reset_game_effects(self) -> None:
         super().reset_game_effects()
@@ -60,10 +63,81 @@ class Renderer(CharacterRenderer):
             # and must not resurrect stale character state when toggled back on.
             self._pose_presentation.reset()
 
+        # Base rendering historically drew the player before the playfields.
+        # Defer whichever player representation is active until the playfield
+        # geometry has finished, while still keeping notes/receptors/effects on
+        # top of the player.
+        previous_phase_averages = (
+            dict(self._phase_averages_ms) if self._profiling_enabled else None
+        )
+        self._defer_player_visual = True
+        self._deferred_player_visual = None
+        self._deferred_player_visual_ms = 0.0
         try:
             super().draw(*args, **kwargs)
+            if previous_phase_averages is not None:
+                self._correct_deferred_player_profile(previous_phase_averages)
         finally:
+            self._defer_player_visual = False
+            self._deferred_player_visual = None
             self._overlay_alpha_override = previous
+
+    def _draw_silhouette(self, mask) -> None:
+        if self._defer_player_visual:
+            self._deferred_player_visual = ("silhouette", mask)
+            return
+        super()._draw_silhouette(mask)
+
+    def _draw_pose_figure(self, figure) -> None:
+        if self._defer_player_visual:
+            self._deferred_player_visual = ("pose", figure)
+            return
+        super()._draw_pose_figure(figure)
+
+    def _draw_playfields(self, *args, **kwargs) -> None:
+        super()._draw_playfields(*args, **kwargs)
+        if self._deferred_player_visual is None:
+            return
+
+        visual = self._deferred_player_visual
+        self._deferred_player_visual = None
+        previous_defer = self._defer_player_visual
+        self._defer_player_visual = False
+        started = time.perf_counter()
+        try:
+            self._render_deferred_player_visual(visual)
+        finally:
+            self._deferred_player_visual_ms += (time.perf_counter() - started) * 1000.0
+            self._defer_player_visual = previous_defer
+
+    def _render_deferred_player_visual(self, visual: tuple[str, object]) -> None:
+        kind, value = visual
+        if kind == "silhouette":
+            super()._draw_silhouette(value)
+        else:
+            super()._draw_pose_figure(value)
+
+    def _correct_deferred_player_profile(
+        self,
+        previous_phase_averages: dict[str, float],
+    ) -> None:
+        """Keep F3 phase attribution unchanged after moving the player layer."""
+        elapsed = self._deferred_player_visual_ms
+        if elapsed <= 0.0 or "playfields" not in self._phase_times_ms:
+            return
+
+        phase_times = dict(self._phase_times_ms)
+        phase_times["playfields"] = max(0.0, phase_times["playfields"] - elapsed)
+        phase_times["silhouette"] = phase_times.get("silhouette", 0.0) + elapsed
+        self._phase_times_ms = phase_times
+
+        for name, value in phase_times.items():
+            previous_average = previous_phase_averages.get(name)
+            self._phase_averages_ms[name] = (
+                value
+                if previous_average is None
+                else 0.9 * previous_average + 0.1 * value
+            )
 
     def _draw_status(self, status, input_name, song_title, chart_label, audio_error) -> None:
         if self._overlay_alpha_override is None:
