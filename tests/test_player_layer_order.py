@@ -16,13 +16,22 @@ def test_player_visual_renders_after_playfield_and_before_notes(monkeypatch) -> 
     renderer = Renderer(pygame.Surface((640, 360)))
     calls: list[str] = []
 
-    monkeypatch.setattr(renderer, "_draw_background", lambda *args, **kwargs: calls.append("background"))
-    monkeypatch.setattr(renderer, "_draw_playfields", lambda *args, **kwargs: calls.append("playfields"))
-    monkeypatch.setattr(renderer, "_draw_pose_figure", lambda *args, **kwargs: calls.append("player"))
-    monkeypatch.setattr(renderer, "_draw_chains", lambda *args, **kwargs: calls.append("chains"))
+    monkeypatch.setattr(renderer, "_draw_background", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        renderer,
+        "_draw_foot_playfield",
+        lambda *args, **kwargs: calls.append("playfields"),
+    )
+    monkeypatch.setattr(renderer, "_draw_hand_playfield", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        renderer,
+        "_render_deferred_player_visual",
+        lambda *args, **kwargs: calls.append("player"),
+    )
+    monkeypatch.setattr(renderer, "_draw_chains", lambda *args, **kwargs: None)
     monkeypatch.setattr(renderer, "_draw_notes", lambda *args, **kwargs: calls.append("notes"))
-    monkeypatch.setattr(renderer, "_draw_receptors", lambda *args, **kwargs: calls.append("receptors"))
-    monkeypatch.setattr(renderer, "_draw_status", lambda *args, **kwargs: calls.append("status"))
+    monkeypatch.setattr(renderer, "_draw_receptors", lambda *args, **kwargs: None)
+    monkeypatch.setattr(renderer, "_draw_status", lambda *args, **kwargs: None)
     monkeypatch.setattr(renderer, "_draw_body_markers", lambda *args, **kwargs: None)
 
     renderer.draw(
