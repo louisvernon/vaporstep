@@ -1,4 +1,4 @@
-from vaporstep.calibration_renderer import Renderer
+from vaporstep.gameplay_presentation_renderer import Renderer
 from vaporstep.domain import HitQuality, NoteKind
 from vaporstep.motion import MotionEvent
 
