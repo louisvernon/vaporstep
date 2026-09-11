@@ -20,16 +20,10 @@ class Renderer(CharacterRenderer):
         super().__init__(screen)
         self._overlay_alpha_override: int | None = None
         self._pose_presentation = PosePresentationExtrapolator()
-        self._defer_character_visual = False
-        self._deferred_pose_figure = None
-        self._deferred_character_ms = 0.0
-        self._deferred_profile_averages: dict[str, float] | None = None
 
     def reset_game_effects(self) -> None:
         super().reset_game_effects()
         self._pose_presentation.reset()
-        self._deferred_pose_figure = None
-        self._deferred_profile_averages = None
 
     def draw(self, *args, **kwargs) -> None:
         # Either visible F3 level arrives here as debug=True. Publish it once so
@@ -37,7 +31,6 @@ class Renderer(CharacterRenderer):
         # through gameplay and scoring APIs.
         set_debug_enabled(bool(kwargs.get("debug", False)))
         overlay_alpha = kwargs.pop("overlay_alpha", None)
-        defer_until_frame_end = overlay_alpha is not None
         previous = self._overlay_alpha_override
         self._overlay_alpha_override = (
             None
@@ -67,81 +60,10 @@ class Renderer(CharacterRenderer):
             # and must not resurrect stale character state when toggled back on.
             self._pose_presentation.reset()
 
-        # Character mode is intentionally the final scene layer. Gameplay has no
-        # additional scene overlays after draw(), so it can be completed here.
-        # Calibration adds its controls and lower-body tracking overlay afterward,
-        # so that path leaves the character pending until the frame is finalized.
-        self._defer_character_visual = True
-        self._deferred_pose_figure = None
-        self._deferred_character_ms = 0.0
-        self._deferred_profile_averages = (
-            dict(self._phase_averages_ms) if self._profiling_enabled else None
-        )
-        completed = False
         try:
             super().draw(*args, **kwargs)
-            completed = True
-            if not defer_until_frame_end:
-                self.draw_deferred_character()
         finally:
-            self._defer_character_visual = False
             self._overlay_alpha_override = previous
-            if not completed:
-                self._deferred_pose_figure = None
-                self._deferred_profile_averages = None
-
-    def _draw_pose_figure(self, figure) -> None:
-        if self._defer_character_visual:
-            self._deferred_pose_figure = figure
-            return
-        super()._draw_pose_figure(figure)
-
-    def draw_deferred_character(self) -> None:
-        """Draw a pending character as the final frame layer, if there is one."""
-        figure = self._deferred_pose_figure
-        if figure is None:
-            self._deferred_profile_averages = None
-            return
-
-        self._deferred_pose_figure = None
-        previous_defer = self._defer_character_visual
-        self._defer_character_visual = False
-        started = time.perf_counter()
-        try:
-            # Draw directly to the gameplay surface. Individual SVG opacity
-            # values still affect imported colors, but there is no whole-character
-            # alpha compositing pass here.
-            super()._draw_pose_figure(figure)
-        finally:
-            self._deferred_character_ms = (time.perf_counter() - started) * 1000.0
-            self._defer_character_visual = previous_defer
-
-        previous_phase_averages = self._deferred_profile_averages
-        self._deferred_profile_averages = None
-        if previous_phase_averages is not None:
-            self._correct_deferred_character_profile(previous_phase_averages)
-
-    def _correct_deferred_character_profile(
-        self,
-        previous_phase_averages: dict[str, float],
-    ) -> None:
-        """Keep F3 character cost attributed to the existing player phase."""
-        elapsed = self._deferred_character_ms
-        if elapsed <= 0.0:
-            return
-
-        phase_times = dict(self._phase_times_ms)
-        phase_times["silhouette"] = phase_times.get("silhouette", 0.0) + elapsed
-        phase_times["total"] = phase_times.get("total", 0.0) + elapsed
-        self._phase_times_ms = phase_times
-
-        for name, value in phase_times.items():
-            previous_average = previous_phase_averages.get(name)
-            self._phase_averages_ms[name] = (
-                value
-                if previous_average is None
-                else 0.9 * previous_average + 0.1 * value
-            )
 
     def _draw_status(self, status, input_name, song_title, chart_label, audio_error) -> None:
         if self._overlay_alpha_override is None:
