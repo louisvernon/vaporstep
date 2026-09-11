@@ -4,8 +4,9 @@ import time
 
 import pygame
 
-from .svg_character_orientation import Renderer as CharacterRenderer, active_character_filename
+from .svg_character_orientation import active_character_filename
 from .debug_state import set_debug_enabled
+from .gameplay_presentation_renderer import Renderer as GameplayRenderer
 from .pose_presentation import PosePresentationExtrapolator
 from .renderer import AMBER, BG, CYAN, DIM, GREEN, RED, WHITE
 
@@ -13,8 +14,8 @@ from .renderer import AMBER, BG, CYAN, DIM, GREEN, RED, WHITE
 CALIBRATION_OVERLAY_ALPHA = 72
 
 
-class Renderer(CharacterRenderer):
-    """Character renderer with presentation extrapolation and calibration overlays."""
+class Renderer(GameplayRenderer):
+    """Top-level renderer with pose extrapolation and calibration overlays."""
 
     def __init__(self, screen: pygame.Surface) -> None:
         super().__init__(screen)
