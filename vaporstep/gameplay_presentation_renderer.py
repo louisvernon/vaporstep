@@ -11,8 +11,8 @@ from .renderer import BG, CYAN, DIM, GREEN, MAGENTA, WHITE, _blend
 from .svg_character_orientation import Renderer as CharacterRenderer
 
 
-SUSTAIN_CHARGE_DELAY_SECONDS = 1.0
-SUSTAIN_CHARGE_RAMP_SECONDS = 5.0
+SUSTAIN_CHARGE_DELAY_SECONDS = 0.70
+SUSTAIN_CHARGE_FULL_SECONDS = 2.50
 SUSTAIN_COMPLETION_FEEDBACK_SECONDS = 0.70
 SUSTAIN_COMPLETION_RING_SECONDS = 0.42
 
@@ -41,12 +41,16 @@ class Renderer(CharacterRenderer):
 
     @staticmethod
     def _nominal_sustain_charge(chain: RuntimeChain, song_time: float) -> float:
-        """Return timeline charge: one quiet second, then 20% per second."""
+        """Return timeline charge: quiet for 0.7s, fully charged at 2.5s."""
         definition = chain.definition
         if definition.source != SustainSource.EXPLICIT_HOLD:
             return 0.0
-        elapsed = float(song_time) - float(definition.start_time) - SUSTAIN_CHARGE_DELAY_SECONDS
-        return max(0.0, min(1.0, elapsed / SUSTAIN_CHARGE_RAMP_SECONDS))
+        elapsed = float(song_time) - float(definition.start_time)
+        ramp = SUSTAIN_CHARGE_FULL_SECONDS - SUSTAIN_CHARGE_DELAY_SECONDS
+        return max(
+            0.0,
+            min(1.0, (elapsed - SUSTAIN_CHARGE_DELAY_SECONDS) / ramp),
+        )
 
     @classmethod
     def _sustain_charge(
