@@ -4,10 +4,13 @@ import time
 
 import pygame
 
+from . import __version__
 from .svg_character_orientation import Renderer as CharacterRenderer, active_character_filename
 from .debug_state import set_debug_enabled
+from .domain import HitQuality, NoteKind
 from .pose_presentation import PosePresentationExtrapolator
-from .renderer import AMBER, BG, CYAN, DIM, GREEN, RED, WHITE
+from .provenance import current_result_provenance, display_fingerprint, play_fingerprint
+from .renderer import AMBER, BG, CYAN, DIM, GREEN, HIT_BRICK_POP_SECONDS, MAGENTA, RED, WHITE
 
 
 CALIBRATION_OVERLAY_ALPHA = 72
@@ -42,6 +45,10 @@ class Renderer(CharacterRenderer):
         if body is None and args:
             body = args[0]
         pose_figure = kwargs.get("pose_figure")
+        song_time = kwargs.get("song_time")
+        if song_time is None and len(args) > 3:
+            song_time = args[3]
+        strike_events = kwargs.get("strike_events", ())
         now = time.monotonic()
         if (
             pose_figure is not None
@@ -62,8 +69,76 @@ class Renderer(CharacterRenderer):
 
         try:
             super().draw(*args, **kwargs)
+            if song_time is not None:
+                self._draw_sustain_completion_pops(strike_events, float(song_time))
         finally:
             self._overlay_alpha_override = previous
+
+    def _draw_sustain_completion_pops(self, strike_events, song_time: float) -> None:
+        """Reuse the normal note-head pop when a sustain tail scores successfully."""
+        for event in strike_events:
+            if getattr(event, "source", "") != "sustain_complete":
+                continue
+            age = song_time - float(event.song_time)
+            if age < 0.0 or age > HIT_BRICK_POP_SECONDS:
+                continue
+            if event.kind == NoteKind.HANDS:
+                self._draw_hand_hit_pop(event.lane, age, HitQuality.HIT)
+            elif event.kind == NoteKind.FOOT:
+                self._draw_hit_pop_bar(NoteKind.FOOT, event.lane, age, HitQuality.HIT)
+
+    def draw_results(
+        self,
+        song_title: str,
+        chart_label: str,
+        stats,
+        best_score: int,
+        new_high: bool,
+        failed: bool = False,
+        recording_status: str = "",
+    ) -> None:
+        provenance = current_result_provenance()
+        display_title = (
+            f"{song_title} — {provenance.artist}"
+            if provenance.artist
+            else song_title
+        )
+        display_chart = (
+            f"{chart_label} · chart by {provenance.chart_creator}"
+            if provenance.chart_creator
+            else chart_label
+        )
+        super().draw_results(
+            display_title,
+            display_chart,
+            stats,
+            best_score,
+            new_high,
+            failed=failed,
+            recording_status=recording_status,
+        )
+
+        w, h = self.size
+        version = self.small_font.render(f"VaporStep {__version__}", True, DIM)
+        self.screen.blit(version, version.get_rect(topright=(w - 18, 18)))
+
+        if provenance.song_chart_digest:
+            song_chart = self.small_font.render(
+                f"SONG / CHART  {display_fingerprint(provenance.song_chart_digest)}",
+                True,
+                MAGENTA,
+            )
+            play = self.small_font.render(
+                f"PLAY  {display_fingerprint(play_fingerprint(provenance.song_chart_digest, stats))}",
+                True,
+                CYAN,
+            )
+            gap = 42
+            total_width = song_chart.get_width() + gap + play.get_width()
+            x = max(18, (w - total_width) // 2)
+            y = h - 57
+            self.screen.blit(song_chart, (x, y))
+            self.screen.blit(play, (x + song_chart.get_width() + gap, y))
 
     def _draw_status(self, status, input_name, song_title, chart_label, audio_error) -> None:
         if self._overlay_alpha_override is None:
