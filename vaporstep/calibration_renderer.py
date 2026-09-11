@@ -23,10 +23,12 @@ class Renderer(CharacterRenderer):
         super().__init__(screen)
         self._overlay_alpha_override: int | None = None
         self._pose_presentation = PosePresentationExtrapolator()
+        self._sustain_pop_started: dict[int, float] = {}
 
     def reset_game_effects(self) -> None:
         super().reset_game_effects()
         self._pose_presentation.reset()
+        self._sustain_pop_started.clear()
 
     def draw(self, *args, **kwargs) -> None:
         # Either visible F3 level arrives here as debug=True. Publish it once so
@@ -45,9 +47,6 @@ class Renderer(CharacterRenderer):
         if body is None and args:
             body = args[0]
         pose_figure = kwargs.get("pose_figure")
-        song_time = kwargs.get("song_time")
-        if song_time is None and len(args) > 3:
-            song_time = args[3]
         strike_events = kwargs.get("strike_events", ())
         now = time.monotonic()
         if (
@@ -69,18 +68,32 @@ class Renderer(CharacterRenderer):
 
         try:
             super().draw(*args, **kwargs)
-            if song_time is not None:
-                self._draw_sustain_completion_pops(strike_events, float(song_time))
+            self._draw_sustain_completion_pops(strike_events, now)
         finally:
             self._overlay_alpha_override = previous
 
-    def _draw_sustain_completion_pops(self, strike_events, song_time: float) -> None:
-        """Reuse the normal note-head pop when a sustain tail scores successfully."""
-        for event in strike_events:
-            if getattr(event, "source", "") != "sustain_complete":
-                continue
-            age = song_time - float(event.song_time)
-            if age < 0.0 or age > HIT_BRICK_POP_SECONDS:
+    def _draw_sustain_completion_pops(self, strike_events, now: float) -> None:
+        """Reuse the normal note-head pop when a sustain tail scores successfully.
+
+        Sustain scoring can intentionally trail the rendered song clock while a
+        camera inference result is still pending. Start this purely visual effect
+        when the completion event first reaches the renderer rather than aging it
+        from that delayed scoring timestamp.
+        """
+        events = tuple(
+            event
+            for event in strike_events
+            if getattr(event, "source", "") == "sustain_complete"
+        )
+        active_ids = {id(event) for event in events}
+        for event_id in tuple(self._sustain_pop_started):
+            if event_id not in active_ids:
+                del self._sustain_pop_started[event_id]
+
+        for event in events:
+            started = self._sustain_pop_started.setdefault(id(event), now)
+            age = max(0.0, now - started)
+            if age > HIT_BRICK_POP_SECONDS:
                 continue
             if event.kind == NoteKind.HANDS:
                 self._draw_hand_hit_pop(event.lane, age, HitQuality.HIT)
