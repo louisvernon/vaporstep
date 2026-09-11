@@ -98,16 +98,15 @@ class Renderer(CharacterRenderer):
         recording_status: str = "",
     ) -> None:
         provenance = current_result_provenance()
-        display_title = (
-            f"{song_title} — {provenance.artist}"
-            if provenance.artist
-            else song_title
-        )
-        display_chart = (
-            f"{chart_label} · chart by {provenance.chart_creator}"
-            if provenance.chart_creator
-            else chart_label
-        )
+        display_title = f"{song_title} - {provenance.artist or 'Unknown artist'}"
+
+        display_chart = chart_label
+        if provenance.chart_creator:
+            old_suffix = f" · {provenance.chart_creator}"
+            if display_chart.endswith(old_suffix):
+                display_chart = display_chart[: -len(old_suffix)]
+            display_chart = f"{display_chart} · chart by {provenance.chart_creator}"
+
         super().draw_results(
             display_title,
             display_chart,
