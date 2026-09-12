@@ -42,6 +42,7 @@ jobs:
           cp vaporstep/chains.py web-dist/vaporstep/chains.py
           cp vaporstep/motion.py web-dist/vaporstep/motion.py
           cp vaporstep/scoring.py web-dist/vaporstep/scoring.py
+          cp vaporstep/scroll.py web-dist/vaporstep/scroll.py
           cp vaporstep/song.py web-dist/vaporstep/song.py
           cp vaporstep/simfile_loader.py web-dist/vaporstep/simfile_loader.py
           # GameSession currently needs only the volume constant from audio_fx.
