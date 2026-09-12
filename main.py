@@ -61,6 +61,35 @@ def _draw_status(
     pygame.display.flip()
 
 
+async def _wait_for_user_start(screen: pygame.Surface) -> bool:
+    _draw_status(
+        screen,
+        "VaporTap audio playtest",
+        [
+            "Click, tap, or press any key to start.",
+            "This gesture unlocks browser audio before the shared GameSession starts.",
+            "You should hear a 120 BPM click track when chart time reaches zero.",
+        ],
+    )
+    _phase("WAIT USER START")
+    while True:
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                return False
+            if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_ESCAPE:
+                    return False
+                _phase("USER START (keyboard)")
+                return True
+            if event.type == pygame.MOUSEBUTTONDOWN:
+                _phase("USER START (mouse)")
+                return True
+            if event.type == pygame.FINGERDOWN:
+                _phase("USER START (touch)")
+                return True
+        await asyncio.sleep(0)
+
+
 async def _show_startup_error(screen: pygame.Surface, exc: BaseException) -> None:
     _phase(f"FAILED: {type(exc).__name__}: {exc}")
     traceback.print_exc()
@@ -83,8 +112,11 @@ async def _show_startup_error(screen: pygame.Surface, exc: BaseException) -> Non
 
 
 async def boot() -> None:
-    _phase("PYGAME INIT")
-    pygame.init()
+    # Avoid initializing the mixer until after a browser user gesture. Display
+    # and font are enough to show diagnostics and the explicit start gate.
+    _phase("PYGAME VIDEO INIT")
+    pygame.display.init()
+    pygame.font.init()
     _phase("CREATE DISPLAY")
     screen = pygame.display.set_mode((1280, 720), pygame.RESIZABLE)
     pygame.display.set_caption("VaporTap WASM Shared-Session Playtest")
@@ -109,6 +141,14 @@ async def boot() -> None:
         _phase("IMPORT SHARED STACK")
         from vaporstep.web_vaportap_session import main as run_vaportap
         _phase("SHARED STACK IMPORTED")
+
+        if not await _wait_for_user_start(screen):
+            return
+
+        _phase("INIT MIXER")
+        if not pygame.mixer.get_init():
+            pygame.mixer.init()
+        _phase(f"MIXER READY {pygame.mixer.get_init()}")
 
         _phase("START SESSION")
         await run_vaportap()
