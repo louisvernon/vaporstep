@@ -1,0 +1,284 @@
+name: Web Prototype
+
+on:
+  pull_request:
+  push:
+    branches: ["agent/vaportap-wasm"]
+  workflow_dispatch:
+
+jobs:
+  build-web:
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install web build tools
+        run: python -m pip install pygame-ce==2.5.8 pygbag==0.9.3
+
+      - name: Stage web-safe application
+        shell: bash
+        run: |
+          rm -rf web-dist
+          mkdir -p web-dist/vaporstep
+          cp main.py web-dist/main.py
+          cp vaporstep/web_vaportap.py web-dist/vaporstep/web_vaportap.py
+          cp vaporstep/web_vaportap_session.py web-dist/vaporstep/web_vaportap_session.py
+          cp vaporstep/web_compat.py web-dist/vaporstep/web_compat.py
+          cp vaporstep/web_demo.sm web-dist/vaporstep/web_demo.sm
+          cp vaporstep/web_demo_audio.py web-dist/vaporstep/web_demo_audio.py
+          cp vaporstep/playfield_geometry.py web-dist/vaporstep/playfield_geometry.py
+          cp vaporstep/config.py web-dist/vaporstep/config.py
+          cp vaporstep/domain.py web-dist/vaporstep/domain.py
+          cp vaporstep/session.py web-dist/vaporstep/session.py
+          cp vaporstep/audio_config.py web-dist/vaporstep/audio_config.py
+          cp vaporstep/audio_fx.py web-dist/vaporstep/audio_fx.py
+          cp vaporstep/adaptive_sampling.py web-dist/vaporstep/adaptive_sampling.py
+          cp vaporstep/camera_samples.py web-dist/vaporstep/camera_samples.py
+          cp vaporstep/debug_state.py web-dist/vaporstep/debug_state.py
+          cp vaporstep/chains.py web-dist/vaporstep/chains.py
+          cp vaporstep/motion.py web-dist/vaporstep/motion.py
+          cp vaporstep/scoring.py web-dist/vaporstep/scoring.py
+          cp vaporstep/scroll.py web-dist/vaporstep/scroll.py
+          cp vaporstep/song.py web-dist/vaporstep/song.py
+          cp vaporstep/simfile_loader.py web-dist/vaporstep/simfile_loader.py
+          printf '%s\n' '"""Web-safe VaporStep/VaporTap package."""' > web-dist/vaporstep/__init__.py
+          printf '%s\n' "$GITHUB_SHA" > web-dist/build-version.txt
+
+          # Build a deterministic PCM fixture rather than depending on a
+          # compressed-audio codec merely to prove the browser music path.
+          (
+            cd web-dist
+            python - <<'PY'
+          from pathlib import Path
+          from vaporstep.web_demo_audio import generate_web_demo_audio
+
+          audio = generate_web_demo_audio(Path("vaporstep/web_demo.sm"))
+          print(f"generated browser audio fixture: {audio} ({audio.stat().st_size} bytes)")
+          PY
+          )
+
+          # Vendor the complete pure-Python StepMania parser dependency closure
+          # into the static app. This avoids both Pygbag package availability
+          # assumptions and extra package/CDN fetches on mobile startup.
+          python -m pip install \
+            --target web-dist \
+            --no-compile \
+            simfile==2.1.1 \
+            setuptools==80.9.0
+
+          # PyFilesystem2 declares package namespaces through deprecated
+          # pkg_resources shims in more than one package __init__. In this
+          # staged, self-contained browser tree they are unnecessary, and under
+          # WASM they add a fragile startup path plus noisy warnings. Strip every
+          # exact shim from the staged fs package rather than maintaining a list
+          # of individual files.
+          python - <<'PY'
+          from pathlib import Path
+
+          root = Path("web-dist/fs")
+          needle = '__import__("pkg_resources").declare_namespace(__name__)  # type: ignore'
+          replacement = "# Browser bundle: normal package, no pkg_resources namespace scan needed."
+          patched = []
+          for path in root.rglob("*.py"):
+              text = path.read_text(encoding="utf-8")
+              if needle in text:
+                  path.write_text(text.replace(needle, replacement), encoding="utf-8")
+                  patched.append(path)
+          if not patched:
+              raise RuntimeError("Unexpected PyFilesystem2 package: namespace shims not found")
+          print("patched namespace shims:", ", ".join(str(path) for path in patched))
+          PY
+
+          # Pygbag's CPython/WASM runtime may expose a stub decimal.Decimal
+          # solely for import compatibility. Bundle CPython's pure-Python
+          # implementation so web_compat can restore real Decimal semantics.
+          python - <<'PY'
+          from pathlib import Path
+          import _pydecimal
+
+          source = Path(_pydecimal.__file__)
+          target = Path("web-dist/_pydecimal.py")
+          target.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
+          PY
+
+      - name: Check staged shared pipeline
+        shell: bash
+        run: |
+          python -m py_compile web-dist/main.py web-dist/vaporstep/*.py web-dist/_pydecimal.py
+          ! grep -R -q 'declare_namespace' web-dist/fs
+          test "$(cat web-dist/build-version.txt)" = "$GITHUB_SHA"
+          cd web-dist
+          python - <<'PY'
+          import sys
+          import types
+          from pathlib import Path
+
+          # Audio synthesis is desktop-heavy, but importing the shared session
+          # must not pull NumPy into the browser merely to read volume constants.
+          import vaporstep.audio_fx
+          assert "numpy" not in sys.modules
+
+          # Reproduce Pygbag's non-functional Decimal stub so this exact WASM
+          # compatibility path is exercised in CI before chart loading.
+          fake_decimal = types.ModuleType("decimal")
+          fake_decimal.Decimal = type("Decimal", (), {})
+          sys.modules["decimal"] = fake_decimal
+
+          from vaporstep.web_compat import ensure_decimal_runtime
+          backend = ensure_decimal_runtime()
+          assert backend == "_pydecimal"
+          from decimal import Decimal
+          assert Decimal("120.5") + Decimal("0.5") == Decimal("121.0")
+
+          from vaporstep.domain import BodyState, ChainMode
+          from vaporstep.session import GameSession
+          from vaporstep.simfile_loader import load_chart, scan_song
+          from vaporstep.web_demo_audio import ensure_web_demo_audio
+
+          path = Path("vaporstep/web_demo.sm")
+          audio = ensure_web_demo_audio(path)
+          assert audio.exists() and audio.stat().st_size > 1000
+          assert audio.name == "web_demo.wav"
+          song = scan_song(path)
+          assert song is not None and song.charts
+          assert song.music_path == audio
+          chart = load_chart(song, song.charts[0])
+          assert chart.notes
+          session = GameSession(chart=chart, chain_mode=ChainMode.OFF)
+          session.update(BodyState(), ready_to_start=True, start_immediately=True)
+          assert session.running
+          print(
+              f"shared pipeline: {song.title!r}, "
+              f"{len(chart.notes)} notes, {len(chart.sustains)} sustains, "
+              f"music={song.music_path.name if song.music_path else None}, "
+              f"decimal={backend}"
+          )
+          PY
+
+      - name: Build WASM bundle
+        run: >-
+          python -m pygbag
+          --build
+          --PYBUILD 3.12
+          --ume_block 0
+          --no_opt
+          --disable-sound-format-error
+          --title "VaporTap Shared-Core Playtest"
+          web-dist
+
+      - name: Mark preview as non-indexable and version app archives
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import os
+
+          output = Path("web-dist/build/web")
+          index = output / "index.html"
+          text = index.read_text(encoding="utf-8")
+          marker = '<meta name="robots" content="noindex, nofollow, noarchive">'
+          if marker not in text:
+              text = text.replace("<head>", f"<head>\n    {marker}", 1)
+
+          # Pygbag uses the APK on itch.io, but the tarball everywhere else
+          # (including GitHub Pages). Version both real archive paths so a fresh
+          # index can never mount a stale Python bundle from browser/CDN cache.
+          sha = os.environ["GITHUB_SHA"]
+          archives = {
+              "web-dist.apk": f"web-dist-{sha}.apk",
+              "web-dist.tar.gz": f"web-dist-{sha}.tar.gz",
+          }
+          for archive_name, versioned_name in archives.items():
+              if archive_name not in text:
+                  raise RuntimeError(
+                      f"Unexpected Pygbag template: {archive_name} not found"
+                  )
+              archive = output / archive_name
+              versioned_archive = output / versioned_name
+              archive.rename(versioned_archive)
+              text = text.replace(archive_name, versioned_name)
+          index.write_text(text, encoding="utf-8")
+
+          (output / "robots.txt").write_text(
+              "User-agent: *\nDisallow: /\n",
+              encoding="utf-8",
+          )
+          (output / "version.txt").write_text(
+              f"{sha}\n",
+              encoding="utf-8",
+          )
+          PY
+
+      - name: Verify web output
+        shell: bash
+        run: |
+          apk="web-dist/build/web/web-dist-${GITHUB_SHA}.apk"
+          tarball="web-dist/build/web/web-dist-${GITHUB_SHA}.tar.gz"
+          test -f web-dist/build/web/index.html
+          test -f "$apk"
+          test -f "$tarball"
+          test ! -f web-dist/build/web/web-dist.apk
+          test ! -f web-dist/build/web/web-dist.tar.gz
+          test -f web-dist/build/web/version.txt
+          grep -q 'noindex, nofollow, noarchive' web-dist/build/web/index.html
+          grep -q "web-dist-${GITHUB_SHA}.apk" web-dist/build/web/index.html
+          grep -q "web-dist-${GITHUB_SHA}.tar.gz" web-dist/build/web/index.html
+          grep -q "${GITHUB_SHA}" web-dist/build/web/version.txt
+
+          # Avoid archive-listing pipelines under pipefail: grep -q closes its
+          # input early after a match, which makes tar report a broken pipe.
+          unzip -l "$apk" > /tmp/vaportap-apk-list.txt
+          unzip -p "$apk" assets/vaporstep/web_demo_audio.py > /tmp/vaportap-apk-audio.py
+          tar -tzf "$tarball" > /tmp/vaportap-tar-list.txt
+          tar -xOzf "$tarball" assets/vaporstep/web_demo_audio.py > /tmp/vaportap-tar-audio.py
+
+          grep -q 'assets/build-version.txt' /tmp/vaportap-apk-list.txt
+          grep -q 'assets/vaporstep/web_demo.sm' /tmp/vaportap-apk-list.txt
+          grep -q 'assets/vaporstep/web_demo.wav' /tmp/vaportap-apk-list.txt
+          grep -q 'web_demo.wav' /tmp/vaportap-apk-audio.py
+          ! grep -q 'web_demo.ogg' /tmp/vaportap-apk-audio.py
+
+          grep -q 'assets/build-version.txt' /tmp/vaportap-tar-list.txt
+          grep -q 'assets/vaporstep/web_demo.sm' /tmp/vaportap-tar-list.txt
+          grep -q 'assets/vaporstep/web_demo.wav' /tmp/vaportap-tar-list.txt
+          grep -q 'web_demo.wav' /tmp/vaportap-tar-audio.py
+          ! grep -q 'web_demo.ogg' /tmp/vaportap-tar-audio.py
+
+          grep -q 'assets/vaporstep/web_vaportap_session.py' /tmp/vaportap-apk-list.txt
+          grep -q 'assets/vaporstep/web_compat.py' /tmp/vaportap-apk-list.txt
+          grep -q 'assets/_pydecimal.py' /tmp/vaportap-apk-list.txt
+          grep -q 'assets/simfile/__init__.py' /tmp/vaportap-apk-list.txt
+          find web-dist/build/web -maxdepth 2 -type f -print | sort
+
+      - name: Configure GitHub Pages
+        if: github.event_name != 'pull_request'
+        uses: actions/configure-pages@v5
+
+      - name: Upload GitHub Pages artifact
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: web-dist/build/web
+
+  deploy:
+    if: github.event_name != 'pull_request'
+    needs: build-web
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

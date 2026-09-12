@@ -14,10 +14,13 @@ dependencies = [
   # Keep the native vision stack reproducible across local and release builds.
   "mediapipe==0.10.31",
   "opencv-python==5.0.0.93",
-  "pygame==2.6.1",
+  # pygame-ce keeps the same `import pygame` API while giving us a supported
+  # path to pygbag/Emscripten for the experimental VaporTap web target.
+  "pygame-ce==2.5.8",
   "numpy==2.5.2",
   "simfile==2.1.1",
-  # Pygame 2.6.1 still imports pkg_resources, removed in setuptools 81.
+  # pygame-ce does not require pkg_resources, but keep setuptools pinned while
+  # the rest of the packaging stack remains unchanged in this compatibility spike.
   "setuptools==80.9.0",
   "imageio-ffmpeg==0.6.0",
 ]

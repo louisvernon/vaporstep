@@ -8,12 +8,13 @@ from .svg_character_orientation import Renderer as CharacterRenderer, active_cha
 from .debug_state import set_debug_enabled
 from .pose_presentation import PosePresentationExtrapolator
 from .renderer import AMBER, BG, CYAN, DIM, GREEN, RED, WHITE
+from .renderer_geometry_adapter import SharedPlayfieldGeometryMixin
 
 
 CALIBRATION_OVERLAY_ALPHA = 72
 
 
-class Renderer(CharacterRenderer):
+class Renderer(SharedPlayfieldGeometryMixin, CharacterRenderer):
     """Character renderer with presentation extrapolation and calibration overlays."""
 
     def __init__(self, screen: pygame.Surface) -> None:

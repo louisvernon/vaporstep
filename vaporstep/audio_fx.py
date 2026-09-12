@@ -2,21 +2,18 @@ from __future__ import annotations
 
 import math
 
-import numpy as np
-
+from .audio_config import (
+    GAMEPLAY_MUSIC_VOLUME,
+    MENU_AMBIENCE_SECONDS,
+    MENU_AMBIENCE_VOLUME,
+    RECORDING_MUSIC_VOLUME,
+    RECORDING_SFX_VOLUME,
+)
 from .domain import GameplayEvent, GameplayEventType, HitQuality
 
 SFX_SAMPLE_RATE = 44_100
 SFX_CHANNELS = 2
 MIXER_BUFFER_SAMPLES = 1_024
-
-# Leave musical headroom so a short percussive input transient can be heard
-# clearly without forcing the player to turn the song down dramatically.
-GAMEPLAY_MUSIC_VOLUME = 0.82
-RECORDING_MUSIC_VOLUME = 0.82
-RECORDING_SFX_VOLUME = 1.00
-MENU_AMBIENCE_VOLUME = 0.055
-MENU_AMBIENCE_SECONDS = 4.0
 
 
 def _tone(
@@ -30,6 +27,8 @@ def _tone(
     attack: float = 0.003,
     decay_scale: float = 9.0,
 ) -> np.ndarray:
+    import numpy as np
+
     count = max(1, int(round(sample_rate * duration)))
     t = np.arange(count, dtype=np.float64) / sample_rate
     attack_env = np.minimum(1.0, t / max(attack, 1e-5))
@@ -47,6 +46,8 @@ def _timing_synth_hit(duration: float, volume: float, sample_rate: int) -> np.nd
     percussion hit rather than a pitched beep. GREAT and PERFECT intentionally
     share the exact same sound; the visuals carry judgement quality.
     """
+    import numpy as np
+
     count = max(1, int(round(sample_rate * duration)))
     t = np.arange(count, dtype=np.float64) / sample_rate
     # Exponential glide from ~170 Hz toward ~105 Hz.
@@ -61,6 +62,8 @@ def _timing_synth_hit(duration: float, volume: float, sample_rate: int) -> np.nd
 
 def _calibration_beat(beat_index: int, sample_rate: int) -> np.ndarray:
     """A quiet four-step kick/hat/snare/hat loop for the calibration chart."""
+    import numpy as np
+
     step = int(beat_index) % 4
     duration = 0.18 if step in (0, 2) else 0.075
     count = max(1, int(round(sample_rate * duration)))
@@ -85,6 +88,8 @@ def _calibration_beat(beat_index: int, sample_rate: int) -> np.ndarray:
 
 def _ui_click(duration: float, volume: float, sample_rate: int, *, seed: int) -> np.ndarray:
     """Short tactile menu click, closer to a wheel/clicker than a cymbal."""
+    import numpy as np
+
     count = max(1, int(round(sample_rate * duration)))
     t = np.arange(count, dtype=np.float64) / sample_rate
     rng = np.random.default_rng(seed)
@@ -106,6 +111,8 @@ def synthesize_menu_ambience(
     channels: int = SFX_CHANNELS,
 ) -> np.ndarray:
     """Return a quiet, seamless starship-like menu ambience loop."""
+    import numpy as np
+
     count = max(1, int(round(sample_rate * MENU_AMBIENCE_SECONDS)))
     t = np.arange(count, dtype=np.float64) / sample_rate
 
@@ -117,6 +124,8 @@ def synthesize_menu_ambience(
 
 
 def _pcm(mono: np.ndarray, channels: int) -> np.ndarray:
+    import numpy as np
+
     pcm = np.clip(mono * 32767.0, -32768, 32767).astype(np.int16)
     if channels > 1:
         pcm = np.repeat(pcm[:, None], channels, axis=1)
@@ -141,6 +150,8 @@ def synthesize_gameplay_event(
     collection of judgement beeps. Misses, raw motion, and sustain state changes
     remain silent and are communicated visually.
     """
+    import numpy as np
+
     if (
         event.event_type == GameplayEventType.JUDGEMENT
         and event.hit
