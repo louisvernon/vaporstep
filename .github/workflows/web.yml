@@ -30,6 +30,7 @@ jobs:
           cp main.py web-dist/main.py
           cp vaporstep/web_vaportap.py web-dist/vaporstep/web_vaportap.py
           cp vaporstep/web_vaportap_session.py web-dist/vaporstep/web_vaportap_session.py
+          cp vaporstep/web_compat.py web-dist/vaporstep/web_compat.py
           cp vaporstep/web_demo.sm web-dist/vaporstep/web_demo.sm
           cp vaporstep/playfield_geometry.py web-dist/vaporstep/playfield_geometry.py
           cp vaporstep/config.py web-dist/vaporstep/config.py
@@ -45,6 +46,10 @@ jobs:
           cp vaporstep/scroll.py web-dist/vaporstep/scroll.py
           cp vaporstep/song.py web-dist/vaporstep/song.py
           cp vaporstep/simfile_loader.py web-dist/vaporstep/simfile_loader.py
+          # Pygbag's CPython runtime can expose a placeholder decimal.Decimal
+          # that is sufficient for imports but cannot construct values. Stage
+          # CPython's pure-Python implementation as the browser fallback.
+          cp "$(python -c 'import _pydecimal; print(_pydecimal.__file__)')" web-dist/_pydecimal.py
           # GameSession currently needs only the volume constant from audio_fx.
           # Keep NumPy synthesis out of the WASM dependency graph while this
           # platform seam is promoted into the shared source module.
@@ -84,11 +89,29 @@ jobs:
       - name: Check staged shared pipeline
         shell: bash
         run: |
-          python -m py_compile web-dist/main.py web-dist/vaporstep/*.py
+          python -m py_compile web-dist/main.py web-dist/vaporstep/*.py web-dist/_pydecimal.py
           ! grep -q 'declare_namespace' web-dist/fs/__init__.py
           cd web-dist
           python - <<'PY'
           from pathlib import Path
+          import sys
+          import types
+
+          # Reproduce Pygbag's placeholder Decimal behavior and prove that the
+          # browser compatibility shim replaces it with a real implementation.
+          fake_decimal = types.ModuleType("decimal")
+          class Decimal:
+              pass
+          fake_decimal.Decimal = Decimal
+          sys.modules["decimal"] = fake_decimal
+
+          from vaporstep.web_compat import ensure_decimal_runtime
+
+          assert ensure_decimal_runtime() == "_pydecimal"
+          from decimal import Decimal as WorkingDecimal, InvalidOperation
+          assert str(WorkingDecimal("1.25")) == "1.25"
+          assert InvalidOperation is not None
+
           from vaporstep.domain import BodyState, ChainMode
           from vaporstep.session import GameSession
           from vaporstep.simfile_loader import load_chart, scan_song
@@ -102,7 +125,7 @@ jobs:
           session.update(BodyState(), ready_to_start=True, start_immediately=True)
           assert session.running
           print(
-              f"shared pipeline: {song.title!r}, "
+              f"shared pipeline with Decimal fallback: {song.title!r}, "
               f"{len(chart.notes)} notes, {len(chart.sustains)} sustains"
           )
           PY
@@ -140,8 +163,10 @@ jobs:
           test -f web-dist/build/web/index.html
           test -f web-dist/build/web/web-dist.apk
           grep -q 'noindex, nofollow, noarchive' web-dist/build/web/index.html
+          unzip -l web-dist/build/web/web-dist.apk | grep -q 'assets/_pydecimal.py'
           unzip -l web-dist/build/web/web-dist.apk | grep -q 'assets/vaporstep/web_demo.sm'
           unzip -l web-dist/build/web/web-dist.apk | grep -q 'assets/vaporstep/web_vaportap_session.py'
+          unzip -l web-dist/build/web/web-dist.apk | grep -q 'assets/vaporstep/web_compat.py'
           unzip -l web-dist/build/web/web-dist.apk | grep -q 'assets/simfile/__init__.py'
           find web-dist/build/web -maxdepth 2 -type f -print | sort
 
