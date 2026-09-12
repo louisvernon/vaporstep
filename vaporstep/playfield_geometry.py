@@ -9,6 +9,7 @@ from .config import (
     FOOT_HIT_Y,
     FOOT_PLAYFIELD_LEFT,
     FOOT_PLAYFIELD_RIGHT,
+    HAND_HIT_Y,
     HAND_PLAYFIELD_LEFT,
     HAND_PLAYFIELD_RIGHT,
     OUTER_LANE_EDGE_EXTENSION,
@@ -109,7 +110,7 @@ def field_bounds(
 def field_y(size: tuple[int, int], kind: NoteKind, progress: float) -> float:
     p = clamp(progress) ** 1.35
     start = camera_y(size, VANISH_Y)
-    end = camera_y(size, 0.10 if kind == NoteKind.HANDS else FOOT_HIT_Y)
+    end = camera_y(size, HAND_HIT_Y if kind == NoteKind.HANDS else FOOT_HIT_Y)
     return start + (end - start) * p
 
 
