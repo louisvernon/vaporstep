@@ -1,0 +1,42 @@
+name: Web Prototype
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install web build tools
+        run: python -m pip install pygame-ce==2.5.8 pygbag==0.9.3
+
+      - name: Stage web-safe application
+        shell: bash
+        run: |
+          rm -rf web-dist
+          mkdir -p web-dist/vaporstep
+          cp main.py web-dist/main.py
+          cp vaporstep/web_app.py web-dist/vaporstep/web_app.py
+          cp vaporstep/domain.py web-dist/vaporstep/domain.py
+          cp vaporstep/__init__.py web-dist/vaporstep/__init__.py
+          cp vaporstep/_version.py web-dist/vaporstep/_version.py
+
+      - name: Build WASM bundle
+        run: python -m pygbag --build --PYBUILD 3.12 --title "VaporTap Prototype" web-dist
+
+      - name: Verify web output
+        shell: bash
+        run: |
+          test -f web-dist/build/web/index.html
+          find web-dist/build/web -maxdepth 2 -type f -print | sort
