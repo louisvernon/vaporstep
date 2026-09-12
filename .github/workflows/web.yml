@@ -46,10 +46,6 @@ jobs:
           cp vaporstep/scroll.py web-dist/vaporstep/scroll.py
           cp vaporstep/song.py web-dist/vaporstep/song.py
           cp vaporstep/simfile_loader.py web-dist/vaporstep/simfile_loader.py
-          # Pygbag's CPython runtime can expose a placeholder decimal.Decimal
-          # that is sufficient for imports but cannot construct values. Stage
-          # CPython's pure-Python implementation as the browser fallback.
-          cp "$(python -c 'import _pydecimal; print(_pydecimal.__file__)')" web-dist/_pydecimal.py
           # GameSession currently needs only the volume constant from audio_fx.
           # Keep NumPy synthesis out of the WASM dependency graph while this
           # platform seam is promoted into the shared source module.
@@ -86,6 +82,18 @@ jobs:
           )
           PY
 
+          # Pygbag's CPython/WASM runtime may expose a stub decimal.Decimal
+          # solely for import compatibility. Bundle CPython's pure-Python
+          # implementation so web_compat can restore real Decimal semantics.
+          python - <<'PY'
+          from pathlib import Path
+          import _pydecimal
+
+          source = Path(_pydecimal.__file__)
+          target = Path("web-dist/_pydecimal.py")
+          target.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
+          PY
+
       - name: Check staged shared pipeline
         shell: bash
         run: |
@@ -93,24 +101,21 @@ jobs:
           ! grep -q 'declare_namespace' web-dist/fs/__init__.py
           cd web-dist
           python - <<'PY'
-          from pathlib import Path
           import sys
           import types
+          from pathlib import Path
 
-          # Reproduce Pygbag's placeholder Decimal behavior and prove that the
-          # browser compatibility shim replaces it with a real implementation.
+          # Reproduce Pygbag's non-functional Decimal stub so this exact WASM
+          # compatibility path is exercised in CI before chart loading.
           fake_decimal = types.ModuleType("decimal")
-          class Decimal:
-              pass
-          fake_decimal.Decimal = Decimal
+          fake_decimal.Decimal = type("Decimal", (), {})
           sys.modules["decimal"] = fake_decimal
 
           from vaporstep.web_compat import ensure_decimal_runtime
-
-          assert ensure_decimal_runtime() == "_pydecimal"
-          from decimal import Decimal as WorkingDecimal, InvalidOperation
-          assert str(WorkingDecimal("1.25")) == "1.25"
-          assert InvalidOperation is not None
+          backend = ensure_decimal_runtime()
+          assert backend == "_pydecimal"
+          from decimal import Decimal
+          assert Decimal("120.5") + Decimal("0.5") == Decimal("121.0")
 
           from vaporstep.domain import BodyState, ChainMode
           from vaporstep.session import GameSession
@@ -125,8 +130,9 @@ jobs:
           session.update(BodyState(), ready_to_start=True, start_immediately=True)
           assert session.running
           print(
-              f"shared pipeline with Decimal fallback: {song.title!r}, "
-              f"{len(chart.notes)} notes, {len(chart.sustains)} sustains"
+              f"shared pipeline: {song.title!r}, "
+              f"{len(chart.notes)} notes, {len(chart.sustains)} sustains, "
+              f"decimal={backend}"
           )
           PY
 
@@ -139,20 +145,37 @@ jobs:
           --title "VaporTap Shared-Core Playtest"
           web-dist
 
-      - name: Mark preview as non-indexable
+      - name: Mark preview as non-indexable and cache-bust app archive
         shell: bash
         run: |
           python - <<'PY'
           from pathlib import Path
+          import os
 
           index = Path("web-dist/build/web/index.html")
           text = index.read_text(encoding="utf-8")
           marker = '<meta name="robots" content="noindex, nofollow, noarchive">'
           if marker not in text:
               text = text.replace("<head>", f"<head>\n    {marker}", 1)
-              index.write_text(text, encoding="utf-8")
+
+          # The top-level page query string does not propagate to Pygbag's
+          # fixed-name APK fetch. Give the actual application archive a unique
+          # URL per commit so an old mounted Python bundle cannot survive a
+          # redeploy in browser/CDN cache.
+          sha = os.environ["GITHUB_SHA"]
+          archive = 'apk = "web-dist.apk"'
+          versioned_archive = f'apk = "web-dist.apk?v={sha}"'
+          if archive not in text:
+              raise RuntimeError("Unexpected Pygbag template: APK assignment not found")
+          text = text.replace(archive, versioned_archive, 1)
+          index.write_text(text, encoding="utf-8")
+
           Path("web-dist/build/web/robots.txt").write_text(
               "User-agent: *\nDisallow: /\n",
+              encoding="utf-8",
+          )
+          Path("web-dist/build/web/version.txt").write_text(
+              f"{sha}\n",
               encoding="utf-8",
           )
           PY
@@ -162,11 +185,14 @@ jobs:
         run: |
           test -f web-dist/build/web/index.html
           test -f web-dist/build/web/web-dist.apk
+          test -f web-dist/build/web/version.txt
           grep -q 'noindex, nofollow, noarchive' web-dist/build/web/index.html
-          unzip -l web-dist/build/web/web-dist.apk | grep -q 'assets/_pydecimal.py'
+          grep -q "web-dist.apk?v=${GITHUB_SHA}" web-dist/build/web/index.html
+          grep -q "${GITHUB_SHA}" web-dist/build/web/version.txt
           unzip -l web-dist/build/web/web-dist.apk | grep -q 'assets/vaporstep/web_demo.sm'
           unzip -l web-dist/build/web/web-dist.apk | grep -q 'assets/vaporstep/web_vaportap_session.py'
           unzip -l web-dist/build/web/web-dist.apk | grep -q 'assets/vaporstep/web_compat.py'
+          unzip -l web-dist/build/web/web-dist.apk | grep -q 'assets/_pydecimal.py'
           unzip -l web-dist/build/web/web-dist.apk | grep -q 'assets/simfile/__init__.py'
           find web-dist/build/web -maxdepth 2 -type f -print | sort
 
