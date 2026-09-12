@@ -309,6 +309,67 @@ def hand_arc_points(
     return result
 
 
+def _hand_lane_arc_centered(
+    size: tuple[int, int],
+    lane: int,
+    progress: float,
+    center: float,
+    fraction: float,
+    *,
+    samples: int,
+) -> list[tuple[int, int]]:
+    start = HAND_BOUNDARIES[lane - 1]
+    end = HAND_BOUNDARIES[lane]
+    half = (end - start) * 0.5 * max(0.05, min(1.0, fraction))
+    return hand_arc_points(
+        size,
+        center - half,
+        center + half,
+        progress,
+        samples=samples,
+    )
+
+
+def hand_receptor_arc(
+    size: tuple[int, int],
+    lane: int,
+    progress: float = 1.0,
+    fraction: float = 1.0,
+    *,
+    samples: int = 14,
+) -> list[tuple[int, int]]:
+    """Arc centered on the geometric midpoint of a hand-lane segment."""
+    start = HAND_BOUNDARIES[lane - 1]
+    end = HAND_BOUNDARIES[lane]
+    return _hand_lane_arc_centered(
+        size,
+        lane,
+        progress,
+        (start + end) * 0.5,
+        fraction,
+        samples=samples,
+    )
+
+
+def hand_note_arc(
+    size: tuple[int, int],
+    lane: int,
+    progress: float,
+    fraction: float = HAND_NOTE_ARC_FRACTION,
+    *,
+    samples: int = 14,
+) -> list[tuple[int, int]]:
+    """Arc centered on VaporStep's authored note-head position for a hand lane."""
+    return _hand_lane_arc_centered(
+        size,
+        lane,
+        progress,
+        HAND_CENTERS[lane - 1],
+        fraction,
+        samples=samples,
+    )
+
+
 def hand_lane_arc(
     size: tuple[int, int],
     lane: int,
@@ -317,15 +378,12 @@ def hand_lane_arc(
     *,
     samples: int = 14,
 ) -> list[tuple[int, int]]:
-    start = HAND_BOUNDARIES[lane - 1]
-    end = HAND_BOUNDARIES[lane]
-    center = HAND_CENTERS[lane - 1]
-    half = (end - start) * 0.5 * max(0.05, min(1.0, fraction))
-    return hand_arc_points(
+    """Compatibility alias for the original VaporTap note-centered helper."""
+    return hand_note_arc(
         size,
-        center - half,
-        center + half,
+        lane,
         progress,
+        fraction,
         samples=samples,
     )
 
