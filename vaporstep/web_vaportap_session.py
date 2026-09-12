@@ -1,30 +1,37 @@
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 import time
 
 import pygame
 
+from .config import LOOKAHEAD_BEATS, LOOKAHEAD_SECONDS
 from .domain import BodyState, ChainMode, ChainState, GameplayEventType, NoteKind
+from .scroll import note_progress
 from .session import GameSession
 from .simfile_loader import load_chart, scan_song
 from .web_vaportap import (
     CYAN,
+    HIT_WINDOW,
     HOLD_RADIUS,
+    SPLIT_LEAD,
     TOUCH_RADIUS,
     RuntimeNote,
     VaporTapPlaytest,
     _distance,
     _pair_color,
 )
+from . import playfield_geometry as geo
 
 
 class SessionVaporTapPlaytest(VaporTapPlaytest):
     """VaporTap touch frontend backed by VaporStep's real gameplay session.
 
     The touch layer only translates screen gestures into logical lane occupancy
-    and timing impulses. Note judgement, score/combo, explicit holds, timing
-    windows, failure state, and gameplay events remain owned by GameSession.
+    and timing impulses. Chart parsing, note conversion, note travel timing,
+    judgement, score/combo, explicit holds, failure state, and gameplay events
+    remain owned by the shared VaporStep stack.
     """
 
     def reset(self) -> None:
@@ -52,14 +59,83 @@ class SessionVaporTapPlaytest(VaporTapPlaytest):
                 else CYAN
             )
             self.notes.append(RuntimeNote(note=note, color=color))
-        self._item_by_note = {id(item.note): item for item in self.notes}
 
     @property
     def elapsed(self) -> float:
         session = getattr(self, "session", None)
         return 0.0 if session is None else session.time
 
+    def _shared_note_progress(self, item: RuntimeNote) -> float:
+        return note_progress(
+            item.note,
+            self.session.time,
+            self.session.beat_position,
+            self.session.note_travel_speed,
+        )
+
+    def _foot_position(self, item: RuntimeNote) -> tuple[float, float]:
+        """Use VaporStep's beat-relative scroll model for incoming foot material."""
+        return geo.lane_center(
+            self.size,
+            NoteKind.FOOT,
+            item.note.lanes[0],
+            self._shared_note_progress(item),
+        )
+
+    def _hand_core_position(self, item: RuntimeNote) -> tuple[float, float]:
+        """Move the raw hand core using the same chart progress as VaporStep.
+
+        VaporTap still owns the final split gesture, but its precursor no longer
+        has a separate fixed-seconds travel clock. Real charts therefore inherit
+        BPM changes/stops/warps from GameSession's TimingEngine.
+        """
+        viewport = geo.camera_rect(self.size)
+        source = (viewport.centerx, geo.field_y(self.size, NoteKind.FOOT, 0.0))
+        target = (viewport.centerx, geo.field_y(self.size, NoteKind.FOOT, 0.22))
+        progress = self._shared_note_progress(item)
+        if item.note.beat is not None:
+            capture_progress = 1.0 - 1.0 / max(LOOKAHEAD_BEATS, 1.0)
+        else:
+            capture_progress = 1.0 - SPLIT_LEAD / max(LOOKAHEAD_SECONDS, SPLIT_LEAD)
+        travel = geo.clamp(progress / max(capture_progress, 0.001))
+        eased = travel * travel * (3.0 - 2.0 * travel)
+        return (
+            source[0] + (target[0] - source[0]) * eased,
+            source[1] + (target[1] - source[1]) * eased,
+        )
+
+    def _try_capture_pair(self) -> None:
+        """Keep VaporTap's gesture window musical for real beat-based charts."""
+        if len(self.pointers) < 2:
+            return
+        now = self.session.time
+        song_beat = self.session.beat_position
+        for item in self.notes:
+            if item.state != "pending" or item.note.kind != NoteKind.HANDS:
+                continue
+            if now > item.note.time + HIT_WINDOW:
+                continue
+            if item.note.beat is not None:
+                if float(item.note.beat) - song_beat > 1.0:
+                    continue
+            elif item.note.time - now > SPLIT_LEAD:
+                continue
+            core = self._hand_core_position(item)
+            nearby = [
+                pointer_id
+                for pointer_id, point in self.pointers.items()
+                if _distance(point, core) <= 72.0 * 1.35
+            ]
+            if len(nearby) >= 2:
+                item.pointer_ids = (nearby[0], nearby[1])
+                item.state = "captured"
+                item.state_at = now
+                return
+
     def _record_touch_impulse(self, kind: NoteKind, lane: int) -> None:
+        # MotionTracker.record_input is already the shared logical-input path
+        # used by keyboard timing. Keep touch as a source label rather than
+        # inventing a second timing/judgement implementation.
         event = self.session.motion.record_input(
             kind,
             lane,
@@ -226,6 +302,6 @@ async def main() -> None:
 
         if hasattr(pygame, "IS_CE") and pygame.IS_CE:
             clock.tick(60)
-        await __import__("asyncio").sleep(0)
+        await asyncio.sleep(0)
 
     pygame.quit()
