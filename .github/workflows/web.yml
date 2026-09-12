@@ -20,12 +20,7 @@ jobs:
           cache: pip
 
       - name: Install web build tools
-        run: >-
-          python -m pip install
-          pygame-ce==2.5.8
-          pygbag==0.9.3
-          simfile==2.1.1
-          setuptools==80.9.0
+        run: python -m pip install pygame-ce==2.5.8 pygbag==0.9.3
 
       - name: Stage web-safe application
         shell: bash
@@ -55,29 +50,14 @@ jobs:
           sed -i 's/from \.audio_fx import GAMEPLAY_MUSIC_VOLUME/from .audio_config import GAMEPLAY_MUSIC_VOLUME/' web-dist/vaporstep/session.py
           printf '%s\n' '"""Web-safe VaporStep/VaporTap package."""' > web-dist/vaporstep/__init__.py
 
-          # simfile 2.1.1 and its runtime dependencies are pure Python. Vendor
-          # them into the static app so mobile startup does not depend on a
-          # second package/CDN fetch. find_spec avoids importing old fs before
-          # the package tree has been staged.
-          python - <<'PY'
-          from importlib.util import find_spec
-          from pathlib import Path
-          import shutil
-
-          destination = Path("web-dist")
-          for name in ("simfile", "msdparser", "fs", "pkg_resources"):
-              spec = find_spec(name)
-              if spec is None or not spec.submodule_search_locations:
-                  raise RuntimeError(f"Could not locate package {name}")
-              source = Path(next(iter(spec.submodule_search_locations))).resolve()
-              shutil.copytree(source, destination / name)
-
-          for name in ("appdirs", "six"):
-              spec = find_spec(name)
-              if spec is None or spec.origin is None:
-                  raise RuntimeError(f"Could not locate module {name}")
-              shutil.copy2(spec.origin, destination / Path(spec.origin).name)
-          PY
+          # Vendor the complete pure-Python StepMania parser dependency closure
+          # into the static app. This avoids both Pygbag package availability
+          # assumptions and extra package/CDN fetches on mobile startup.
+          python -m pip install \
+            --target web-dist \
+            --no-compile \
+            simfile==2.1.1 \
+            setuptools==80.9.0
 
       - name: Check staged shared pipeline
         shell: bash
