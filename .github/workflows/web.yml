@@ -173,7 +173,7 @@ jobs:
           --title "VaporTap Shared-Core Playtest"
           web-dist
 
-      - name: Mark preview as non-indexable and version app archive
+      - name: Mark preview as non-indexable and version app archives
         shell: bash
         run: |
           python - <<'PY'
@@ -187,19 +187,23 @@ jobs:
           if marker not in text:
               text = text.replace("<head>", f"<head>\n    {marker}", 1)
 
-          # Pygbag opens the application archive through platform.fopen(). A
-          # query string is not a reliable cache key there, so give every
-          # deployed archive a genuinely unique path instead of relying on
-          # web-dist.apk?v=<sha>.
+          # Pygbag uses the APK on itch.io, but the tarball everywhere else
+          # (including GitHub Pages). Version both real archive paths so a fresh
+          # index can never mount a stale Python bundle from browser/CDN cache.
           sha = os.environ["GITHUB_SHA"]
-          archive_name = "web-dist.apk"
-          versioned_name = f"web-dist-{sha}.apk"
-          if archive_name not in text:
-              raise RuntimeError("Unexpected Pygbag template: web-dist.apk not found")
-          archive = output / archive_name
-          versioned_archive = output / versioned_name
-          archive.rename(versioned_archive)
-          text = text.replace(archive_name, versioned_name)
+          archives = {
+              "web-dist.apk": f"web-dist-{sha}.apk",
+              "web-dist.tar.gz": f"web-dist-{sha}.tar.gz",
+          }
+          for archive_name, versioned_name in archives.items():
+              if archive_name not in text:
+                  raise RuntimeError(
+                      f"Unexpected Pygbag template: {archive_name} not found"
+                  )
+              archive = output / archive_name
+              versioned_archive = output / versioned_name
+              archive.rename(versioned_archive)
+              text = text.replace(archive_name, versioned_name)
           index.write_text(text, encoding="utf-8")
 
           (output / "robots.txt").write_text(
@@ -215,25 +219,37 @@ jobs:
       - name: Verify web output
         shell: bash
         run: |
-          archive="web-dist/build/web/web-dist-${GITHUB_SHA}.apk"
+          apk="web-dist/build/web/web-dist-${GITHUB_SHA}.apk"
+          tarball="web-dist/build/web/web-dist-${GITHUB_SHA}.tar.gz"
           test -f web-dist/build/web/index.html
-          test -f "$archive"
+          test -f "$apk"
+          test -f "$tarball"
           test ! -f web-dist/build/web/web-dist.apk
+          test ! -f web-dist/build/web/web-dist.tar.gz
           test -f web-dist/build/web/version.txt
           grep -q 'noindex, nofollow, noarchive' web-dist/build/web/index.html
           grep -q "web-dist-${GITHUB_SHA}.apk" web-dist/build/web/index.html
-          ! grep -q 'web-dist.apk?v=' web-dist/build/web/index.html
+          grep -q "web-dist-${GITHUB_SHA}.tar.gz" web-dist/build/web/index.html
           grep -q "${GITHUB_SHA}" web-dist/build/web/version.txt
-          unzip -l "$archive" | grep -q 'assets/build-version.txt'
-          unzip -l "$archive" | grep -q 'assets/vaporstep/web_demo.sm'
-          unzip -l "$archive" | grep -q 'assets/vaporstep/web_demo.wav'
-          unzip -l "$archive" | grep -q 'assets/vaporstep/web_demo_audio.py'
-          unzip -p "$archive" assets/vaporstep/web_demo_audio.py | grep -q 'web_demo.wav'
-          ! unzip -p "$archive" assets/vaporstep/web_demo_audio.py | grep -q 'web_demo.ogg'
-          unzip -l "$archive" | grep -q 'assets/vaporstep/web_vaportap_session.py'
-          unzip -l "$archive" | grep -q 'assets/vaporstep/web_compat.py'
-          unzip -l "$archive" | grep -q 'assets/_pydecimal.py'
-          unzip -l "$archive" | grep -q 'assets/simfile/__init__.py'
+
+          # Validate both archive formats because GitHub Pages loads the tarball
+          # while itch.io takes the APK branch in Pygbag's generated loader.
+          unzip -l "$apk" | grep -q 'assets/build-version.txt'
+          unzip -l "$apk" | grep -q 'assets/vaporstep/web_demo.sm'
+          unzip -l "$apk" | grep -q 'assets/vaporstep/web_demo.wav'
+          unzip -p "$apk" assets/vaporstep/web_demo_audio.py | grep -q 'web_demo.wav'
+          ! unzip -p "$apk" assets/vaporstep/web_demo_audio.py | grep -q 'web_demo.ogg'
+
+          tar -tzf "$tarball" | grep -q 'assets/build-version.txt'
+          tar -tzf "$tarball" | grep -q 'assets/vaporstep/web_demo.sm'
+          tar -tzf "$tarball" | grep -q 'assets/vaporstep/web_demo.wav'
+          tar -xOzf "$tarball" assets/vaporstep/web_demo_audio.py | grep -q 'web_demo.wav'
+          ! tar -xOzf "$tarball" assets/vaporstep/web_demo_audio.py | grep -q 'web_demo.ogg'
+
+          unzip -l "$apk" | grep -q 'assets/vaporstep/web_vaportap_session.py'
+          unzip -l "$apk" | grep -q 'assets/vaporstep/web_compat.py'
+          unzip -l "$apk" | grep -q 'assets/_pydecimal.py'
+          unzip -l "$apk" | grep -q 'assets/simfile/__init__.py'
           find web-dist/build/web -maxdepth 2 -type f -print | sort
 
       - name: Configure GitHub Pages
