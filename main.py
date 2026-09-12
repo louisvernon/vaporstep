@@ -52,7 +52,7 @@ async def _show_startup_error(screen: pygame.Surface, exc: BaseException) -> Non
     _draw_status(
         screen,
         "VaporTap startup failed",
-        [*lines[-18:], "", "Press R to retry after reloading the page."],
+        [*lines[-18:], "", "Reload the page after the next build to retry."],
         error=True,
     )
 
@@ -82,7 +82,7 @@ async def boot() -> None:
         # able to fail before the browser has something useful to show us.
         from vaporstep.web_vaportap_session import main as run_vaportap
 
-        await run_vaportap(screen=screen)
+        await run_vaportap()
     except BaseException as exc:
         await _show_startup_error(screen, exc)
 
