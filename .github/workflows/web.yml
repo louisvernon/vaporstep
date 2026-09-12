@@ -32,7 +32,6 @@ jobs:
           cp vaporstep/web_vaportap_session.py web-dist/vaporstep/web_vaportap_session.py
           cp vaporstep/web_compat.py web-dist/vaporstep/web_compat.py
           cp vaporstep/web_demo.sm web-dist/vaporstep/web_demo.sm
-          cp vaporstep/web_demo.ogg web-dist/vaporstep/web_demo.ogg
           cp vaporstep/web_demo_audio.py web-dist/vaporstep/web_demo_audio.py
           cp vaporstep/playfield_geometry.py web-dist/vaporstep/playfield_geometry.py
           cp vaporstep/config.py web-dist/vaporstep/config.py
@@ -51,6 +50,16 @@ jobs:
           cp vaporstep/simfile_loader.py web-dist/vaporstep/simfile_loader.py
           printf '%s\n' '"""Web-safe VaporStep/VaporTap package."""' > web-dist/vaporstep/__init__.py
           printf '%s\n' "$GITHUB_SHA" > web-dist/build-version.txt
+
+          # Build a deterministic PCM fixture rather than depending on a
+          # compressed-audio codec merely to prove the browser music path.
+          PYTHONPATH=web-dist python - <<'PY'
+          from pathlib import Path
+          from vaporstep.web_demo_audio import generate_web_demo_audio
+
+          audio = generate_web_demo_audio(Path("web-dist/vaporstep/web_demo.sm"))
+          print(f"generated browser audio fixture: {audio} ({audio.stat().st_size} bytes)")
+          PY
 
           # Vendor the complete pure-Python StepMania parser dependency closure
           # into the static app. This avoids both Pygbag package availability
@@ -131,7 +140,7 @@ jobs:
           path = Path("vaporstep/web_demo.sm")
           audio = ensure_web_demo_audio(path)
           assert audio.exists() and audio.stat().st_size > 1000
-          assert audio.name == "web_demo.ogg"
+          assert audio.name == "web_demo.wav"
           song = scan_song(path)
           assert song is not None and song.charts
           assert song.music_path == audio
@@ -210,7 +219,7 @@ jobs:
           grep -q "${GITHUB_SHA}" web-dist/build/web/version.txt
           unzip -l "$archive" | grep -q 'assets/build-version.txt'
           unzip -l "$archive" | grep -q 'assets/vaporstep/web_demo.sm'
-          unzip -l "$archive" | grep -q 'assets/vaporstep/web_demo.ogg'
+          unzip -l "$archive" | grep -q 'assets/vaporstep/web_demo.wav'
           unzip -l "$archive" | grep -q 'assets/vaporstep/web_demo_audio.py'
           unzip -l "$archive" | grep -q 'assets/vaporstep/web_vaportap_session.py'
           unzip -l "$archive" | grep -q 'assets/vaporstep/web_compat.py'
