@@ -8,7 +8,14 @@ import traceback
 # continues to use vaporstep.app and its native camera/recording integrations.
 os.environ["VAPORSTEP_WEB"] = "1"
 
+
+def _phase(name: str) -> None:
+    print(f"[VaporTap boot] {name}", flush=True)
+
+
+_phase("PYTHON ENTRY")
 import pygame
+_phase("PYGAME IMPORTED")
 
 
 BG = (2, 2, 8)
@@ -46,6 +53,7 @@ def _draw_status(
 
 
 async def _show_startup_error(screen: pygame.Surface, exc: BaseException) -> None:
+    _phase(f"FAILED: {type(exc).__name__}: {exc}")
     traceback.print_exc()
     details = traceback.format_exception(type(exc), exc, exc.__traceback__)
     lines = [line.rstrip() for chunk in details for line in chunk.splitlines()]
@@ -66,9 +74,12 @@ async def _show_startup_error(screen: pygame.Surface, exc: BaseException) -> Non
 
 
 async def boot() -> None:
+    _phase("PYGAME INIT")
     pygame.init()
+    _phase("CREATE DISPLAY")
     screen = pygame.display.set_mode((1280, 720), pygame.RESIZABLE)
     pygame.display.set_caption("VaporTap WASM Shared-Session Playtest")
+    _phase("DISPLAY READY")
     _draw_status(
         screen,
         "VaporTap",
@@ -80,9 +91,13 @@ async def boot() -> None:
         # Delay the heavier shared stack until after a real frame is visible.
         # In particular, simfile and its filesystem dependency should never be
         # able to fail before the browser has something useful to show us.
+        _phase("IMPORT SHARED STACK")
         from vaporstep.web_vaportap_session import main as run_vaportap
+        _phase("SHARED STACK IMPORTED")
 
+        _phase("START SESSION")
         await run_vaportap()
+        _phase("SESSION EXITED")
     except BaseException as exc:
         await _show_startup_error(screen, exc)
 
