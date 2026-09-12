@@ -11,6 +11,7 @@ from .domain import BodyState, ChainMode, ChainState, GameplayEventType, NoteKin
 from .scroll import note_progress
 from .session import GameSession
 from .simfile_loader import load_chart, scan_song
+from .web_demo_audio import ensure_web_demo_audio
 from .web_vaportap import (
     CYAN,
     HIT_WINDOW,
@@ -42,6 +43,8 @@ class SessionVaporTapPlaytest(VaporTapPlaytest):
         self._finished_at: float | None = None
 
         stepfile = Path(__file__).with_name("web_demo.sm")
+        audio_path = ensure_web_demo_audio(stepfile)
+        print(f"[VaporTap audio] generated/ready {audio_path}", flush=True)
         song = scan_song(stepfile)
         if song is None or not song.charts:
             raise RuntimeError(f"No playable dance-single chart in {stepfile}")
@@ -50,6 +53,12 @@ class SessionVaporTapPlaytest(VaporTapPlaytest):
 
         self.session = GameSession(chart=chart, chain_mode=ChainMode.OFF)
         self.session.update(BodyState(), ready_to_start=True, start_immediately=True)
+        print(
+            "[VaporTap audio] "
+            f"music={song.music_path} mixer={pygame.mixer.get_init()} "
+            f"loaded={self.session.audio_loaded} error={self.session.audio_error!r}",
+            flush=True,
+        )
 
         self.notes = []
         for note in self.session.notes:
@@ -272,6 +281,14 @@ class SessionVaporTapPlaytest(VaporTapPlaytest):
             CYAN,
         )
         self.screen.blit(line, line.get_rect(midbottom=(width // 2, height - 14)))
+
+        if self.session.audio_error:
+            audio = self.small_font.render(
+                f"AUDIO ERROR: {self.session.audio_error}",
+                True,
+                (255, 90, 120),
+            )
+            self.screen.blit(audio, audio.get_rect(midbottom=(width // 2, height - 42)))
 
         if self.session.finished:
             result = self.big_font.render(
