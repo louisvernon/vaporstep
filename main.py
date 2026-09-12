@@ -8,8 +8,9 @@ import os
 os.environ["VAPORSTEP_WEB"] = "1"
 
 import pygame  # noqa: F401  # make pygame explicit to pygbag's package scanner
+import simfile  # noqa: F401  # bundled pure-Python StepMania parser
 
-from vaporstep.web_vaportap import main
+from vaporstep.web_vaportap_session import main
 
 
 asyncio.run(main())
