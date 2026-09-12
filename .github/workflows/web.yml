@@ -168,6 +168,7 @@ jobs:
           --build
           --PYBUILD 3.12
           --ume_block 0
+          --no_opt
           --disable-sound-format-error
           --title "VaporTap Shared-Core Playtest"
           web-dist
@@ -227,6 +228,8 @@ jobs:
           unzip -l "$archive" | grep -q 'assets/vaporstep/web_demo.sm'
           unzip -l "$archive" | grep -q 'assets/vaporstep/web_demo.wav'
           unzip -l "$archive" | grep -q 'assets/vaporstep/web_demo_audio.py'
+          unzip -p "$archive" assets/vaporstep/web_demo_audio.py | grep -q 'web_demo.wav'
+          ! unzip -p "$archive" assets/vaporstep/web_demo_audio.py | grep -q 'web_demo.ogg'
           unzip -l "$archive" | grep -q 'assets/vaporstep/web_vaportap_session.py'
           unzip -l "$archive" | grep -q 'assets/vaporstep/web_compat.py'
           unzip -l "$archive" | grep -q 'assets/_pydecimal.py'
