@@ -73,25 +73,27 @@ jobs:
             simfile==2.1.1 \
             setuptools==80.9.0
 
-          # PyFilesystem2 still declares its package namespace through the
-          # deprecated pkg_resources API. The staged browser bundle is one
-          # ordinary, self-contained package tree, so that namespace scan is
-          # unnecessary and adds a fragile startup path under WASM.
+          # PyFilesystem2 declares package namespaces through deprecated
+          # pkg_resources shims in more than one package __init__. In this
+          # staged, self-contained browser tree they are unnecessary, and under
+          # WASM they add a fragile startup path plus noisy warnings. Strip every
+          # exact shim from the staged fs package rather than maintaining a list
+          # of individual files.
           python - <<'PY'
           from pathlib import Path
 
-          path = Path("web-dist/fs/__init__.py")
-          text = path.read_text(encoding="utf-8")
+          root = Path("web-dist/fs")
           needle = '__import__("pkg_resources").declare_namespace(__name__)  # type: ignore'
-          if needle not in text:
-              raise RuntimeError("Unexpected PyFilesystem2 __init__.py; namespace shim not found")
-          path.write_text(
-              text.replace(
-                  needle,
-                  "# Browser bundle: normal package, no pkg_resources namespace scan needed.",
-              ),
-              encoding="utf-8",
-          )
+          replacement = "# Browser bundle: normal package, no pkg_resources namespace scan needed."
+          patched = []
+          for path in root.rglob("*.py"):
+              text = path.read_text(encoding="utf-8")
+              if needle in text:
+                  path.write_text(text.replace(needle, replacement), encoding="utf-8")
+                  patched.append(path)
+          if not patched:
+              raise RuntimeError("Unexpected PyFilesystem2 package: namespace shims not found")
+          print("patched namespace shims:", ", ".join(str(path) for path in patched))
           PY
 
           # Pygbag's CPython/WASM runtime may expose a stub decimal.Decimal
@@ -110,7 +112,7 @@ jobs:
         shell: bash
         run: |
           python -m py_compile web-dist/main.py web-dist/vaporstep/*.py web-dist/_pydecimal.py
-          ! grep -q 'declare_namespace' web-dist/fs/__init__.py
+          ! grep -R -q 'declare_namespace' web-dist/fs
           test "$(cat web-dist/build-version.txt)" = "$GITHUB_SHA"
           cd web-dist
           python - <<'PY'
@@ -166,6 +168,7 @@ jobs:
           --build
           --PYBUILD 3.12
           --ume_block 0
+          --disable-sound-format-error
           --title "VaporTap Shared-Core Playtest"
           web-dist
 
