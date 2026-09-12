@@ -88,6 +88,12 @@ async def boot() -> None:
     await asyncio.sleep(0)
 
     try:
+        _phase("CHECK DECIMAL RUNTIME")
+        from vaporstep.web_compat import ensure_decimal_runtime
+
+        decimal_backend = ensure_decimal_runtime()
+        _phase(f"DECIMAL READY ({decimal_backend})")
+
         # Delay the heavier shared stack until after a real frame is visible.
         # In particular, simfile and its filesystem dependency should never be
         # able to fail before the browser has something useful to show us.
