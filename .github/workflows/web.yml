@@ -83,13 +83,14 @@ jobs:
         shell: bash
         run: |
           python -m py_compile web-dist/main.py web-dist/vaporstep/*.py
-          PYTHONPATH=web-dist python - <<'PY'
+          cd web-dist
+          python - <<'PY'
           from pathlib import Path
           from vaporstep.domain import BodyState, ChainMode
           from vaporstep.session import GameSession
           from vaporstep.simfile_loader import load_chart, scan_song
 
-          path = Path("web-dist/vaporstep/web_demo.sm")
+          path = Path("vaporstep/web_demo.sm")
           song = scan_song(path)
           assert song is not None and song.charts
           chart = load_chart(song, song.charts[0])
