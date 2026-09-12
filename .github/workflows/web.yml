@@ -53,13 +53,16 @@ jobs:
 
           # Build a deterministic PCM fixture rather than depending on a
           # compressed-audio codec merely to prove the browser music path.
-          PYTHONPATH=web-dist python - <<'PY'
+          (
+            cd web-dist
+            python - <<'PY'
           from pathlib import Path
           from vaporstep.web_demo_audio import generate_web_demo_audio
 
-          audio = generate_web_demo_audio(Path("web-dist/vaporstep/web_demo.sm"))
+          audio = generate_web_demo_audio(Path("vaporstep/web_demo.sm"))
           print(f"generated browser audio fixture: {audio} ({audio.stat().st_size} bytes)")
           PY
+          )
 
           # Vendor the complete pure-Python StepMania parser dependency closure
           # into the static app. This avoids both Pygbag package availability
