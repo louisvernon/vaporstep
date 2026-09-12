@@ -129,9 +129,11 @@ async def boot() -> None:
     await asyncio.sleep(0)
 
     try:
-        _phase("CHECK DECIMAL RUNTIME")
-        from vaporstep.web_compat import ensure_decimal_runtime
+        _phase("CHECK WEB RUNTIME")
+        from vaporstep.web_compat import ensure_decimal_runtime, install_pkg_resources_shim
 
+        pkg_resources_backend = install_pkg_resources_shim()
+        _phase(f"PKG_RESOURCES READY ({pkg_resources_backend})")
         decimal_backend = ensure_decimal_runtime()
         _phase(f"DECIMAL READY ({decimal_backend})")
 
