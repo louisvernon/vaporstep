@@ -51,6 +51,7 @@ jobs:
           # platform seam is promoted into the shared source module.
           sed -i 's/from \.audio_fx import GAMEPLAY_MUSIC_VOLUME/from .audio_config import GAMEPLAY_MUSIC_VOLUME/' web-dist/vaporstep/session.py
           printf '%s\n' '"""Web-safe VaporStep/VaporTap package."""' > web-dist/vaporstep/__init__.py
+          printf '%s\n' "$GITHUB_SHA" > web-dist/build-version.txt
 
           # Vendor the complete pure-Python StepMania parser dependency closure
           # into the static app. This avoids both Pygbag package availability
@@ -99,6 +100,7 @@ jobs:
         run: |
           python -m py_compile web-dist/main.py web-dist/vaporstep/*.py web-dist/_pydecimal.py
           ! grep -q 'declare_namespace' web-dist/fs/__init__.py
+          test "$(cat web-dist/build-version.txt)" = "$GITHUB_SHA"
           cd web-dist
           python - <<'PY'
           import sys
@@ -159,15 +161,15 @@ jobs:
               text = text.replace("<head>", f"<head>\n    {marker}", 1)
 
           # The top-level page query string does not propagate to Pygbag's
-          # fixed-name APK fetch. Give the actual application archive a unique
-          # URL per commit so an old mounted Python bundle cannot survive a
-          # redeploy in browser/CDN cache.
+          # fixed-name APK fetch. Version every literal archive URL in the
+          # generated loader so a stale mounted Python bundle cannot survive a
+          # redeploy in browser/CDN cache. Match the filename rather than a
+          # particular template source line because Pygbag 0.9.x templates vary.
           sha = os.environ["GITHUB_SHA"]
-          archive = 'apk = "web-dist.apk"'
-          versioned_archive = f'apk = "web-dist.apk?v={sha}"'
+          archive = "web-dist.apk"
           if archive not in text:
-              raise RuntimeError("Unexpected Pygbag template: APK assignment not found")
-          text = text.replace(archive, versioned_archive, 1)
+              raise RuntimeError("Unexpected Pygbag template: web-dist.apk not found")
+          text = text.replace(archive, f"{archive}?v={sha}")
           index.write_text(text, encoding="utf-8")
 
           Path("web-dist/build/web/robots.txt").write_text(
@@ -189,6 +191,7 @@ jobs:
           grep -q 'noindex, nofollow, noarchive' web-dist/build/web/index.html
           grep -q "web-dist.apk?v=${GITHUB_SHA}" web-dist/build/web/index.html
           grep -q "${GITHUB_SHA}" web-dist/build/web/version.txt
+          unzip -l web-dist/build/web/web-dist.apk | grep -q 'assets/build-version.txt'
           unzip -l web-dist/build/web/web-dist.apk | grep -q 'assets/vaporstep/web_demo.sm'
           unzip -l web-dist/build/web/web-dist.apk | grep -q 'assets/vaporstep/web_vaportap_session.py'
           unzip -l web-dist/build/web/web-dist.apk | grep -q 'assets/vaporstep/web_compat.py'
