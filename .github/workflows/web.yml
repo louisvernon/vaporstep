@@ -32,6 +32,7 @@ jobs:
           cp vaporstep/web_vaportap_session.py web-dist/vaporstep/web_vaportap_session.py
           cp vaporstep/web_compat.py web-dist/vaporstep/web_compat.py
           cp vaporstep/web_demo.sm web-dist/vaporstep/web_demo.sm
+          cp vaporstep/web_demo.ogg web-dist/vaporstep/web_demo.ogg
           cp vaporstep/web_demo_audio.py web-dist/vaporstep/web_demo_audio.py
           cp vaporstep/playfield_geometry.py web-dist/vaporstep/playfield_geometry.py
           cp vaporstep/config.py web-dist/vaporstep/config.py
@@ -129,7 +130,8 @@ jobs:
 
           path = Path("vaporstep/web_demo.sm")
           audio = ensure_web_demo_audio(path)
-          assert audio.exists() and audio.stat().st_size > 44
+          assert audio.exists() and audio.stat().st_size > 1000
+          assert audio.name == "web_demo.ogg"
           song = scan_song(path)
           assert song is not None and song.charts
           assert song.music_path == audio
@@ -201,6 +203,7 @@ jobs:
           grep -q "${GITHUB_SHA}" web-dist/build/web/version.txt
           unzip -l web-dist/build/web/web-dist.apk | grep -q 'assets/build-version.txt'
           unzip -l web-dist/build/web/web-dist.apk | grep -q 'assets/vaporstep/web_demo.sm'
+          unzip -l web-dist/build/web/web-dist.apk | grep -q 'assets/vaporstep/web_demo.ogg'
           unzip -l web-dist/build/web/web-dist.apk | grep -q 'assets/vaporstep/web_demo_audio.py'
           unzip -l web-dist/build/web/web-dist.apk | grep -q 'assets/vaporstep/web_vaportap_session.py'
           unzip -l web-dist/build/web/web-dist.apk | grep -q 'assets/vaporstep/web_compat.py'
