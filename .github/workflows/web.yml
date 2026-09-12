@@ -32,11 +32,13 @@ jobs:
           cp vaporstep/web_vaportap_session.py web-dist/vaporstep/web_vaportap_session.py
           cp vaporstep/web_compat.py web-dist/vaporstep/web_compat.py
           cp vaporstep/web_demo.sm web-dist/vaporstep/web_demo.sm
+          cp vaporstep/web_demo_audio.py web-dist/vaporstep/web_demo_audio.py
           cp vaporstep/playfield_geometry.py web-dist/vaporstep/playfield_geometry.py
           cp vaporstep/config.py web-dist/vaporstep/config.py
           cp vaporstep/domain.py web-dist/vaporstep/domain.py
           cp vaporstep/session.py web-dist/vaporstep/session.py
           cp vaporstep/audio_config.py web-dist/vaporstep/audio_config.py
+          cp vaporstep/audio_fx.py web-dist/vaporstep/audio_fx.py
           cp vaporstep/adaptive_sampling.py web-dist/vaporstep/adaptive_sampling.py
           cp vaporstep/camera_samples.py web-dist/vaporstep/camera_samples.py
           cp vaporstep/debug_state.py web-dist/vaporstep/debug_state.py
@@ -46,10 +48,6 @@ jobs:
           cp vaporstep/scroll.py web-dist/vaporstep/scroll.py
           cp vaporstep/song.py web-dist/vaporstep/song.py
           cp vaporstep/simfile_loader.py web-dist/vaporstep/simfile_loader.py
-          # GameSession currently needs only the volume constant from audio_fx.
-          # Keep NumPy synthesis out of the WASM dependency graph while this
-          # platform seam is promoted into the shared source module.
-          sed -i 's/from \.audio_fx import GAMEPLAY_MUSIC_VOLUME/from .audio_config import GAMEPLAY_MUSIC_VOLUME/' web-dist/vaporstep/session.py
           printf '%s\n' '"""Web-safe VaporStep/VaporTap package."""' > web-dist/vaporstep/__init__.py
           printf '%s\n' "$GITHUB_SHA" > web-dist/build-version.txt
 
@@ -107,6 +105,11 @@ jobs:
           import types
           from pathlib import Path
 
+          # Audio synthesis is desktop-heavy, but importing the shared session
+          # must not pull NumPy into the browser merely to read volume constants.
+          import vaporstep.audio_fx
+          assert "numpy" not in sys.modules
+
           # Reproduce Pygbag's non-functional Decimal stub so this exact WASM
           # compatibility path is exercised in CI before chart loading.
           fake_decimal = types.ModuleType("decimal")
@@ -122,10 +125,14 @@ jobs:
           from vaporstep.domain import BodyState, ChainMode
           from vaporstep.session import GameSession
           from vaporstep.simfile_loader import load_chart, scan_song
+          from vaporstep.web_demo_audio import ensure_web_demo_audio
 
           path = Path("vaporstep/web_demo.sm")
+          audio = ensure_web_demo_audio(path)
+          assert audio.exists() and audio.stat().st_size > 44
           song = scan_song(path)
           assert song is not None and song.charts
+          assert song.music_path == audio
           chart = load_chart(song, song.charts[0])
           assert chart.notes
           session = GameSession(chart=chart, chain_mode=ChainMode.OFF)
@@ -134,6 +141,7 @@ jobs:
           print(
               f"shared pipeline: {song.title!r}, "
               f"{len(chart.notes)} notes, {len(chart.sustains)} sustains, "
+              f"music={song.music_path.name if song.music_path else None}, "
               f"decimal={backend}"
           )
           PY
@@ -193,6 +201,7 @@ jobs:
           grep -q "${GITHUB_SHA}" web-dist/build/web/version.txt
           unzip -l web-dist/build/web/web-dist.apk | grep -q 'assets/build-version.txt'
           unzip -l web-dist/build/web/web-dist.apk | grep -q 'assets/vaporstep/web_demo.sm'
+          unzip -l web-dist/build/web/web-dist.apk | grep -q 'assets/vaporstep/web_demo_audio.py'
           unzip -l web-dist/build/web/web-dist.apk | grep -q 'assets/vaporstep/web_vaportap_session.py'
           unzip -l web-dist/build/web/web-dist.apk | grep -q 'assets/vaporstep/web_compat.py'
           unzip -l web-dist/build/web/web-dist.apk | grep -q 'assets/_pydecimal.py'
