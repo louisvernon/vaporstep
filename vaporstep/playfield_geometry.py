@@ -44,7 +44,9 @@ class Viewport:
 
     @property
     def centerx(self) -> float:
-        return self.left + self.width * 0.5
+        # Camera viewports are pixel rectangles. Preserve pygame.Rect.centerx
+        # semantics for odd widths rather than introducing a half-pixel center.
+        return float(int(self.left) + int(self.width) // 2)
 
 
 def clamp(value: float, lo: float = 0.0, hi: float = 1.0) -> float:
