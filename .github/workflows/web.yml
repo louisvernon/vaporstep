@@ -28,12 +28,17 @@ jobs:
           rm -rf web-dist
           mkdir -p web-dist/vaporstep
           cp main.py web-dist/main.py
-          cp vaporstep/web_app.py web-dist/vaporstep/web_app.py
+          cp vaporstep/web_vaportap.py web-dist/vaporstep/web_vaportap.py
+          cp vaporstep/playfield_geometry.py web-dist/vaporstep/playfield_geometry.py
+          cp vaporstep/config.py web-dist/vaporstep/config.py
           cp vaporstep/domain.py web-dist/vaporstep/domain.py
           printf '%s\n' '"""Web-safe VaporTap package."""' > web-dist/vaporstep/__init__.py
 
+      - name: Check staged Python
+        run: python -m py_compile web-dist/main.py web-dist/vaporstep/*.py
+
       - name: Build WASM bundle
-        run: python -m pygbag --build --PYBUILD 3.12 --title "VaporTap Prototype" web-dist
+        run: python -m pygbag --build --PYBUILD 3.12 --title "VaporTap Playtest" web-dist
 
       - name: Mark preview as non-indexable
         shell: bash
