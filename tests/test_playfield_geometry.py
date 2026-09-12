@@ -42,9 +42,45 @@ def test_hand_sector_polygons_and_note_arcs_share_outer_shell() -> None:
     size = (1280, 720)
     for lane in range(1, 5):
         sector = geo.hand_sector_polygon(size, lane)
-        note_arc = geo.hand_lane_arc(size, lane, 1.0, geo.HAND_NOTE_ARC_FRACTION)
+        note_arc = geo.hand_note_arc(size, lane, 1.0)
         assert len(sector) == 38
         assert len(note_arc) == 15
         target = geo.hand_target_point(size, lane)
         midpoint = note_arc[len(note_arc) // 2]
         assert math.hypot(midpoint[0] - target[0], midpoint[1] - target[1]) < 3.0
+
+
+def test_hand_receptors_keep_segment_midpoints_distinct_from_note_centers() -> None:
+    size = (1280, 720)
+    # Outer lanes use the same center, while the two raised-hand note heads are
+    # intentionally biased toward the lower edge of their receptor segments.
+    for lane in (1, 4):
+        assert geo.hand_receptor_arc(size, lane) == geo.hand_note_arc(
+            size,
+            lane,
+            1.0,
+            fraction=1.0,
+        )
+
+    for lane in (2, 3):
+        receptor = geo.hand_receptor_arc(size, lane)
+        note = geo.hand_note_arc(size, lane, 1.0, fraction=1.0)
+        assert receptor != note
+
+
+def test_hand_lane_arc_remains_vaportap_note_compatibility_alias() -> None:
+    size = (1280, 720)
+    for lane in range(1, 5):
+        assert geo.hand_lane_arc(
+            size,
+            lane,
+            0.63,
+            geo.HAND_NOTE_ARC_FRACTION,
+            samples=18,
+        ) == geo.hand_note_arc(
+            size,
+            lane,
+            0.63,
+            geo.HAND_NOTE_ARC_FRACTION,
+            samples=18,
+        )
