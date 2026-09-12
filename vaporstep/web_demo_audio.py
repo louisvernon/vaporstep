@@ -21,7 +21,7 @@ def ensure_web_demo_audio(stepfile: Path) -> Path:
     mounts the application archive, so the same helper works locally and in
     WASM.
     """
-    target = stepfile.with_name("web_demo.wav")
+    target = stepfile.with_name("web_demo.wav").resolve()
     if target.exists() and target.stat().st_size > 44:
         return target
 
