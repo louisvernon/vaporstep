@@ -60,10 +60,32 @@ jobs:
             simfile==2.1.1 \
             setuptools==80.9.0
 
+          # PyFilesystem2 still declares its package namespace through the
+          # deprecated pkg_resources API. The staged browser bundle is one
+          # ordinary, self-contained package tree, so that namespace scan is
+          # unnecessary and adds a fragile startup path under WASM.
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("web-dist/fs/__init__.py")
+          text = path.read_text(encoding="utf-8")
+          needle = '__import__("pkg_resources").declare_namespace(__name__)  # type: ignore'
+          if needle not in text:
+              raise RuntimeError("Unexpected PyFilesystem2 __init__.py; namespace shim not found")
+          path.write_text(
+              text.replace(
+                  needle,
+                  "# Browser bundle: normal package, no pkg_resources namespace scan needed.",
+              ),
+              encoding="utf-8",
+          )
+          PY
+
       - name: Check staged shared pipeline
         shell: bash
         run: |
           python -m py_compile web-dist/main.py web-dist/vaporstep/*.py
+          ! grep -q 'declare_namespace' web-dist/fs/__init__.py
           cd web-dist
           python - <<'PY'
           from pathlib import Path
@@ -86,7 +108,13 @@ jobs:
           PY
 
       - name: Build WASM bundle
-        run: python -m pygbag --build --PYBUILD 3.12 --title "VaporTap Shared-Core Playtest" web-dist
+        run: >-
+          python -m pygbag
+          --build
+          --PYBUILD 3.12
+          --ume_block 0
+          --title "VaporTap Shared-Core Playtest"
+          web-dist
 
       - name: Mark preview as non-indexable
         shell: bash
@@ -110,7 +138,11 @@ jobs:
         shell: bash
         run: |
           test -f web-dist/build/web/index.html
+          test -f web-dist/build/web/web-dist.apk
           grep -q 'noindex, nofollow, noarchive' web-dist/build/web/index.html
+          unzip -l web-dist/build/web/web-dist.apk | grep -q 'assets/vaporstep/web_demo.sm'
+          unzip -l web-dist/build/web/web-dist.apk | grep -q 'assets/vaporstep/web_vaportap_session.py'
+          unzip -l web-dist/build/web/web-dist.apk | grep -q 'assets/simfile/__init__.py'
           find web-dist/build/web -maxdepth 2 -type f -print | sort
 
       - name: Configure GitHub Pages
