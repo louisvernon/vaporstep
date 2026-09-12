@@ -9,7 +9,7 @@ os.environ["VAPORSTEP_WEB"] = "1"
 
 import pygame  # noqa: F401  # make pygame explicit to pygbag's package scanner
 
-from vaporstep.web_app import main
+from vaporstep.web_vaportap import main
 
 
 asyncio.run(main())
