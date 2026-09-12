@@ -29,8 +29,7 @@ jobs:
           cp main.py web-dist/main.py
           cp vaporstep/web_app.py web-dist/vaporstep/web_app.py
           cp vaporstep/domain.py web-dist/vaporstep/domain.py
-          cp vaporstep/__init__.py web-dist/vaporstep/__init__.py
-          cp vaporstep/_version.py web-dist/vaporstep/_version.py
+          printf '%s\n' '"""Web-safe VaporTap package."""' > web-dist/vaporstep/__init__.py
 
       - name: Build WASM bundle
         run: python -m pygbag --build --PYBUILD 3.12 --title "VaporTap Prototype" web-dist
