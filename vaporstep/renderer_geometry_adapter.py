@@ -19,10 +19,6 @@ from . import playfield_geometry as geo
 class SharedPlayfieldGeometryMixin:
     """Route desktop playfield projection through the shared geometry module."""
 
-    @property
-    def size(self) -> tuple[int, int]:  # pragma: no cover - supplied by renderer
-        raise NotImplementedError
-
     def _camera_rect(self) -> pygame.Rect:
         viewport = geo.camera_rect(self.size)
         return pygame.Rect(
