@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+from pathlib import Path
 import traceback
 
 # Keep package import limited to web-safe modules. The finished desktop app
@@ -13,7 +14,15 @@ def _phase(name: str) -> None:
     print(f"[VaporTap boot] {name}", flush=True)
 
 
+def _build_id() -> str:
+    try:
+        return Path(__file__).with_name("build-version.txt").read_text(encoding="utf-8").strip()
+    except (NameError, OSError):
+        return "local"
+
+
 _phase("PYTHON ENTRY")
+_phase(f"BUILD {_build_id()}")
 import pygame
 _phase("PYGAME IMPORTED")
 
