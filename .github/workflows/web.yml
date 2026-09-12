@@ -2,13 +2,14 @@ name: Web Prototype
 
 on:
   pull_request:
+  push:
+    branches: ["agent/vaportap-wasm"]
   workflow_dispatch:
-
-permissions:
-  contents: read
 
 jobs:
   build-web:
+    permissions:
+      contents: read
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -34,8 +35,53 @@ jobs:
       - name: Build WASM bundle
         run: python -m pygbag --build --PYBUILD 3.12 --title "VaporTap Prototype" web-dist
 
+      - name: Mark preview as non-indexable
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          index = Path("web-dist/build/web/index.html")
+          text = index.read_text(encoding="utf-8")
+          marker = '<meta name="robots" content="noindex, nofollow, noarchive">'
+          if marker not in text:
+              text = text.replace("<head>", f"<head>\n    {marker}", 1)
+              index.write_text(text, encoding="utf-8")
+          Path("web-dist/build/web/robots.txt").write_text(
+              "User-agent: *\nDisallow: /\n",
+              encoding="utf-8",
+          )
+          PY
+
       - name: Verify web output
         shell: bash
         run: |
           test -f web-dist/build/web/index.html
+          grep -q 'noindex, nofollow, noarchive' web-dist/build/web/index.html
           find web-dist/build/web -maxdepth 2 -type f -print | sort
+
+      - name: Configure GitHub Pages
+        if: github.event_name != 'pull_request'
+        uses: actions/configure-pages@v5
+
+      - name: Upload GitHub Pages artifact
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: web-dist/build/web
+
+  deploy:
+    if: github.event_name != 'pull_request'
+    needs: build-web
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
