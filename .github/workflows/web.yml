@@ -232,24 +232,29 @@ jobs:
           grep -q "web-dist-${GITHUB_SHA}.tar.gz" web-dist/build/web/index.html
           grep -q "${GITHUB_SHA}" web-dist/build/web/version.txt
 
-          # Validate both archive formats because GitHub Pages loads the tarball
-          # while itch.io takes the APK branch in Pygbag's generated loader.
-          unzip -l "$apk" | grep -q 'assets/build-version.txt'
-          unzip -l "$apk" | grep -q 'assets/vaporstep/web_demo.sm'
-          unzip -l "$apk" | grep -q 'assets/vaporstep/web_demo.wav'
-          unzip -p "$apk" assets/vaporstep/web_demo_audio.py | grep -q 'web_demo.wav'
-          ! unzip -p "$apk" assets/vaporstep/web_demo_audio.py | grep -q 'web_demo.ogg'
+          # Avoid archive-listing pipelines under pipefail: grep -q closes its
+          # input early after a match, which makes tar report a broken pipe.
+          unzip -l "$apk" > /tmp/vaportap-apk-list.txt
+          unzip -p "$apk" assets/vaporstep/web_demo_audio.py > /tmp/vaportap-apk-audio.py
+          tar -tzf "$tarball" > /tmp/vaportap-tar-list.txt
+          tar -xOzf "$tarball" assets/vaporstep/web_demo_audio.py > /tmp/vaportap-tar-audio.py
 
-          tar -tzf "$tarball" | grep -q 'assets/build-version.txt'
-          tar -tzf "$tarball" | grep -q 'assets/vaporstep/web_demo.sm'
-          tar -tzf "$tarball" | grep -q 'assets/vaporstep/web_demo.wav'
-          tar -xOzf "$tarball" assets/vaporstep/web_demo_audio.py | grep -q 'web_demo.wav'
-          ! tar -xOzf "$tarball" assets/vaporstep/web_demo_audio.py | grep -q 'web_demo.ogg'
+          grep -q 'assets/build-version.txt' /tmp/vaportap-apk-list.txt
+          grep -q 'assets/vaporstep/web_demo.sm' /tmp/vaportap-apk-list.txt
+          grep -q 'assets/vaporstep/web_demo.wav' /tmp/vaportap-apk-list.txt
+          grep -q 'web_demo.wav' /tmp/vaportap-apk-audio.py
+          ! grep -q 'web_demo.ogg' /tmp/vaportap-apk-audio.py
 
-          unzip -l "$apk" | grep -q 'assets/vaporstep/web_vaportap_session.py'
-          unzip -l "$apk" | grep -q 'assets/vaporstep/web_compat.py'
-          unzip -l "$apk" | grep -q 'assets/_pydecimal.py'
-          unzip -l "$apk" | grep -q 'assets/simfile/__init__.py'
+          grep -q 'assets/build-version.txt' /tmp/vaportap-tar-list.txt
+          grep -q 'assets/vaporstep/web_demo.sm' /tmp/vaportap-tar-list.txt
+          grep -q 'assets/vaporstep/web_demo.wav' /tmp/vaportap-tar-list.txt
+          grep -q 'web_demo.wav' /tmp/vaportap-tar-audio.py
+          ! grep -q 'web_demo.ogg' /tmp/vaportap-tar-audio.py
+
+          grep -q 'assets/vaporstep/web_vaportap_session.py' /tmp/vaportap-apk-list.txt
+          grep -q 'assets/vaporstep/web_compat.py' /tmp/vaportap-apk-list.txt
+          grep -q 'assets/_pydecimal.py' /tmp/vaportap-apk-list.txt
+          grep -q 'assets/simfile/__init__.py' /tmp/vaportap-apk-list.txt
           find web-dist/build/web -maxdepth 2 -type f -print | sort
 
       - name: Configure GitHub Pages
