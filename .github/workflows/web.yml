@@ -20,7 +20,12 @@ jobs:
           cache: pip
 
       - name: Install web build tools
-        run: python -m pip install pygame-ce==2.5.8 pygbag==0.9.3 simfile==2.1.1
+        run: >-
+          python -m pip install
+          pygame-ce==2.5.8
+          pygbag==0.9.3
+          simfile==2.1.1
+          setuptools==80.9.0
 
       - name: Stage web-safe application
         shell: bash
@@ -50,20 +55,53 @@ jobs:
           sed -i 's/from \.audio_fx import GAMEPLAY_MUSIC_VOLUME/from .audio_config import GAMEPLAY_MUSIC_VOLUME/' web-dist/vaporstep/session.py
           printf '%s\n' '"""Web-safe VaporStep/VaporTap package."""' > web-dist/vaporstep/__init__.py
 
-          # simfile 2.1.1 is pure Python; bundle the installed package directly
-          # so mobile browsers do not need a second package download at startup.
+          # simfile 2.1.1 and its runtime dependencies are pure Python. Vendor
+          # them into the static app so mobile startup does not depend on a
+          # second package/CDN fetch. find_spec avoids importing old fs before
+          # the package tree has been staged.
           python - <<'PY'
+          from importlib.util import find_spec
           from pathlib import Path
           import shutil
-          import simfile
 
-          source = Path(simfile.__file__).resolve().parent
-          destination = Path("web-dist/simfile")
-          shutil.copytree(source, destination)
+          destination = Path("web-dist")
+          for name in ("simfile", "msdparser", "fs", "pkg_resources"):
+              spec = find_spec(name)
+              if spec is None or not spec.submodule_search_locations:
+                  raise RuntimeError(f"Could not locate package {name}")
+              source = Path(next(iter(spec.submodule_search_locations))).resolve()
+              shutil.copytree(source, destination / name)
+
+          for name in ("appdirs", "six"):
+              spec = find_spec(name)
+              if spec is None or spec.origin is None:
+                  raise RuntimeError(f"Could not locate module {name}")
+              shutil.copy2(spec.origin, destination / Path(spec.origin).name)
           PY
 
-      - name: Check staged Python
-        run: python -m py_compile web-dist/main.py web-dist/vaporstep/*.py web-dist/simfile/*.py
+      - name: Check staged shared pipeline
+        shell: bash
+        run: |
+          python -m py_compile web-dist/main.py web-dist/vaporstep/*.py
+          PYTHONPATH=web-dist python - <<'PY'
+          from pathlib import Path
+          from vaporstep.domain import BodyState, ChainMode
+          from vaporstep.session import GameSession
+          from vaporstep.simfile_loader import load_chart, scan_song
+
+          path = Path("web-dist/vaporstep/web_demo.sm")
+          song = scan_song(path)
+          assert song is not None and song.charts
+          chart = load_chart(song, song.charts[0])
+          assert chart.notes
+          session = GameSession(chart=chart, chain_mode=ChainMode.OFF)
+          session.update(BodyState(), ready_to_start=True, start_immediately=True)
+          assert session.running
+          print(
+              f"shared pipeline: {song.title!r}, "
+              f"{len(chart.notes)} notes, {len(chart.sustains)} sustains"
+          )
+          PY
 
       - name: Build WASM bundle
         run: python -m pygbag --build --PYBUILD 3.12 --title "VaporTap Shared-Core Playtest" web-dist
